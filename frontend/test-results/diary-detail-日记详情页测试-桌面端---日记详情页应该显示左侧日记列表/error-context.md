@@ -1,0 +1,138 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]: YourNote
+    - menu [ref=e6]:
+      - menuitem "dashboard 仪表盘" [ref=e7] [cursor=pointer]:
+        - img "dashboard" [ref=e8]:
+          - img [ref=e9]
+        - link "仪表盘" [ref=e12]:
+          - /url: /
+      - menuitem "user 账号管理" [ref=e13] [cursor=pointer]:
+        - img "user" [ref=e14]:
+          - img [ref=e15]
+        - link "账号管理" [ref=e18]:
+          - /url: /accounts
+      - menuitem "book 日记列表" [ref=e19] [cursor=pointer]:
+        - img "book" [ref=e20]:
+          - img [ref=e21]
+        - link "日记列表" [ref=e24]:
+          - /url: /diaries
+      - menuitem "team 所有用户" [ref=e25] [cursor=pointer]:
+        - img "team" [ref=e26]:
+          - img [ref=e27]
+        - link "所有用户" [ref=e30]:
+          - /url: /users
+      - menuitem [disabled]:
+        - img:
+          - img
+  - main [ref=e31]:
+    - generic [ref=e32]:
+      - button "arrow-left 返回" [ref=e34] [cursor=pointer]:
+        - img "arrow-left" [ref=e36]:
+          - img [ref=e37]
+        - generic [ref=e39]: 返回
+      - generic [ref=e40]:
+        - complementary [ref=e41]:
+          - generic [ref=e42]:
+            - heading "日记列表" [level=3] [ref=e44]
+            - generic [ref=e45]:
+              - switch [disabled] [ref=e46]
+              - text: 显示匹配日记
+            - list [ref=e52]:
+              - listitem [ref=e53] [cursor=pointer]:
+                - generic [ref=e54]:
+                  - generic [ref=e55]: 2026年1月8日
+                  - generic [ref=e56]: 2026-01-08
+              - listitem [ref=e57] [cursor=pointer]:
+                - generic [ref=e58]:
+                  - generic [ref=e59]: 无标题
+                  - generic [ref=e60]: 2026-01-07
+              - listitem [ref=e61] [cursor=pointer]:
+                - generic [ref=e62]:
+                  - generic [ref=e63]: 无标题
+                  - generic [ref=e64]: 2026-01-06
+              - listitem [ref=e65] [cursor=pointer]:
+                - generic [ref=e66]:
+                  - generic [ref=e67]: 无标题
+                  - generic [ref=e68]: 2026-01-05
+              - listitem [ref=e69] [cursor=pointer]:
+                - generic [ref=e70]:
+                  - generic [ref=e71]: 无标题
+                  - generic [ref=e72]: 2018-04-09
+              - listitem [ref=e73] [cursor=pointer]:
+                - generic [ref=e74]:
+                  - generic [ref=e75]: 无标题
+                  - generic [ref=e76]: 2018-04-07
+              - listitem [ref=e77] [cursor=pointer]:
+                - generic [ref=e78]:
+                  - generic [ref=e79]: 真是有趣的一天
+                  - generic [ref=e80]: 2018-04-04
+              - listitem [ref=e81] [cursor=pointer]:
+                - generic [ref=e82]:
+                  - generic [ref=e83]: 无标题
+                  - generic [ref=e84]: 2018-04-03
+              - listitem [ref=e85] [cursor=pointer]:
+                - generic [ref=e86]:
+                  - generic [ref=e87]: 无标题
+                  - generic [ref=e88]: 2018-04-02
+              - listitem [ref=e89] [cursor=pointer]:
+                - generic [ref=e90]:
+                  - generic [ref=e91]: 无标题
+                  - generic [ref=e92]: 2018-04-01
+              - listitem [ref=e93] [cursor=pointer]:
+                - generic [ref=e94]:
+                  - generic [ref=e95]: 无标题
+                  - generic [ref=e96]: 2018-03-31
+              - listitem [ref=e97] [cursor=pointer]:
+                - generic [ref=e98]:
+                  - generic [ref=e99]: 无标题
+                  - generic [ref=e100]: 2018-03-30
+              - listitem [ref=e101] [cursor=pointer]:
+                - generic [ref=e102]:
+                  - generic [ref=e103]: 无标题
+                  - generic [ref=e104]: 2018-03-29
+              - listitem [ref=e105] [cursor=pointer]:
+                - generic [ref=e106]:
+                  - generic [ref=e107]: 2018-3-28
+                  - generic [ref=e108]: 2018-03-28
+              - listitem [ref=e109] [cursor=pointer]:
+                - generic [ref=e110]:
+                  - generic [ref=e111]: 平常的一天
+                  - generic [ref=e112]: 2018-03-27
+              - listitem [ref=e113] [cursor=pointer]:
+                - generic [ref=e114]:
+                  - generic [ref=e115]: 美好的一天
+                  - generic [ref=e116]: 2018-03-26
+              - listitem [ref=e117] [cursor=pointer]:
+                - generic [ref=e118]:
+                  - generic [ref=e119]: 崭新的一天
+                  - generic [ref=e120]: 2018-03-25
+              - listitem [ref=e121] [cursor=pointer]:
+                - generic [ref=e122]:
+                  - generic [ref=e123]: 今天
+                  - generic [ref=e124]: 2018-03-24
+        - main [ref=e125]:
+          - generic [ref=e126]:
+            - generic [ref=e129]: 2026年1月8日
+            - generic [ref=e130]:
+              - generic [ref=e131]:
+                - generic [ref=e132]: 2026-01-08
+                - generic [ref=e133]: happy
+                - generic [ref=e134]: sunny
+              - generic [ref=e135]: "## 差点睡过 > 2026-01-08 09:08:15 早上睡醒，把被子蒙头10秒钟，这是我睡得最想的20分钟(我去，差点睡过，自己睡到8.20了) ## 梦 > 2026-01-08 09:10:08 > > 纯记录梦境，有些乱糟糟的 两个梦，一个是凌晨1.56醒的，强迫自己醒来，结果醒了忘了记又睡着了 一个是早上7.00后做的梦(7.00生物钟醒了一次，但是不想起床，就继续睡了) 我梦到成都还有一个地下城市，里面甚至还有地铁(这个城市给我一种在重庆的感觉) 然后我和朋友一起去地下的城市玩，（似乎是要去拍照(日照金山)） 梦里我没有一个玩的好的朋友，是小学同学 谭司令，和初中同学 李y,我们一起去，我感觉很奇怪，明明是日照金山，为何我都看到太阳了，怎么突然一下出了好大的雾，我当时还在说，哇，真美啊，然后打算和朋友一起拍照的时候，突然就变阴天了，然后起了很大的雾，然后我眼镜腿也断掉了… 然后我去找李y 和他们 一起的朋友，看到他们拍照的状态有点诡异，拍照为何要站在一个反斜坡里拍照（这个反斜坡几乎算是一个坑里面，拍照的人在坡上面 ，他们几个就在那个反斜坡里面对着墙站着，这不是什么都拍不到吗？我感觉好诡异，但是懒得计较，我就说你们慢慢玩，我先回了），然后我踏上返程的路，上了地铁，我一个滑步抢到一个座位，真棒，（地铁是始发站(返程的第一站其实没人和我们抢座位的)）好吧，到站我发现我自行车忘记拿了，我又得回去，但是我下站之后打算返程的地铁，但是始终等不到，然后我就莫名醒了，好吧，7.59 距离闹钟时间还有1分钟， ## 晨光 > 2026-01-08 09:28:18 今早江面的雾气和晨光极美，可惜太赶时间，只能在心里按个快门了 ## 基于日记的反思 > 2026-01-08 09:37:40 > > 基于日记的反思 > 3/10 说话过直+带有自我审视 建议略过， 其实读到昨天的记录时，我似乎也看到了一部分我自己 借用荣格的一句话： 我们最在意(t_)别人的地方，往往是我们自己潜意识里拥有、但被意识压抑的特质 我像是一个站在岸边的人，疑惑为何会为了 一颗糖或一瓶AD 而感动呢 可我自己呢？那些厨房的东西呢？ 我不也是换了一种形式，在使用别人留下的便利，在一段本该保持距离的关系里优柔寡断 或许我更不清醒把... 好了，该整理状态了，该去学习了，今天依旧又是毫无工作安排的一天，我还得待一个多月，想想就觉得吓人，不过我也该用这段时间好好学习一下，不得不说，太有自习室的氛围了 > 2026-01-08 10:41:09 ## 学习陷阱 > 2026-01-08 15:06:45 离谱，折腾半个上午+半个下午，发现这玩意就是个坑，我去，嗯是浪费了半天时间 codex5.2 慢的不行，太垃了，离谱 理想很美好 ，现实很骨感 ## 好热 > 2026-01-08 15:08:09 好大的太阳，好热， > 2026-01-08 17:10:11 我去，我才看到温度计，室内温度29度，我说怎么这么热 ，每天下班一出门就感觉冷的吓人，这温差也太大了吧？ [20:41] 疑惑，为何和温柔的人打完电话，我心里更乱呢？ lsy刚才学习遇到问题，打视频问我，我给他提供了解决方案，他表示感谢，然后和我聊了聊天，但是我怎么莫名感觉越聊越烦躁呢？ 不过幸好，他的问题是解决了，明天她有时间早点离校和他对象去约会了"
+          - generic [ref=e136]:
+            - generic [ref=e139]:
+              - img "clock-circle" [ref=e140]:
+                - img [ref=e141]
+              - text: 修改历史
+            - list [ref=e145]:
+              - listitem [ref=e146]:
+                - generic [ref=e150]:
+                  - generic [ref=e151]: 2026/1/8 13:51:56
+                  - generic [ref=e152]:
+                    - generic [ref=e153]: 2026年1月8日
+                    - generic [ref=e154]: "## 差点睡过 > 2026-01-08 09:08:15 早上睡醒，把被子蒙头10秒钟，这是我睡得最想的20分钟(我去，差点睡过，自己睡到8.20了) ## 梦 > 2026-01-08 09:10:08 > > 纯记录梦境，有些乱糟糟的 两个梦，一个是凌晨1.56醒的，强迫自己醒来，结果醒了忘了记又睡着了 一个是早上7.00后做的梦(7.00生物钟醒了一次，但是不想起床，就继续睡了) 我梦到成都还有一个地下城市，里面甚至还有地铁(这个城市给我一种在重庆的感觉) 然后我和朋友一起去地下的城市玩，（似乎是要去拍照(日照金山)） 梦里我没有一个玩的好的朋友，是小学同学 谭司令，和初中同学 李y,我们一起去，我感觉很奇怪，明明是日照金山，为何我都看到太阳了，怎么突然一下出了好大的雾，我当时还在说，哇，真美啊，然后打算和朋友一起拍照的时候，突然就变阴天了，然后起了很大的雾，然后我眼镜腿也断掉了… 然后我去找李y 和他们 一起的朋友，看到他们拍照的状态有点诡异，拍照为何要站在一个反斜坡里拍照（这个反斜坡几乎算是一个坑里面，拍照的人在坡上面 ，他们几个就在那个反斜坡里面对着墙站着，这不是什么都拍不到吗？我感觉好诡异，但是懒得计较，我就说你们慢慢玩，我先回了），然后我踏上返程的路，上了地铁，我一个滑步抢到一个座位，真棒，（地铁是始发站(返程的第一站其实没人和我们抢座位的)）好吧，到站我发现我自行车忘记拿了，我又得回去，但是我下站之后打算返程的地铁，但是始终等不到，然后我就莫名醒了，好吧，7.59 距离闹钟时间还有1分钟， ## 晨光 > 2026-01-08 09:28:18 今早江面的雾气和晨光极美，可惜太赶时间，只能在心里按个快门了 ## 基于日记的反思 > 2026-01-08 09:37:40 > > 基于日记的反思 > 3/10 说话过直+带有自我审视 建议略过， 其实读到昨天的记录时，我似乎也看到了一部分我自己 借用荣格的一句话： 我们最在意(t_)别人的地方，往往是我们自己潜意识里拥有、但被意识压抑的特质 我像是一个站在岸边的人，疑惑为何会为了 一颗糖或一瓶AD 而感动呢 可我自己呢？那些厨房的东西呢？ 我不也是换了一种形式，在使用别人留下的便利，在一段本该保持距离的关系里优柔寡断 或许我更不清醒把... 好了，该整理状态了，该去学习了，今天依旧又是毫无工作安排的一天，我还得待一个多月，想想就觉得吓人，不过我也该用这段时间好好学习一下，不得不说，太有自习室的氛围了 > 2026-01-08 10:41:09 ## 学习陷阱 > 2026-01-08 15:06:45 离谱，折腾半个上午+半个下午，发现这玩意就是个坑，我去，嗯是浪费了半天时间 codex5.2 慢的不行，太垃了，离谱 理想很美好 ，现实很骨感 ## 好热 > 2026-01-08 15:08:09 好大的太阳，好热， > 2026-01-08 17:10:11 我去，我才看到温度计，室内温度29度，我说怎么这么热 ，每天下班一出门就感觉冷的吓人，这温差也太大了吧？"
+```

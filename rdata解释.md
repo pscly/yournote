@@ -470,6 +470,8 @@ user_config.paired_user_config.last_login_time  是她最后登录时间
 
 ### 查询单个日记详情
 
+这个接口可以不用，因为 上面 那个接口就完全够了
+
 ```python
 
 import requests

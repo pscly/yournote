@@ -15,7 +15,7 @@ function App() {
   return (
     <BrowserRouter>
       <Layout style={{ minHeight: '100vh' }}>
-        <Header>
+        <Header style={{ position: 'fixed', top: 0, zIndex: 1000, width: '100%' }}>
           <div style={{ color: 'white', fontSize: '20px', float: 'left', marginRight: '50px' }}>
             YourNote
           </div>
@@ -34,7 +34,7 @@ function App() {
             </Menu.Item>
           </Menu>
         </Header>
-        <Content style={{ padding: '0 50px', marginTop: 64 }}>
+        <Content style={{ padding: '80px 50px 0 50px' }}>
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/accounts" element={<AccountManage />} />

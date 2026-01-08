@@ -1,0 +1,58 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Data files (crawled data)
+data/
+output/
+downloads/
+*.csv
+*.json
+*.xml
+
+# Browser automation
+chromedriver
+geckodriver
+*.crx
+selenium-*.jar
+
+# Credentials & Config
+.env
+.env.local
+config.ini
+secrets.json
+credentials.json
+
+# Cache
+.cache/
+*.cache
+.pytest_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb

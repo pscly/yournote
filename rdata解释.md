@@ -446,13 +446,26 @@ diaries_paired  是对方的日记 (每公开一个，就会多一个字段)
 
 user_config.userid 是我的id，
 
+user_config.description 是我的个性签名
+user_config.name 是我的用户名
+user_config.last_login_time 是我最后登录时间
+
+
+user_config.paired_user_config.description  是她的个性签名
+user_config.paired_user_config.name         是她的用户名
+user_config.paired_user_config.last_login_time  是她最后登录时间
+
+
+你现在需要做的是和我讨论一个plan，我该如何设计这个项目，
 我希望这个项目是一个完善的项目,可以多个用户 auth 来采集我们双方公开的日记数据
 
 (因为我会有多个号，所以也会对多个账号进行采集，)
 
 你现在需要做的是和我讨论一个plan，我该如何设计这个项目，我希望可以采集我们双方的日记并且保存到数据库中，然后再弄个fastapi 作为后端，然后弄个前端，渲染出来，方便我进行查看(可以通过点选，看到不同账号和不同账号匹配到的不同的人的数据)
 
+我需要的是你还能记录她的最后登录时间，转为 xxxx-xx-xxTxx:xx:xx 的格式，并且显示出来，方便我查看
 
+具体你可以阅读 rdata解释.md 来进行详细理解
 
 
 ### 查询单个日记详情

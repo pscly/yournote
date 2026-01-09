@@ -1,12 +1,19 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class AccountCreate(BaseModel):
-    """创建/更新账号的请求模型（只需要提供 token）。"""
+    """创建/更新账号的请求模型（token 或 账号密码二选一）。
 
-    auth_token: str
+    约定：
+    - 直接提供 token：auth_token
+    - 账号密码登录：email + password（服务端会先调用 nideriji /api/login/ 获取 token）
+    """
+
+    auth_token: str | None = None
+    email: str | None = None
+    password: str | None = Field(default=None, repr=False)
 
 
 class TokenStatus(BaseModel):

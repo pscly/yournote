@@ -18,6 +18,21 @@ from ..utils.token import get_token_status
 router = APIRouter(prefix="/accounts", tags=["accounts"])
 
 
+def _normalize_auth_token(token_or_jwt: str) -> str:
+    """把登录接口返回的 jwt / 用户粘贴的 token 统一成 nideriji 可用的 auth 值。
+
+    nideriji 的 header 通常形如：`auth: token <jwt>`。
+    - 如果用户直接粘贴了 `token xxx`：原样使用
+    - 如果只给了 jwt：自动补 `token ` 前缀
+    """
+    value = (token_or_jwt or "").strip()
+    if not value:
+        raise ValueError("token 为空")
+    if " " in value:
+        return value
+    return f"token {value}"
+
+
 async def _remote_validate_token(auth_token: str, *, db: AsyncSession) -> TokenStatus:
     """通过 nideriji sync 接口远程校验 token 是否可用。
 
@@ -91,11 +106,38 @@ async def create_account(
     account: AccountCreate,
     db: AsyncSession = Depends(get_db),
 ):
-    """添加/更新账号（前端只需要提交 auth_token）。"""
+    """添加/更新账号（token 或 账号密码二选一）。
+
+    说明：
+    - 若提交 email + password：服务端会先调用 nideriji `/api/login/` 获取 token，
+      然后调用 `/api/v2/sync/` 获取 userid/用户名/邮箱等信息并落库，最后触发后台同步。
+    - 若提交 auth_token：直接用 `/api/v2/sync/` 远程校验并落库。
+    """
     collector = CollectorService(db)
 
+    use_password_login = False
+    login_email = (account.email or "").strip() if isinstance(account.email, str) else ""
+    login_password = account.password
+
+    if isinstance(account.auth_token, str) and account.auth_token.strip():
+        auth_token = _normalize_auth_token(account.auth_token)
+    elif login_email and isinstance(login_password, str) and login_password.strip():
+        use_password_login = True
+        try:
+            auth_token = await collector.login_nideriji(login_email, login_password)
+        except requests.HTTPError as e:
+            status_code = getattr(getattr(e, "response", None), "status_code", None)
+            detail = "登录失败（账号或密码错误）"
+            if isinstance(status_code, int):
+                detail = f"{detail} (HTTP {status_code})"
+            raise HTTPException(status_code=400, detail=detail) from e
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"登录异常: {e}") from e
+    else:
+        raise HTTPException(status_code=422, detail="请提供 auth_token 或 email+password")
+
     try:
-        rdata = await collector.fetch_nideriji_data(account.auth_token)
+        rdata = await collector.fetch_nideriji_data(auth_token)
     except requests.HTTPError as e:
         status_code = getattr(getattr(e, "response", None), "status_code", None)
         detail = "Token 无效或已失效"
@@ -113,6 +155,8 @@ async def create_account(
     email = user_config.get("useremail")
     if email is not None and not isinstance(email, str):
         email = None
+    if not email and login_email:
+        email = login_email
 
     user_name = user_config.get("name")
     if user_name is not None and not isinstance(user_name, str):
@@ -123,11 +167,13 @@ async def create_account(
     existing = result.scalar_one_or_none()
 
     # 这里已经成功打到上游，视为“远程校验通过”
-    token_status = TokenStatus(**get_token_status(account.auth_token), checked_at=datetime.now(timezone.utc))
+    token_status = TokenStatus(**get_token_status(auth_token), checked_at=datetime.now(timezone.utc))
 
     if existing:
-        existing.auth_token = account.auth_token
+        existing.auth_token = auth_token
         existing.email = email
+        if use_password_login and isinstance(login_password, str):
+            existing.login_password = login_password
         existing.is_active = True
         await collector._save_user_info(user_config, existing.id)
         await db.commit()
@@ -137,8 +183,9 @@ async def create_account(
 
     new_account = Account(
         nideriji_userid=nideriji_userid,
-        auth_token=account.auth_token,
+        auth_token=auth_token,
         email=email,
+        login_password=(login_password if use_password_login and isinstance(login_password, str) else None),
         is_active=True,
     )
     db.add(new_account)
@@ -200,12 +247,49 @@ async def validate_account_token(
     db: AsyncSession = Depends(get_db),
 ):
     """远程校验指定账号的 token（不落库）。"""
-    result = await db.execute(select(Account).where(Account.id == account_id))
+    result = await db.execute(select(Account).where(Account.id == account_id))  
     account = result.scalar_one_or_none()
     if not account:
-        raise HTTPException(status_code=404, detail="Account not found")
+        raise HTTPException(status_code=404, detail="Account not found")        
 
-    return await _remote_validate_token(account.auth_token, db=db)
+    collector = CollectorService(db)
+    checked_at = datetime.now(timezone.utc)
+
+    try:
+        # 账号级校验：若 token 失效且已保存账号密码，则自动重新登录刷新 token
+        await collector.fetch_nideriji_data_for_account(account)
+        await db.commit()
+        await db.refresh(account)
+        base = get_token_status(account.auth_token)
+        return TokenStatus(
+            is_valid=True,
+            expired=bool(base.get("expired")),
+            expires_at=base.get("expires_at"),
+            checked_at=checked_at,
+            reason=None,
+        )
+    except requests.HTTPError as e:
+        status_code = getattr(getattr(e, "response", None), "status_code", None)
+        reason = "服务端校验失败（token 无效或已失效）"
+        if isinstance(status_code, int):
+            reason = f"{reason} (HTTP {status_code})"
+        base = get_token_status(account.auth_token)
+        return TokenStatus(
+            is_valid=False,
+            expired=bool(base.get("expired")),
+            expires_at=base.get("expires_at"),
+            checked_at=checked_at,
+            reason=reason,
+        )
+    except Exception as e:
+        base = get_token_status(account.auth_token)
+        return TokenStatus(
+            is_valid=False,
+            expired=bool(base.get("expired")),
+            expires_at=base.get("expires_at"),
+            checked_at=checked_at,
+            reason=f"校验异常: {e}",
+        )
 
 
 @router.put("/{account_id}/token", response_model=AccountResponse)
@@ -227,7 +311,8 @@ async def update_account_token(
 
     collector = CollectorService(db)
     try:
-        rdata = await collector.fetch_nideriji_data(body.auth_token)
+        new_token = _normalize_auth_token(body.auth_token)
+        rdata = await collector.fetch_nideriji_data(new_token)
     except requests.HTTPError as e:
         status_code = getattr(getattr(e, "response", None), "status_code", None)
         detail = "Token 无效或已失效"
@@ -256,7 +341,7 @@ async def update_account_token(
     if user_name is not None and not isinstance(user_name, str):
         user_name = None
 
-    account.auth_token = body.auth_token
+    account.auth_token = new_token
     account.email = email
     account.is_active = True
     await collector._save_user_info(user_config, account.id)
@@ -265,7 +350,7 @@ async def update_account_token(
 
     schedule_account_sync(account.id)
     token_status = TokenStatus(
-        **get_token_status(body.auth_token),
+        **get_token_status(new_token),
         checked_at=datetime.now(timezone.utc),
     )
     return _build_account_response(account, user_name=user_name, token_status=token_status)

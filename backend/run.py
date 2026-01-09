@@ -1,10 +1,14 @@
 """Start the FastAPI application"""
+
 import uvicorn
+
+from app.config import settings
+
 
 if __name__ == "__main__":
     uvicorn.run(
         "app.main:app",
-        host="0.0.0.0",
-        port=31012,
-        reload=True
+        host=settings.backend_host,
+        port=settings.backend_port,
+        reload=settings.backend_reload,
     )

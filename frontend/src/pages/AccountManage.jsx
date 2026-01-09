@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Form, Grid, Input, message, Modal, Table, Tag, Tooltip, Typography } from 'antd';
+import { Alert, Button, Form, Grid, Input, message, Modal, Radio, Table, Tag, Tooltip, Typography } from 'antd';
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import { accountAPI } from '../services/api';
 import { NIDERIJI_TOKEN } from '../config';
@@ -21,6 +21,7 @@ export default function AccountManage() {
   const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
+  const [addMode, setAddMode] = useState('password'); // 'password' | 'token'
   const [tokenModalVisible, setTokenModalVisible] = useState(false);
   const [tokenAccount, setTokenAccount] = useState(null);
   const [checkingIds, setCheckingIds] = useState(() => new Set());
@@ -78,17 +79,28 @@ export default function AccountManage() {
 
   const handleOpenAdd = () => {
     form.resetFields();
+    setAddMode('password');
     setModalVisible(true);
   };
 
   const handleAdd = async (values) => {
     try {
-      const createRes = await accountAPI.create(values);
+      const payload = addMode === 'token'
+        ? { auth_token: values.auth_token }
+        : { email: values.email, password: values.password };
+      const createRes = await accountAPI.create(payload);
       const account = createRes?.data;
-      message.success('添加成功！');
 
       setModalVisible(false);
       form.resetFields();
+      if (addMode === 'password') {
+        Modal.success({
+          title: '登录成功',
+          content: `账号已添加${account?.user_name ? `（${account.user_name}）` : ''}，已开始后台同步。后续 Token 过期会自动重新登录。`,
+        });
+      } else {
+        message.success('添加成功！');
+      }
       loadAccounts();
 
       if (account?.id) {
@@ -124,7 +136,16 @@ export default function AccountManage() {
         })();
       }
     } catch (error) {
-      message.error('添加失败: ' + error.message);
+      const detail = error?.response?.data?.detail;
+      const hint = detail || error.message;
+
+      if (addMode === 'password') {
+        message.error('登录失败，请重新输入账号和密码' + (hint ? `：${hint}` : ''));
+        form.resetFields(['password']);
+        return;
+      }
+
+      message.error('添加失败: ' + hint);
     }
   };
 
@@ -183,6 +204,8 @@ export default function AccountManage() {
   };
 
   const handleQuickAdd = () => {
+    form.resetFields();
+    setAddMode('token');
     form.setFieldsValue({
       auth_token: NIDERIJI_TOKEN,
     });
@@ -290,13 +313,54 @@ export default function AccountManage() {
         onOk={() => form.submit()}
       >
         <Form form={form} onFinish={handleAdd} layout="vertical">
-          <Form.Item
-            name="auth_token"
-            label="Token"
-            rules={[{ required: true, message: '请输入 Token' }]}
-          >
-            <Input.TextArea rows={4} placeholder="形如：token eyJhbGci..." />
+          <Alert
+            style={{ marginBottom: 12 }}
+            type="info"
+            showIcon
+            message="新增账号支持两种方式"
+            description="推荐使用“账号密码登录”：后端会保存账号密码，后续 Token 过期会自动重新登录并继续同步。"
+          />
+
+          <Form.Item label="登录方式">
+            <Radio.Group
+              value={addMode}
+              onChange={(e) => {
+                const next = e.target.value;
+                setAddMode(next);
+                form.resetFields(['auth_token', 'email', 'password']);
+              }}
+            >
+              <Radio value="password">账号密码（推荐）</Radio>
+              <Radio value="token">Token</Radio>
+            </Radio.Group>
           </Form.Item>
+
+          {addMode === 'password' ? (
+            <>
+              <Form.Item
+                name="email"
+                label="账号（邮箱）"
+                rules={[{ required: true, message: '请输入邮箱账号' }]}
+              >
+                <Input placeholder="例如：pscly@outlook.com" />
+              </Form.Item>
+              <Form.Item
+                name="password"
+                label="密码"
+                rules={[{ required: true, message: '请输入密码' }]}
+              >
+                <Input.Password placeholder="请输入密码（将保存在本地数据库）" />
+              </Form.Item>
+            </>
+          ) : (
+            <Form.Item
+              name="auth_token"
+              label="Token"
+              rules={[{ required: true, message: '请输入 Token' }]}
+            >
+              <Input.TextArea rows={4} placeholder="形如：token eyJhbGci..." />
+            </Form.Item>
+          )}
         </Form>
       </Modal>
 

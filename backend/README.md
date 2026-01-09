@@ -13,7 +13,7 @@ uv sync
 
 ### 2. 配置环境变量
 
-复制 `.env.example` 到 `.env` 并根据需要修改：
+复制仓库根目录的 `.env.example` 到 `.env` 并根据需要修改（前后端共用同一个 `.env`）：
 
 ```bash
 cp .env.example .env
@@ -32,7 +32,7 @@ uv run python init_db.py
 uv run python run.py
 ```
 
-服务将在 http://localhost:31012 启动。
+服务默认在 http://localhost:31012 启动，可通过根目录 `.env` 中的 `BACKEND_PORT` 修改。
 
 ## API 文档
 
@@ -44,7 +44,7 @@ uv run python run.py
 ## 主要功能
 
 ### 账号管理
-- `POST /api/accounts` - 添加新账号
+- `POST /api/accounts` - 添加新账号（Token 或 账号密码二选一）
 - `GET /api/accounts` - 获取账号列表
 - `GET /api/accounts/{id}` - 获取账号详情
 - `DELETE /api/accounts/{id}` - 删除账号
@@ -73,6 +73,19 @@ uv run python run.py
 
 ### 1. 添加账号
 
+推荐（账号密码登录）：后端会先登录换取 Token，并把账号密码保存在本地数据库中；后续 Token 过期时会自动重新登录并继续同步。
+
+```bash
+curl -X POST "http://localhost:31012/api/accounts" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "pscly@outlook.com",
+    "password": "你的密码"
+  }'
+```
+
+也可以直接提供 Token：
+
 ```bash
 curl -X POST "http://localhost:31012/api/accounts" \
   -H "Content-Type: application/json" \
@@ -97,9 +110,9 @@ curl "http://localhost:31012/api/diaries?account_id=1&limit=10"
 
 ## 数据库
 
-默认使用 SQLite，数据库文件位于 `yournote.db`。
+默认使用 SQLite，数据库文件默认位于仓库根目录 `yournote.db`，可通过 `.env` 中的 `SQLITE_DB_PATH` 修改位置。
 
-如需切换到 PostgreSQL，修改 `.env` 文件中的 `DATABASE_URL`：
+如需切换到 PostgreSQL，修改 `.env` 文件中的 `DATABASE_URL`（`DATABASE_URL` 会覆盖 `SQLITE_DB_PATH`）：
 
 ```
 DATABASE_URL=postgresql+asyncpg://username:password@localhost:5432/yournote

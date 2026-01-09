@@ -1,5 +1,6 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
+from sqlalchemy import text
 from .config import settings
 
 # Create async engine (supports both SQLite and PostgreSQL)
@@ -41,3 +42,23 @@ async def init_db():
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await _ensure_schema(conn)
+
+
+async def _ensure_schema(conn) -> None:
+    """做一层轻量 schema 兼容，避免本地 SQLite 升级后缺列导致报错。
+
+    说明：
+    - 本项目目前未引入 Alembic，因此对“新增字段”采用最小成本的自修复方式。
+    - PostgreSQL 使用 IF NOT EXISTS；SQLite 通过 PRAGMA table_info 判断。
+    """
+    dialect = engine.dialect.name
+
+    # 账号表：为“账号密码登录 / 自动刷新 token”保存密码
+    if dialect == "sqlite":
+        result = await conn.execute(text("PRAGMA table_info(accounts)"))
+        cols = {row[1] for row in result.fetchall()}
+        if "login_password" not in cols:
+            await conn.execute(text("ALTER TABLE accounts ADD COLUMN login_password TEXT"))
+    elif dialect.startswith("postgresql"):
+        await conn.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS login_password TEXT"))

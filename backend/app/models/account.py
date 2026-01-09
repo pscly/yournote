@@ -8,9 +8,10 @@ class Account(Base):
     __tablename__ = "accounts"
 
     id = Column(Integer, primary_key=True, index=True)
-    nideriji_userid = Column(Integer, unique=True, nullable=False, index=True)
+    nideriji_userid = Column(Integer, unique=True, nullable=False, index=True)  
     auth_token = Column(Text, nullable=False)
     email = Column(String(255))
+    login_password = Column(Text)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), server_default=func.now())     
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

@@ -35,6 +35,7 @@ class CollectorService:
     _DETAIL_CONTENT_MIN_LEN = 100
     _DETAIL_FETCH_BATCH_SIZE = 50
     _REQUEST_TIMEOUT_SECONDS = 15
+    _LOGIN_TIMEOUT_SECONDS = 15
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -50,6 +51,42 @@ class CollectorService:
             "origin": "https://nideriji.cn",
             "referer": "https://nideriji.cn/w/",
         }
+
+    def _build_login_headers(self) -> dict[str, str]:
+        # 登录接口是传统表单提交，保持最小必要 header 即可。
+        return {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36"
+            ),
+            "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "origin": "https://nideriji.cn",
+            "referer": "https://nideriji.cn/w/login",
+        }
+
+    async def login_nideriji(self, email: str, password: str) -> str:
+        """使用账号密码登录 nideriji，返回可直接用于后续请求的 auth_token。
+
+        返回形如：`token <jwt>`
+        """
+        url = "https://nideriji.cn/api/login/"
+        payload = {"email": email, "password": password}
+        resp = requests.post(
+            url,
+            data=payload,
+            headers=self._build_login_headers(),
+            timeout=self._LOGIN_TIMEOUT_SECONDS,
+        )
+        resp.raise_for_status()
+        data: Any = resp.json()
+        if not isinstance(data, dict):
+            raise ValueError("登录接口返回非 JSON 对象")
+        if data.get("error") not in (0, None):
+            raise ValueError(f"登录失败: error={data.get('error')}")
+        token = data.get("token")
+        if not isinstance(token, str) or not token.strip():
+            raise ValueError("登录接口未返回 token")
+        return f"token {token.strip()}"
 
     def _content_len(self, content: str | None) -> int:
         return len((content or "").strip())
@@ -135,6 +172,33 @@ class CollectorService:
         )
         response.raise_for_status()
         return response.json()
+
+    async def fetch_nideriji_data_for_account(self, account: Account) -> dict:
+        """按账号获取 sync 数据，并在 token 失效时自动重新登录刷新 token。
+
+        说明：
+        - 仅在收到 401/403 且本地已保存 email + login_password 时触发一次重登
+        - 成功后会把新 token 写回 account.auth_token（由调用方决定何时 commit）
+        """
+        try:
+            return await self.fetch_nideriji_data(account.auth_token)
+        except requests.HTTPError as e:
+            status_code = getattr(getattr(e, "response", None), "status_code", None)
+            can_relogin = (
+                isinstance(status_code, int)
+                and status_code in (401, 403)
+                and isinstance(account.email, str)
+                and account.email.strip()
+                and isinstance(getattr(account, "login_password", None), str)
+                and (account.login_password or "").strip()
+            )
+            if not can_relogin:
+                raise
+
+            new_token = await self.login_nideriji(account.email, account.login_password)
+            account.auth_token = new_token
+            await self.db.flush()
+            return await self.fetch_nideriji_data(account.auth_token)
 
     async def fetch_nideriji_diaries_by_ids(
         self,
@@ -246,7 +310,7 @@ class CollectorService:
             "skipped_reason": None,
         }
 
-        rdata = await self.fetch_nideriji_data(account.auth_token)
+        rdata = await self.fetch_nideriji_data_for_account(account)
         all_diaries: list[dict[str, Any]] = []
         for key in ("diaries", "diaries_paired"):
             value = rdata.get(key)
@@ -415,7 +479,7 @@ class CollectorService:
         await self.db.commit()
 
         try:
-            rdata = await self.fetch_nideriji_data(account.auth_token)
+            rdata = await self.fetch_nideriji_data_for_account(account)
 
             await self._save_user_info(rdata['user_config'], account_id)
 

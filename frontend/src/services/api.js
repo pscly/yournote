@@ -6,6 +6,8 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  // 避免后端不可达/卡住导致前端一直转圈（尤其是仪表盘/用户页的初始加载）。
+  timeout: 10000,
 });
 
 // 账号管理
@@ -16,12 +18,18 @@ export const accountAPI = {
   delete: (id) => api.delete(`/accounts/${id}`),
   validate: (id) => api.post(`/accounts/${id}/validate`),
   validateToken: (data) => api.post('/accounts/validate-token', data),
+  updateToken: (id, data) => api.put(`/accounts/${id}/token`, data),
 };
 
 // 数据同步
 export const syncAPI = {
-  trigger: (accountId) => api.post(`/sync/trigger/${accountId}`),
+  trigger: (accountId) => api.post(`/sync/trigger/${accountId}`),     
   logs: (params) => api.get('/sync/logs', { params }),
+};
+
+// 仪表盘统计
+export const statsAPI = {
+  overview: () => api.get('/stats/overview'),
 };
 
 // 日记查询

@@ -20,7 +20,8 @@ export default function DiaryDetail() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [pairedUserId, setPairedUserId] = useState(null);
-  const [drawerVisible, setDrawerVisible] = useState(false);        
+  const [pairUsers, setPairUsers] = useState({ main: null, matched: null });
+  const [drawerVisible, setDrawerVisible] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
   useEffect(() => {
@@ -36,12 +37,16 @@ export default function DiaryDetail() {
   }, [id]);
 
   useEffect(() => {
-    if (diary && showMatched && pairedUserId) {
+    if (!diary) return;
+
+    const hasPair = !!(pairUsers?.main?.id && pairUsers?.matched?.id);
+    if (showMatched && (hasPair || pairedUserId)) {
       loadMatchedDiaries();
-    } else if (diary && !showMatched) {
-      loadMyDiaries();
+      return;
     }
-  }, [showMatched, diary, pairedUserId]);
+
+    loadMyDiaries();
+  }, [showMatched, diary, pairedUserId, pairUsers]);
 
   const loadData = async () => {
     try {
@@ -50,9 +55,14 @@ export default function DiaryDetail() {
       const currentDiary = diaryRes.data;
       setDiary(currentDiary);
 
-      await loadMyDiaries(currentDiary.user_id);
-      await loadPairedUser(currentDiary.account_id, currentDiary.user_id);
-      await loadHistory();
+      setPairedUserId(null);
+      setPairUsers({ main: null, matched: null });
+
+      await Promise.all([
+        loadMyDiaries(currentDiary.user_id),
+        loadPairedUser(currentDiary.account_id, currentDiary.user_id),
+        loadHistory(),
+      ]);
     } catch {
       message.error('加载失败');
     } finally {
@@ -60,13 +70,20 @@ export default function DiaryDetail() {
     }
   };
 
+  const getDiaryTimestamp = (item) => {
+    const raw = item?.created_time || item?.created_date;
+    const ts = new Date(raw).getTime();
+    if (Number.isNaN(ts)) return 0;
+    return ts;
+  };
+
   const loadMyDiaries = async (userId = null) => {
     try {
       const uid = userId || diary.user_id;
       const listRes = await diaryAPI.list({ user_id: uid, limit: 100 });
-      const sorted = listRes.data.sort((a, b) =>
-        new Date(b.created_date) - new Date(a.created_date)
-      );
+      const sorted = (listRes.data || []).slice().sort((a, b) => (
+        getDiaryTimestamp(b) - getDiaryTimestamp(a)
+      ));
       setDiaryList(sorted);
     } catch {
       console.error('加载日记列表失败');
@@ -76,35 +93,57 @@ export default function DiaryDetail() {
   const loadPairedUser = async (accountId, currentUserId) => {
     try {
       const res = await userAPI.paired(accountId);
-      if (res.data && res.data.length > 0) {
-        const pairedRelation = res.data[0];
-        if (pairedRelation.user && pairedRelation.paired_user) {
-          const pairedId = pairedRelation.user.nideriji_userid === currentUserId
-            ? pairedRelation.paired_user.nideriji_userid
-            : pairedRelation.user.nideriji_userid;
-          setPairedUserId(pairedId);
-        }
+      const relationships = res.data || [];
+      const matchedRel = relationships.find((r) =>
+        r?.user?.id === currentUserId || r?.paired_user?.id === currentUserId
+      ) || relationships[0];
+
+      if (!matchedRel?.user?.id || !matchedRel?.paired_user?.id) {
+        setPairedUserId(null);
+        setPairUsers({ main: null, matched: null });
+        setShowMatched(false);
+        return;
       }
+
+      setPairUsers({ main: matchedRel.user, matched: matchedRel.paired_user });
+
+      const otherUserId = matchedRel.user.id === currentUserId
+        ? matchedRel.paired_user.id
+        : matchedRel.user.id;
+      setPairedUserId(otherUserId);
     } catch {
       console.error('加载配对用户失败');
     }
   };
 
   const loadMatchedDiaries = async () => {
-    if (!pairedUserId) return;
+    const ids = new Set();
+    if (pairUsers?.main?.id) ids.add(pairUsers.main.id);
+    if (pairUsers?.matched?.id) ids.add(pairUsers.matched.id);
+    if (diary?.user_id) ids.add(diary.user_id);
+    if (pairedUserId) ids.add(pairedUserId);
+
+    const userIds = Array.from(ids).filter(Boolean);
+    if (userIds.length <= 1) {
+      await loadMyDiaries(userIds[0] || diary.user_id);
+      return;
+    }
 
     try {
-      const [myRes, pairedRes] = await Promise.all([
-        diaryAPI.list({ user_id: diary.user_id, limit: 100 }),
-        diaryAPI.list({ user_id: pairedUserId, limit: 100 })
-      ]);
-
-      const myDiaries = myRes.data.map(d => ({ ...d, owner: 'me' }));
-      const pairedDiaries = pairedRes.data.map(d => ({ ...d, owner: 'partner' }));
-
-      const merged = [...myDiaries, ...pairedDiaries].sort((a, b) =>
-        new Date(b.created_date) - new Date(a.created_date)
+      const results = await Promise.all(
+        userIds.map((uid) => diaryAPI.list({ user_id: uid, limit: 100 }))
       );
+
+      const map = new Map();
+      results.forEach((res) => {
+        (res.data || []).forEach((d) => {
+          if (d?.id) map.set(d.id, d);
+        });
+      });
+
+      const merged = Array.from(map.values()).sort((a, b) => (
+        getDiaryTimestamp(b) - getDiaryTimestamp(a)
+      ));
 
       setDiaryList(merged);
     } catch {
@@ -169,9 +208,19 @@ export default function DiaryDetail() {
     }
   };
 
+  const getDiaryOwner = (item) => {
+    if (pairUsers?.matched?.id && item?.user_id === pairUsers.matched.id) return 'matched';
+    if (pairUsers?.main?.id && item?.user_id === pairUsers.main.id) return 'main';
+    if (diary?.user_id && item?.user_id === diary.user_id) return 'main';
+    return 'main';
+  };
+
   const getBorderColor = (item) => {
-    if (!showMatched) return '#1890ff';
-    return item.owner === 'me' ? '#1890ff' : '#ff85c0';
+    return getDiaryOwner(item) === 'matched' ? '#ff85c0' : '#1890ff';
+  };
+
+  const getActiveBgColor = (item) => {
+    return getDiaryOwner(item) === 'matched' ? '#fff0f6' : '#e6f7ff';
   };
 
   if (loading) {
@@ -200,23 +249,29 @@ export default function DiaryDetail() {
         background: '#fafafa'
       }}>
         <Title level={4} style={{ margin: '0 0 16px 0' }}>日记列表</Title>
-        <Space direction="vertical" style={{ width: '100%' }}>
-          <div style={{ display: 'flex', alignItems: 'center' }}>
-            <Switch
-              checked={showMatched}
-              onChange={setShowMatched}
-              disabled={!pairedUserId}
-            />
-            <span style={{ marginLeft: 8, fontSize: '14px' }}>显示匹配日记</span>
-          </div>
-          {showMatched && (
-            <div style={{ fontSize: '12px', color: '#999' }}>
-              <div><span style={{ display: 'inline-block', width: 12, height: 12, background: '#1890ff', marginRight: 6, borderRadius: 2 }}></span>我的日记</div>
-              <div><span style={{ display: 'inline-block', width: 12, height: 12, background: '#ff85c0', marginRight: 6, borderRadius: 2 }}></span>TA的日记</div>
+          <Space direction="vertical" style={{ width: '100%' }}>
+            <div style={{ display: 'flex', alignItems: 'center' }}>
+              <Switch
+                checked={showMatched}
+                onChange={setShowMatched}
+                disabled={!(pairUsers?.main?.id && pairUsers?.matched?.id)}
+              />
+              <span style={{ marginLeft: 8, fontSize: '14px' }}>显示匹配日记</span>
             </div>
-          )}
-        </Space>
-      </div>
+            {pairUsers?.main?.id && pairUsers?.matched?.id && (
+              <div style={{ fontSize: '12px', color: '#999' }}>
+                <div>
+                  <span style={{ display: 'inline-block', width: 12, height: 12, background: '#1890ff', marginRight: 6, borderRadius: 2 }}></span>
+                  主用户{pairUsers.main?.name ? `：${pairUsers.main.name}` : ''}
+                </div>
+                <div>
+                  <span style={{ display: 'inline-block', width: 12, height: 12, background: '#ff85c0', marginRight: 6, borderRadius: 2 }}></span>
+                  被匹配用户{pairUsers.matched?.name ? `：${pairUsers.matched.name}` : ''}
+                </div>
+              </div>
+            )}
+          </Space>
+        </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
         <List
@@ -231,7 +286,7 @@ export default function DiaryDetail() {
               style={{
                 marginBottom: 12,
                 borderLeft: `4px solid ${getBorderColor(item)}`,
-                background: item.id === parseInt(id) ? '#e6f7ff' : '#fff',
+                background: item.id === parseInt(id) ? getActiveBgColor(item) : '#fff',
                 cursor: 'pointer'
               }}
               bodyStyle={{ padding: '12px 16px' }}
@@ -277,7 +332,7 @@ export default function DiaryDetail() {
         width: '100%',
         minWidth: 0
       }}>
-        <Space direction="vertical" size="large" style={{ width: '100%' }}>
+        <Space direction="vertical" size={isMobile ? 'middle' : 'large'} style={{ width: '100%' }}>
           <div
             style={{
               position: 'sticky',
@@ -285,19 +340,19 @@ export default function DiaryDetail() {
               zIndex: 20,
               background: 'rgba(245,245,245,0.92)',
               backdropFilter: 'blur(8px)',
-              padding: '12px 0',
+              padding: isMobile ? '8px 0' : '12px 0',
               borderBottom: '1px solid rgba(0,0,0,0.06)'
             }}
           >
-            <Space wrap size="middle">
-              <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)} size="large">
+            <Space wrap size={isMobile ? 'small' : 'middle'} style={{ width: '100%' }}>
+              <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)} size={isMobile ? 'middle' : 'large'}>
                 返回
               </Button>
-              <Button onClick={refreshDiary} loading={refreshing} size="large">
-                重新访问此日记详情（强制更新）
+              <Button onClick={refreshDiary} loading={refreshing} size={isMobile ? 'middle' : 'large'}>
+                {isMobile ? '刷新详情' : '重新访问此日记详情（强制更新）'}
               </Button>
               {isMobile && (
-                <Button icon={<MenuOutlined />} onClick={() => setDrawerVisible(true)} size="large">
+                <Button icon={<MenuOutlined />} onClick={() => setDrawerVisible(true)} size={isMobile ? 'middle' : 'large'}>
                   日记列表
                 </Button>
               )}
@@ -313,21 +368,21 @@ export default function DiaryDetail() {
             bodyStyle={{ padding: isMobile ? 16 : 24 }}
           >
             <div style={{ maxWidth: 920, margin: '0 auto' }}>
-              <Title level={2} style={{ marginBottom: 16 }}>
+              <Title level={isMobile ? 3 : 2} style={{ marginBottom: 16 }}>
                 {diary.title || '无标题'}
               </Title>
 
-              <Space size="middle" wrap style={{ marginBottom: 24 }}>
-                <Tag icon={<CalendarOutlined />} color="blue" style={{ padding: '4px 12px', fontSize: '14px' }}>
+              <Space size={isMobile ? 'small' : 'middle'} wrap style={{ marginBottom: isMobile ? 16 : 24 }}>
+                <Tag icon={<CalendarOutlined />} color="blue" style={{ padding: isMobile ? '2px 10px' : '4px 12px', fontSize: isMobile ? '13px' : '14px' }}>
                   {diary.created_date}
                 </Tag>
                 {diary.mood && (
-                  <Tag icon={<SmileOutlined />} color="orange" style={{ padding: '4px 12px', fontSize: '14px' }}>
+                  <Tag icon={<SmileOutlined />} color="orange" style={{ padding: isMobile ? '2px 10px' : '4px 12px', fontSize: isMobile ? '13px' : '14px' }}>
                     {diary.mood}
                   </Tag>
                 )}
                 {diary.weather && (
-                  <Tag icon={<CloudOutlined />} color="cyan" style={{ padding: '4px 12px', fontSize: '14px' }}>
+                  <Tag icon={<CloudOutlined />} color="cyan" style={{ padding: isMobile ? '2px 10px' : '4px 12px', fontSize: isMobile ? '13px' : '14px' }}>
                     {diary.weather}
                   </Tag>
                 )}

@@ -1,69 +1,139 @@
-import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
-import { Layout, Menu } from 'antd';
-import { DashboardOutlined, UserOutlined, BookOutlined, TeamOutlined } from '@ant-design/icons';
+import { useMemo, useState } from 'react';
+import { BrowserRouter, Link, Route, Routes, useLocation } from 'react-router-dom';
+import { Button, Drawer, Grid, Layout, Menu, Space, Typography } from 'antd';
+import { BookOutlined, DashboardOutlined, HistoryOutlined, TeamOutlined, UserOutlined } from '@ant-design/icons';
+import { MenuOutlined } from '@ant-design/icons';
 import Dashboard from './pages/Dashboard';
 import AccountManage from './pages/AccountManage';
 import DiaryList from './pages/DiaryList';
 import DiaryDetail from './pages/DiaryDetail';
 import AllUsers from './pages/AllUsers';
 import UserDetail from './pages/UserDetail';
+import SyncLogs from './pages/SyncLogs';
+import SyncMonitor from './components/SyncMonitor';
 import './App.css';
 
 const { Header, Content } = Layout;
 const APP_HEADER_HEIGHT = 'var(--app-header-height)';
 
-function App() {
-  return (
-    <BrowserRouter>
-      <Layout style={{ minHeight: '100vh' }}>
-        <Header
-          style={{
-            position: 'fixed',
-            top: 0,
-            zIndex: 1000,
-            width: '100%',
-            height: APP_HEADER_HEIGHT,
-            display: 'flex',
-            alignItems: 'center',
-            paddingInline: 24
-          }}
+function AppHeaderMenu() {
+  const location = useLocation();
+  const screens = Grid.useBreakpoint();
+  const isMobile = !screens.md;
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  const pathname = location.pathname || '/';
+  const selectedKey = (() => {
+    if (pathname.startsWith('/accounts')) return '/accounts';
+    if (pathname.startsWith('/diaries') || pathname.startsWith('/diary/')) return '/diaries';
+    if (pathname.startsWith('/users') || pathname.startsWith('/user/')) return '/users';
+    if (pathname.startsWith('/sync-logs')) return '/sync-logs';
+    return '/';
+  })();
+
+  const items = useMemo(() => ([
+    { key: '/', icon: <DashboardOutlined />, label: <Link to="/">仪表盘</Link> },
+    { key: '/accounts', icon: <UserOutlined />, label: <Link to="/accounts">账号管理</Link> },
+    { key: '/diaries', icon: <BookOutlined />, label: <Link to="/diaries">日记列表</Link> },
+    { key: '/users', icon: <TeamOutlined />, label: <Link to="/users">所有用户</Link> },
+    { key: '/sync-logs', icon: <HistoryOutlined />, label: <Link to="/sync-logs">同步记录</Link> },
+  ]), []);
+
+  if (isMobile) {
+    return (
+      <>
+        <Button
+          type="text"
+          icon={<MenuOutlined style={{ color: 'white', fontSize: 18 }} />}
+          onClick={() => setDrawerOpen(true)}
+          aria-label="打开菜单"
+        />
+        <Drawer
+          title="菜单"
+          placement="left"
+          open={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
+          width={280}
         >
-          <div style={{ color: 'white', fontSize: 20, marginRight: 24, whiteSpace: 'nowrap' }}>
-            YourNote
-          </div>
           <Menu
-            theme="dark"
-            mode="horizontal"
-            defaultSelectedKeys={['1']}
-            style={{ flex: 1, minWidth: 0 }}
-          >
-            <Menu.Item key="1" icon={<DashboardOutlined />}>
-              <Link to="/">仪表盘</Link>
-            </Menu.Item>
-            <Menu.Item key="2" icon={<UserOutlined />}>
-              <Link to="/accounts">账号管理</Link>
-            </Menu.Item>
-            <Menu.Item key="3" icon={<BookOutlined />}>
-              <Link to="/diaries">日记列表</Link>
-            </Menu.Item>
-            <Menu.Item key="4" icon={<TeamOutlined />}>
-              <Link to="/users">所有用户</Link>
-            </Menu.Item>
-          </Menu>
-        </Header>
-        <Content className="app-content" style={{ marginTop: APP_HEADER_HEIGHT }}>
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/accounts" element={<AccountManage />} />
-            <Route path="/diaries" element={<DiaryList />} />
-            <Route path="/diary/:id" element={<DiaryDetail />} />
-            <Route path="/users" element={<AllUsers />} />
-            <Route path="/user/:id" element={<UserDetail />} />
-          </Routes>
-        </Content>
-      </Layout>
-    </BrowserRouter>
+            mode="inline"
+            selectedKeys={[selectedKey]}
+            items={items}
+            onClick={() => setDrawerOpen(false)}
+          />
+        </Drawer>
+      </>
+    );
+  }
+
+  return (
+    <Menu
+      theme="dark"
+      mode="horizontal"
+      selectedKeys={[selectedKey]}
+      style={{ flex: 1, minWidth: 0 }}
+      items={items}
+    />
   );
 }
 
-export default App;
+function AppShell() {
+  const screens = Grid.useBreakpoint();
+  const isMobile = !screens.md;
+  const headerPadding = isMobile ? 12 : 24;
+
+  return (
+    <Layout style={{ minHeight: '100vh' }}>
+      <Header
+        style={{
+          position: 'fixed',
+          top: 0,
+          zIndex: 1000,
+          width: '100%',
+          height: APP_HEADER_HEIGHT,
+          display: 'flex',
+          alignItems: 'center',
+          paddingInline: headerPadding,
+          gap: 12,
+        }}
+      >
+        <Space align="center" style={{ flex: 1, minWidth: 0 }} size={12}>
+          <Typography.Title
+            level={4}
+            style={{
+              color: 'white',
+              margin: 0,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            YourNote
+          </Typography.Title>
+          <AppHeaderMenu />
+        </Space>
+        <div>
+          <SyncMonitor />
+        </div>
+      </Header>
+
+      <Content className="app-content" style={{ marginTop: APP_HEADER_HEIGHT }}>
+        <Routes>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/accounts" element={<AccountManage />} />
+          <Route path="/diaries" element={<DiaryList />} />
+          <Route path="/diary/:id" element={<DiaryDetail />} />
+          <Route path="/users" element={<AllUsers />} />
+          <Route path="/user/:id" element={<UserDetail />} />
+          <Route path="/sync-logs" element={<SyncLogs />} />
+        </Routes>
+      </Content>
+    </Layout>
+  );
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <AppShell />
+    </BrowserRouter>
+  );
+}

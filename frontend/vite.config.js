@@ -6,6 +6,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: true,
+    allowedHosts: ['2.pscly.cn'],
     port: 31011,
     strictPort: true,
     proxy: {

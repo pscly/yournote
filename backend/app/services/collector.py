@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import requests
@@ -385,6 +385,10 @@ class CollectorService:
         if not account:
             raise ValueError(f"Account {account_id} not found")
 
+        log = await self._start_sync_log(account_id)
+        # 先提交“running”日志，便于前端实时显示“正在更新中”。
+        await self.db.commit()
+
         try:
             rdata = await self.fetch_nideriji_data(account.auth_token)
 
@@ -413,7 +417,13 @@ class CollectorService:
                     account.auth_token,
                 )
 
-            await self._log_sync(account_id, 'success', diaries_count, paired_diaries_count)
+            await self._finish_sync_log(
+                log,
+                status='success',
+                diaries_count=diaries_count,
+                paired_diaries_count=paired_diaries_count,
+                error_message=None,
+            )
             await self.db.commit()
 
             return {
@@ -422,7 +432,13 @@ class CollectorService:
                 'paired_diaries_count': paired_diaries_count
             }
         except Exception as e:
-            await self._log_sync(account_id, 'failed', 0, 0, str(e))
+            await self._finish_sync_log(
+                log,
+                status='failed',
+                diaries_count=0,
+                paired_diaries_count=0,
+                error_message=str(e),
+            )
             await self.db.commit()
             raise
 
@@ -657,14 +673,32 @@ class CollectorService:
 
         return count
 
-    async def _log_sync(self, account_id: int, status: str, diaries_count: int,
-                       paired_diaries_count: int, error_message: str = None):
-        """记录同步日志"""
+    async def _start_sync_log(self, account_id: int) -> SyncLog:
+        """创建一条“running”同步日志并返回（需要后续 finish 更新）。"""
         log = SyncLog(
             account_id=account_id,
-            status=status,
-            diaries_count=diaries_count,
-            paired_diaries_count=paired_diaries_count,
-            error_message=error_message
+            # SQLite 的 CURRENT_TIMESTAMP 默认是 UTC 但不带时区；这里明确写入 UTC，避免前端解析偏差。
+            sync_time=datetime.now(timezone.utc),
+            status='running',
+            diaries_count=None,
+            paired_diaries_count=None,
+            error_message=None,
         )
         self.db.add(log)
+        await self.db.flush()
+        return log
+
+    async def _finish_sync_log(
+        self,
+        log: SyncLog,
+        *,
+        status: str,
+        diaries_count: int,
+        paired_diaries_count: int,
+        error_message: str | None,
+    ) -> None:
+        """更新同步日志为最终状态。"""
+        log.status = status
+        log.diaries_count = diaries_count
+        log.paired_diaries_count = paired_diaries_count
+        log.error_message = error_message

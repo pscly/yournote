@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Form, Input, message, Modal, Table, Tag, Tooltip } from 'antd';
+import { Alert, Button, Form, Grid, Input, message, Modal, Table, Tag, Tooltip, Typography } from 'antd';
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
-import { accountAPI, syncAPI } from '../services/api';
+import { accountAPI } from '../services/api';
 import { NIDERIJI_TOKEN } from '../config';
+import { waitForLatestSyncLog } from '../utils/sync';
+
+const { Title } = Typography;
 
 function formatDateTime(value) {
   if (!value) return '-';
@@ -12,11 +15,17 @@ function formatDateTime(value) {
 }
 
 export default function AccountManage() {
+  const screens = Grid.useBreakpoint();
+  const isMobile = !screens.md;
+  const pagePadding = isMobile ? 12 : 24;
   const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
+  const [tokenModalVisible, setTokenModalVisible] = useState(false);
+  const [tokenAccount, setTokenAccount] = useState(null);
   const [checkingIds, setCheckingIds] = useState(() => new Set());
   const [form] = Form.useForm();
+  const [tokenForm] = Form.useForm();
 
   useEffect(() => {
     loadAccounts();
@@ -83,27 +92,35 @@ export default function AccountManage() {
       loadAccounts();
 
       if (account?.id) {
+        const startedAt = Date.now();
         const msgKey = `sync-${account.id}`;
-        message.open({ key: msgKey, type: 'loading', content: '正在采集日记（包含配对用户）...', duration: 0 });
+        message.open({ key: msgKey, type: 'loading', content: '后台正在更新中（自动采集日记）...', duration: 0 });
 
         (async () => {
-          try {
-            const syncRes = await syncAPI.trigger(account.id);
-            const result = syncRes?.data;
-            const diariesCount = result?.diaries_count ?? '-';
-            const pairedCount = result?.paired_diaries_count ?? '-';
+          const log = await waitForLatestSyncLog(account.id, startedAt, { timeoutMs: 60000 });
+          if (!log) {
+            message.open({
+              key: msgKey,
+              type: 'info',
+              content: '已开始后台更新（可能需要更久，请稍后在仪表盘/同步记录查看结果）',
+            });
+            return;
+          }
+
+          if (log.status === 'success') {
             message.open({
               key: msgKey,
               type: 'success',
-              content: `采集完成：我的日记 ${diariesCount} 条，配对日记 ${pairedCount} 条`,
+              content: `更新完成：我的日记 ${log.diaries_count ?? '-'} 条，配对日记 ${log.paired_diaries_count ?? '-'} 条`,
             });
-          } catch (e) {
-            message.open({
-              key: msgKey,
-              type: 'warning',
-              content: '账号已添加，但自动采集失败：' + (e?.message || '未知错误'),
-            });
+            return;
           }
+
+          message.open({
+            key: msgKey,
+            type: 'warning',
+            content: `更新失败：${log.error_message || '未知错误'}`,
+          });
         })();
       }
     } catch (error) {
@@ -118,6 +135,50 @@ export default function AccountManage() {
       loadAccounts();
     } catch (error) {
       message.error('删除失败: ' + error.message);
+    }
+  };
+
+  const openUpdateToken = (record) => {
+    setTokenAccount(record);
+    tokenForm.resetFields();
+    setTokenModalVisible(true);
+  };
+
+  const handleUpdateToken = async (values) => {
+    const accountId = tokenAccount?.id;
+    if (!accountId) return;
+
+    const msgKey = `sync-${accountId}`;
+    try {
+      message.open({ key: msgKey, type: 'loading', content: '正在更新 Token 并校验...', duration: 0 });
+      await accountAPI.updateToken(accountId, values);
+      message.open({ key: msgKey, type: 'success', content: 'Token 更新成功，已触发后台同步' });
+      setTokenModalVisible(false);
+      setTokenAccount(null);
+      tokenForm.resetFields();
+      loadAccounts();
+
+      (async () => {
+        const startedAt = Date.now();
+        const log = await waitForLatestSyncLog(accountId, startedAt, { timeoutMs: 15000 });
+        if (!log) return;
+
+        if (log.status === 'success') {
+          message.open({
+            key: msgKey,
+            type: 'success',
+            content: `更新完成：我的日记 ${log.diaries_count ?? '-'} 条，配对日记 ${log.paired_diaries_count ?? '-'} 条`,
+          });
+        } else if (log.status === 'failed') {
+          message.open({
+            key: msgKey,
+            type: 'warning',
+            content: `更新失败：${log.error_message || '未知错误'}`,
+          });
+        }
+      })();
+    } catch (error) {
+      message.open({ key: msgKey, type: 'error', content: 'Token 更新失败: ' + error.message });
     }
   };
 
@@ -181,15 +242,23 @@ export default function AccountManage() {
       key: 'action',
       width: 120,
       render: (_, record) => (
-        <Button danger icon={<DeleteOutlined />} onClick={() => handleDelete(record.id)}>
-          删除
-        </Button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Button onClick={() => openUpdateToken(record)}>
+            更新Token
+          </Button>
+          <Button danger icon={<DeleteOutlined />} onClick={() => handleDelete(record.id)}>
+            删除
+          </Button>
+        </div>
       ),
     },
   ];
 
   return (
-    <div style={{ padding: '24px' }}>
+    <div style={{ padding: pagePadding }}>
+      <Title level={3} style={{ marginTop: 0 }}>
+        账号管理
+      </Title>
       {invalidAccounts.length > 0 && (
         <Alert
           style={{ marginBottom: '16px' }}
@@ -225,6 +294,33 @@ export default function AccountManage() {
             name="auth_token"
             label="Token"
             rules={[{ required: true, message: '请输入 Token' }]}
+          >
+            <Input.TextArea rows={4} placeholder="形如：token eyJhbGci..." />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={`更新 Token${tokenAccount?.user_name ? `（${tokenAccount.user_name}）` : ''}`}
+        open={tokenModalVisible}
+        onCancel={() => {
+          setTokenModalVisible(false);
+          setTokenAccount(null);
+        }}
+        onOk={() => tokenForm.submit()}
+      >
+        <Alert
+          style={{ marginBottom: 12 }}
+          type="info"
+          showIcon
+          message="只会更新当前账号的 Token"
+          description="后端会远程校验 Token，并确保 Token 对应的 userid 与该账号一致；更新成功后会自动触发后台同步。"
+        />
+        <Form form={tokenForm} onFinish={handleUpdateToken} layout="vertical">
+          <Form.Item
+            name="auth_token"
+            label="新 Token"
+            rules={[{ required: true, message: '请输入新 Token' }]}
           >
             <Input.TextArea rows={4} placeholder="形如：token eyJhbGci..." />
           </Form.Item>

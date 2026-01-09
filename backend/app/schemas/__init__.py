@@ -3,6 +3,7 @@ from .user import UserResponse
 from .diary import DiaryResponse
 from .diary_refresh import DiaryRefreshInfo, DiaryRefreshResponse
 from .sync import SyncResponse
+from .stats import StatsOverviewResponse
 
 __all__ = [
     "AccountCreate",
@@ -14,4 +15,5 @@ __all__ = [
     "DiaryRefreshInfo",
     "DiaryRefreshResponse",
     "SyncResponse",
+    "StatsOverviewResponse",
 ]

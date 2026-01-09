@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
 from .database import init_db
 from .api import accounts_router, sync_router, diaries_router, users_router, diary_history_router
+from .api import stats_router
 from .scheduler import scheduler
 
 app = FastAPI(
@@ -27,6 +28,7 @@ app.include_router(sync_router, prefix=settings.api_prefix)
 app.include_router(diaries_router, prefix=settings.api_prefix)
 app.include_router(users_router, prefix=settings.api_prefix)
 app.include_router(diary_history_router, prefix=settings.api_prefix)
+app.include_router(stats_router, prefix=settings.api_prefix)
 
 
 @app.on_event("startup")

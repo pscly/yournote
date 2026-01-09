@@ -50,6 +50,7 @@ uv run python run.py
 - `DELETE /api/accounts/{id}` - 删除账号
 - `POST /api/accounts/{id}/validate` - 远程校验账号 Token 是否可用
 - `POST /api/accounts/validate-token` - 远程校验任意 Token（不落库）
+- `PUT /api/accounts/{id}/token` - 更新指定账号 Token（校验 userid 匹配并自动触发同步）
 
 ### 数据同步
 - `POST /api/sync/trigger/{account_id}` - 触发同步
@@ -79,6 +80,8 @@ curl -X POST "http://localhost:31012/api/accounts" \
     "auth_token": "token eyJhbGci..."
   }'
 ```
+
+说明：添加/更新账号成功后，后端会自动在后台触发一次同步（包含配对用户日记）。
 
 ### 2. 触发数据同步
 

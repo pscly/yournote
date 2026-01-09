@@ -17,7 +17,7 @@ echo ========================================
 echo start ok
 echo ========================================
 echo.
-echo  http://localhost:8000
-echo  http://localhost:5173
+echo  http://localhost:31012
+echo  http://localhost:31011
 echo.
 pause >nul

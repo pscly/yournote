@@ -12,6 +12,7 @@ from ..database import get_db
 from ..models import Account, User
 from ..schemas import AccountCreate, AccountResponse, TokenStatus, TokenValidateRequest
 from ..services.collector import CollectorService
+from ..services.background import schedule_account_sync
 from ..utils.token import get_token_status
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
@@ -131,6 +132,7 @@ async def create_account(
         await collector._save_user_info(user_config, existing.id)
         await db.commit()
         await db.refresh(existing)
+        schedule_account_sync(existing.id)
         return _build_account_response(existing, user_name=user_name, token_status=token_status)
 
     new_account = Account(
@@ -144,6 +146,7 @@ async def create_account(
     await collector._save_user_info(user_config, new_account.id)
     await db.commit()
     await db.refresh(new_account)
+    schedule_account_sync(new_account.id)
     return _build_account_response(new_account, user_name=user_name, token_status=token_status)
 
 
@@ -203,6 +206,69 @@ async def validate_account_token(
         raise HTTPException(status_code=404, detail="Account not found")
 
     return await _remote_validate_token(account.auth_token, db=db)
+
+
+@router.put("/{account_id}/token", response_model=AccountResponse)
+async def update_account_token(
+    account_id: int,
+    body: TokenValidateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """更新指定账号的 token，并自动触发后台同步。
+
+    安全约束：
+    - 会先远程校验 token
+    - 校验 token 对应的 userid 必须与该账号绑定的 nideriji_userid 一致
+    """
+    result = await db.execute(select(Account).where(Account.id == account_id))
+    account = result.scalar_one_or_none()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    collector = CollectorService(db)
+    try:
+        rdata = await collector.fetch_nideriji_data(body.auth_token)
+    except requests.HTTPError as e:
+        status_code = getattr(getattr(e, "response", None), "status_code", None)
+        detail = "Token 无效或已失效"
+        if isinstance(status_code, int):
+            detail = f"{detail} (HTTP {status_code})"
+        raise HTTPException(status_code=400, detail=detail) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取账号信息失败: {e}") from e
+
+    user_config = rdata.get("user_config") or {}
+    token_userid = user_config.get("userid")
+    if not isinstance(token_userid, int):
+        raise HTTPException(status_code=500, detail="上游返回缺少 userid，无法更新 token")
+
+    if token_userid != account.nideriji_userid:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Token 用户不匹配：该账号 userid={account.nideriji_userid}，但 token 对应 userid={token_userid}",
+        )
+
+    email = user_config.get("useremail")
+    if email is not None and not isinstance(email, str):
+        email = None
+
+    user_name = user_config.get("name")
+    if user_name is not None and not isinstance(user_name, str):
+        user_name = None
+
+    account.auth_token = body.auth_token
+    account.email = email
+    account.is_active = True
+    await collector._save_user_info(user_config, account.id)
+    await db.commit()
+    await db.refresh(account)
+
+    schedule_account_sync(account.id)
+    token_status = TokenStatus(
+        **get_token_status(body.auth_token),
+        checked_at=datetime.now(timezone.utc),
+    )
+    return _build_account_response(account, user_name=user_name, token_status=token_status)
 
 
 @router.delete("/{account_id}")

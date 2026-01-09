@@ -1,14 +1,27 @@
-import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { Card, Descriptions, Table, Button, Spin, message, Tag } from 'antd';
+import { useEffect, useMemo, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { Button, Card, Descriptions, Grid, List, Space, Spin, Table, Tag, Typography, message } from 'antd';
 import { ArrowLeftOutlined } from '@ant-design/icons';
-import { userAPI, diaryAPI } from '../services/api';
+import { accountAPI, diaryAPI, userAPI } from '../services/api';
+
+const { Title, Paragraph, Text } = Typography;
+
+function formatDateTime(value) {
+  if (!value) return '未知';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleString('zh-CN');
+}
 
 export default function UserDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const screens = Grid.useBreakpoint();
+  const isMobile = !screens.md;
+  const pagePadding = isMobile ? 12 : 24;
   const [user, setUser] = useState(null);
   const [diaries, setDiaries] = useState([]);
+  const [pairedRecord, setPairedRecord] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -18,61 +31,193 @@ export default function UserDetail() {
   const loadData = async () => {
     try {
       setLoading(true);
+      setPairedRecord(null);
       const [userRes, diariesRes] = await Promise.all([
         userAPI.get(id),
         diaryAPI.list({ user_id: id, limit: 100 }),
       ]);
       setUser(userRes.data);
-      setDiaries(diariesRes.data);
+      setDiaries(diariesRes.data || []);
+
+      const record = await loadPairedRecord(parseInt(id, 10));
+      setPairedRecord(record);
     } catch (error) {
-      message.error('加载失败');
+      message.error('加载失败: ' + error.message);
     } finally {
       setLoading(false);
     }
   };
 
-  const columns = [
-    { title: '日期', dataIndex: 'created_date', key: 'date', width: 120 },
-    { title: '标题', dataIndex: 'title', key: 'title', width: 200 },
-    { title: '内容', dataIndex: 'content', key: 'content', ellipsis: true },
-    { title: '心情', dataIndex: 'mood', key: 'mood', width: 80, render: (m) => m && <Tag>{m}</Tag> },
-    {
-      title: '操作',
-      key: 'action',
-      width: 100,
-      render: (_, record) => (
-        <Button type="link" onClick={() => navigate(`/diary/${record.id}`)}>查看</Button>
-      ),
-    },
-  ];
+  const loadPairedRecord = async (currentUserId) => {
+    if (!currentUserId || Number.isNaN(currentUserId)) return null;
+
+    const toTime = (value) => {
+      if (!value) return 0;
+      const t = new Date(value).getTime();
+      if (Number.isNaN(t)) return 0;
+      return t;
+    };
+
+    try {
+      const accountsRes = await accountAPI.list();
+      const accounts = accountsRes.data || [];
+      if (accounts.length === 0) return null;
+
+      const pairedCalls = await Promise.allSettled(
+        accounts.map(a => userAPI.paired(a.id)),
+      );
+
+      let best = null;
+      pairedCalls.forEach((res, idx) => {
+        if (res.status !== 'fulfilled') return;
+        const account = accounts[idx];
+        (res.value?.data || []).forEach((p) => {
+          const pairedUserId = p?.paired_user?.id;
+          if (pairedUserId !== currentUserId) return;
+
+          const candidate = {
+            accountId: account?.id,
+            mainUser: p?.user || null,
+            pairedTime: p?.paired_time,
+          };
+
+          if (!best || toTime(candidate.pairedTime) >= toTime(best.pairedTime)) {
+            best = candidate;
+          }
+        });
+      });
+
+      return best;
+    } catch {
+      return null;
+    }
+  };
+
+  const columns = useMemo(() => {
+    return [
+      { title: '日期', dataIndex: 'created_date', key: 'date', width: 120 },    
+      { title: '标题', dataIndex: 'title', key: 'title', width: 220, render: (v) => v || '-' },
+      {
+        title: '内容',
+        dataIndex: 'content',
+        key: 'content',
+        ellipsis: true,
+        render: (v) => v || '-',
+        onCell: (record) => ({
+          onClick: () => navigate(`/diary/${record.id}`),
+          style: { cursor: 'pointer', color: '#1677ff' },
+        }),
+      },
+      { title: '心情', dataIndex: 'mood', key: 'mood', width: 90, render: (m) => (m ? <Tag>{m}</Tag> : '-') },
+    ];
+  }, [navigate]);
 
   if (loading) {
-    return <div style={{ textAlign: 'center', padding: '50px' }}><Spin size="large" /></div>;
+    return (
+      <div style={{ textAlign: 'center', padding: '50px' }}>
+        <Spin size="large" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div style={{ padding: pagePadding }}>
+        <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)}>
+          返回
+        </Button>
+        <Card style={{ marginTop: 16 }}>
+          <div style={{ color: '#999' }}>用户不存在或已被删除。</div>
+        </Card>
+      </div>
+    );
   }
 
   return (
-    <div style={{ padding: '24px' }}>
-      <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)} style={{ marginBottom: 16 }}>
-        返回
-      </Button>
+    <div style={{ padding: pagePadding }}>
+      <Space direction="vertical" style={{ width: '100%' }} size={16}>
+        <div>
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)}>
+            返回
+          </Button>
+        </div>
 
-      <Card title="用户信息" style={{ marginBottom: 16 }}>
-        <Descriptions column={2} bordered>
-          <Descriptions.Item label="用户名">{user.name || '未命名'}</Descriptions.Item>
-          <Descriptions.Item label="用户ID">{user.nideriji_userid}</Descriptions.Item>
-          <Descriptions.Item label="角色">{user.role}</Descriptions.Item>
-          <Descriptions.Item label="日记数">{user.diary_count}</Descriptions.Item>
-          <Descriptions.Item label="字数">{user.word_count}</Descriptions.Item>
-          <Descriptions.Item label="最后登录">
-            {user.last_login_time ? new Date(user.last_login_time).toISOString().slice(0, 19) : '未知'}
-          </Descriptions.Item>
-          <Descriptions.Item label="个性签名" span={2}>{user.description || '无'}</Descriptions.Item>
-        </Descriptions>
-      </Card>
+        <Title level={3} style={{ margin: 0 }}>
+          用户详情
+        </Title>
 
-      <Card title={`日记列表 (${diaries.length})`}>
-        <Table columns={columns} dataSource={diaries} rowKey="id" />
-      </Card>
+        <Card title="用户信息">
+          <Descriptions column={2} bordered size="middle">
+            <Descriptions.Item label="用户名">{user.name || '未命名'}</Descriptions.Item>
+            <Descriptions.Item label="用户ID">{user.nideriji_userid}</Descriptions.Item>
+            <Descriptions.Item label="角色">{user.role || '-'}</Descriptions.Item>
+            <Descriptions.Item label="日记数">{user.diary_count ?? 0}</Descriptions.Item>
+            <Descriptions.Item label="字数">{user.word_count ?? 0}</Descriptions.Item>
+            <Descriptions.Item label="最后登录">{formatDateTime(user.last_login_time)}</Descriptions.Item>
+            <Descriptions.Item label="个性签名" span={2}>
+              {user.description || '无'}
+            </Descriptions.Item>
+          </Descriptions>
+        </Card>
+
+        {pairedRecord?.mainUser?.id && (
+          <Card title="被配对记录">
+            <Descriptions column={2} bordered size="middle">
+              <Descriptions.Item label="主账号">
+                <Tag color="geekblue">
+                  {pairedRecord.mainUser?.name || '未命名'}
+                  {pairedRecord.mainUser?.nideriji_userid ? `（${pairedRecord.mainUser.nideriji_userid}）` : ''}
+                </Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="配对时间">
+                {formatDateTime(pairedRecord.pairedTime)}
+              </Descriptions.Item>
+              <Descriptions.Item label="主账号ID">
+                {pairedRecord.mainUser?.id ?? '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label="账号ID">
+                {pairedRecord.accountId ?? '-'}
+              </Descriptions.Item>
+            </Descriptions>
+          </Card>
+        )}
+
+        <Card title={`日记列表（${diaries.length}）`}>
+          {isMobile ? (
+            <List
+              dataSource={diaries}
+              locale={{ emptyText: '暂无日记' }}
+              renderItem={(item) => (
+                <Card
+                  hoverable
+                  style={{ marginBottom: 12 }}
+                  onClick={() => navigate(`/diary/${item.id}`)}
+                  bodyStyle={{ padding: 14 }}
+                >
+                  <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                    <Space wrap size={8}>
+                      <Tag color="blue">{item.created_date || '未知日期'}</Tag>
+                      {item.mood && <Tag>{item.mood}</Tag>}
+                    </Space>
+                    <Text strong>{item.title || '无标题'}</Text>
+                    <Paragraph style={{ margin: 0, color: '#666' }} ellipsis={{ rows: 2 }}>
+                      {item.content || '-'}
+                    </Paragraph>
+                  </Space>
+                </Card>
+              )}
+            />
+          ) : (
+            <Table
+              columns={columns}
+              dataSource={diaries}
+              rowKey="id"
+              pagination={{ pageSize: 20 }}
+              scroll={{ x: 800 }}
+            />
+          )}
+        </Card>
+      </Space>
     </div>
   );
 }

@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import requests
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import (
@@ -58,6 +58,31 @@ class CollectorService:
         if is_simple == 1:
             return True
         return self._content_len(content) < self._DETAIL_CONTENT_MIN_LEN
+
+    async def _get_account_diary_totals(
+        self,
+        *,
+        account_id: int,
+        main_user_id: int,
+    ) -> tuple[int, int]:
+        """获取账号的“我的日记总数 / 配对日记总数”。
+
+        说明：
+        - “我的日记”：该账号主用户写的日记数量。
+        - “配对日记”：同一账号下，除主用户外的所有用户日记数量之和。
+        """
+
+        my_total = await self.db.scalar(
+            select(func.count())
+            .select_from(Diary)
+            .where(Diary.account_id == account_id, Diary.user_id == main_user_id)
+        )
+        paired_total = await self.db.scalar(
+            select(func.count())
+            .select_from(Diary)
+            .where(Diary.account_id == account_id, Diary.user_id != main_user_id)
+        )
+        return int(my_total or 0), int(paired_total or 0)
 
     async def _get_detail_fetch_state_map(self, diary_db_ids: list[int]) -> dict[int, DiaryDetailFetch]:
         if not diary_db_ids:
@@ -394,27 +419,40 @@ class CollectorService:
 
             await self._save_user_info(rdata['user_config'], account_id)
 
+            # 注意：_save_diaries 的返回值是“本次新增日记数”，并非“当前总数”。
+            # 仪表盘与同步日志展示需要的是“总数”，否则二次同步很容易显示为 0。
+            main_user = await self.db.scalar(
+                select(User).where(User.nideriji_userid == rdata["user_config"]["userid"])
+            )
+
             if rdata['user_config'].get('paired_user_config'):
                 await self._save_paired_user_info(
                     rdata['user_config']['paired_user_config'],
                     account_id
                 )
 
-            diaries_count = await self._save_diaries(
+            await self._save_diaries(
                 rdata['diaries'],
                 account_id,
                 rdata['user_config']['userid'],
                 account.auth_token,
             )
 
-            paired_diaries_count = 0
             if rdata.get('diaries_paired'):
                 paired_user_id = rdata['user_config']['paired_user_config']['userid']
-                paired_diaries_count = await self._save_diaries(
+                await self._save_diaries(
                     rdata['diaries_paired'],
                     account_id,
                     paired_user_id,
                     account.auth_token,
+                )
+
+            diaries_count = 0
+            paired_diaries_count = 0
+            if main_user and main_user.id is not None:
+                diaries_count, paired_diaries_count = await self._get_account_diary_totals(
+                    account_id=account_id,
+                    main_user_id=main_user.id,
                 )
 
             await self._finish_sync_log(

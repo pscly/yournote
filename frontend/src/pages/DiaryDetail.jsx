@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Layout, Card, List, Button, Switch, Timeline, Spin, message, Tag, Drawer, Space, Divider, Typography } from 'antd';
+import { Layout, Card, List, Button, Switch, Timeline, Spin, message, Tag, Drawer, Space, Divider, Typography, Modal, Descriptions, BackTop } from 'antd';
 import { ArrowLeftOutlined, ClockCircleOutlined, MenuOutlined, CalendarOutlined, CloudOutlined, SmileOutlined } from '@ant-design/icons';
 import { diaryAPI, userAPI } from '../services/api';
 import axios from 'axios';
@@ -8,6 +8,7 @@ import { API_BASE_URL } from '../config';
 
 const { Sider, Content } = Layout;
 const { Title, Paragraph } = Typography;
+const APP_HEADER_HEIGHT = 'var(--app-header-height)';
 
 export default function DiaryDetail() {
   const { id } = useParams();
@@ -17,8 +18,9 @@ export default function DiaryDetail() {
   const [history, setHistory] = useState([]);
   const [showMatched, setShowMatched] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [pairedUserId, setPairedUserId] = useState(null);
-  const [drawerVisible, setDrawerVisible] = useState(false);
+  const [drawerVisible, setDrawerVisible] = useState(false);        
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
   useEffect(() => {
@@ -51,7 +53,7 @@ export default function DiaryDetail() {
       await loadMyDiaries(currentDiary.user_id);
       await loadPairedUser(currentDiary.account_id, currentDiary.user_id);
       await loadHistory();
-    } catch (error) {
+    } catch {
       message.error('加载失败');
     } finally {
       setLoading(false);
@@ -66,7 +68,7 @@ export default function DiaryDetail() {
         new Date(b.created_date) - new Date(a.created_date)
       );
       setDiaryList(sorted);
-    } catch (error) {
+    } catch {
       console.error('加载日记列表失败');
     }
   };
@@ -83,7 +85,7 @@ export default function DiaryDetail() {
           setPairedUserId(pairedId);
         }
       }
-    } catch (error) {
+    } catch {
       console.error('加载配对用户失败');
     }
   };
@@ -105,7 +107,7 @@ export default function DiaryDetail() {
       );
 
       setDiaryList(merged);
-    } catch (error) {
+    } catch {
       message.error('加载匹配日记失败');
     }
   };
@@ -114,8 +116,56 @@ export default function DiaryDetail() {
     try {
       const historyRes = await axios.get(`${API_BASE_URL}/diary-history/${id}`);
       setHistory(historyRes.data);
-    } catch (error) {
+    } catch {
       console.log('暂无历史记录');
+    }
+  };
+
+  const refreshDiary = async () => {
+    try {
+      setRefreshing(true);
+      const res = await diaryAPI.refresh(id);
+      const refreshInfo = res.data?.refresh_info;
+
+      await loadData();
+
+      const usedDetail = !!refreshInfo?.used_all_by_ids;
+      const detailReturned = refreshInfo?.all_by_ids_returned === true;
+      const updated = refreshInfo?.updated === true;
+
+      if (updated) {
+        message.success(usedDetail ? '已刷新（日记详情已更新，使用 all_by_ids）' : '已刷新（日记内容已更新）');
+      } else {
+        message.warning(refreshInfo?.skipped_reason || '已刷新（内容未发生变化）');
+      }
+
+      if (refreshInfo) {
+        Modal.info({
+          title: '刷新结果',
+          width: 640,
+          content: (
+            <Descriptions bordered size="small" column={1} style={{ marginTop: 12 }}>
+              <Descriptions.Item label="阈值（字数）">{refreshInfo.min_len_threshold}</Descriptions.Item>
+              <Descriptions.Item label="是否更新">{updated ? <Tag color="green">是</Tag> : <Tag>否</Tag>}</Descriptions.Item>
+              <Descriptions.Item label="更新来源">{refreshInfo.update_source ? <Tag color="blue">{refreshInfo.update_source}</Tag> : '-'}</Descriptions.Item>
+              <Descriptions.Item label="是否调用 sync">{refreshInfo.used_sync ? <Tag color="geekblue">是</Tag> : <Tag>否</Tag>}</Descriptions.Item>
+              <Descriptions.Item label="sync 是否命中该日记">{refreshInfo.sync_found ? <Tag color="green">命中</Tag> : <Tag>未命中</Tag>}</Descriptions.Item>
+              <Descriptions.Item label="sync 内容长度">{refreshInfo.sync_content_len ?? '-'}</Descriptions.Item>
+              <Descriptions.Item label="sync is_simple">{typeof refreshInfo.sync_is_simple === 'boolean' ? String(refreshInfo.sync_is_simple) : '-'}</Descriptions.Item>
+              <Descriptions.Item label="是否调用 all_by_ids">{usedDetail ? <Tag color="purple">是</Tag> : <Tag>否</Tag>}</Descriptions.Item>
+              <Descriptions.Item label="all_by_ids 是否返回该日记">{usedDetail ? (detailReturned ? <Tag color="green">返回</Tag> : <Tag color="red">未返回</Tag>) : '-'}</Descriptions.Item>
+              <Descriptions.Item label="详情内容长度">{refreshInfo.detail_content_len ?? '-'}</Descriptions.Item>
+              <Descriptions.Item label="详情仍然过短">{typeof refreshInfo.detail_is_short === 'boolean' ? (refreshInfo.detail_is_short ? <Tag color="orange">是</Tag> : <Tag color="green">否</Tag>) : '-'}</Descriptions.Item>
+              <Descriptions.Item label="详情尝试次数">{refreshInfo.detail_attempts ?? '-'}</Descriptions.Item>
+              <Descriptions.Item label="未更新原因">{refreshInfo.skipped_reason ?? '-'}</Descriptions.Item>
+            </Descriptions>
+          ),
+        });
+      }
+    } catch {
+      message.error('刷新失败');
+    } finally {
+      setRefreshing(false);
     }
   };
 
@@ -130,7 +180,7 @@ export default function DiaryDetail() {
         display: 'flex',
         justifyContent: 'center',
         alignItems: 'center',
-        minHeight: 'calc(100vh - 80px)'
+        minHeight: `calc(100vh - ${APP_HEADER_HEIGHT})`
       }}>
         <Spin size="large" />
       </div>
@@ -200,17 +250,20 @@ export default function DiaryDetail() {
     </div>
   );
 
+  const stickyTop = `calc(${APP_HEADER_HEIGHT} + 24px)`;
+  const stickyHeight = `calc(100vh - ${APP_HEADER_HEIGHT} - 48px)`;
+
   return (
-    <Layout style={{ minHeight: 'calc(100vh - 80px)', background: '#f5f5f5' }}>
+    <Layout style={{ minHeight: `calc(100vh - ${APP_HEADER_HEIGHT})`, background: '#f5f5f5' }}>
       {!isMobile && (
         <Sider
           width={320}
           style={{
             background: '#fff',
             boxShadow: '2px 0 8px rgba(0,0,0,0.05)',
-            height: 'calc(100vh - 80px)',
+            height: stickyHeight,
             position: 'sticky',
-            top: 80,
+            top: stickyTop,
             overflow: 'hidden'
           }}
         >
@@ -219,30 +272,36 @@ export default function DiaryDetail() {
       )}
 
       <Content style={{
-        padding: isMobile ? '16px' : '24px 32px',
-        maxWidth: 1200,
+        maxWidth: 1400,
         margin: '0 auto',
-        width: '100%'
+        width: '100%',
+        minWidth: 0
       }}>
         <Space direction="vertical" size="large" style={{ width: '100%' }}>
-          <div>
-            <Button
-              icon={<ArrowLeftOutlined />}
-              onClick={() => navigate(-1)}
-              size="large"
-            >
-              返回
-            </Button>
-            {isMobile && (
-              <Button
-                icon={<MenuOutlined />}
-                onClick={() => setDrawerVisible(true)}
-                style={{ marginLeft: 8 }}
-                size="large"
-              >
-                日记列表
+          <div
+            style={{
+              position: 'sticky',
+              top: `calc(${APP_HEADER_HEIGHT} + 12px)`,
+              zIndex: 20,
+              background: 'rgba(245,245,245,0.92)',
+              backdropFilter: 'blur(8px)',
+              padding: '12px 0',
+              borderBottom: '1px solid rgba(0,0,0,0.06)'
+            }}
+          >
+            <Space wrap size="middle">
+              <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)} size="large">
+                返回
               </Button>
-            )}
+              <Button onClick={refreshDiary} loading={refreshing} size="large">
+                重新访问此日记详情（强制更新）
+              </Button>
+              {isMobile && (
+                <Button icon={<MenuOutlined />} onClick={() => setDrawerVisible(true)} size="large">
+                  日记列表
+                </Button>
+              )}
+            </Space>
           </div>
 
           <Card
@@ -251,37 +310,43 @@ export default function DiaryDetail() {
               boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
               borderRadius: 8
             }}
+            bodyStyle={{ padding: isMobile ? 16 : 24 }}
           >
-            <Title level={2} style={{ marginBottom: 16 }}>
-              {diary.title || '无标题'}
-            </Title>
+            <div style={{ maxWidth: 920, margin: '0 auto' }}>
+              <Title level={2} style={{ marginBottom: 16 }}>
+                {diary.title || '无标题'}
+              </Title>
 
-            <Space size="middle" wrap style={{ marginBottom: 24 }}>
-              <Tag icon={<CalendarOutlined />} color="blue" style={{ padding: '4px 12px', fontSize: '14px' }}>
-                {diary.created_date}
-              </Tag>
-              {diary.mood && (
-                <Tag icon={<SmileOutlined />} color="orange" style={{ padding: '4px 12px', fontSize: '14px' }}>
-                  {diary.mood}
+              <Space size="middle" wrap style={{ marginBottom: 24 }}>
+                <Tag icon={<CalendarOutlined />} color="blue" style={{ padding: '4px 12px', fontSize: '14px' }}>
+                  {diary.created_date}
                 </Tag>
-              )}
-              {diary.weather && (
-                <Tag icon={<CloudOutlined />} color="cyan" style={{ padding: '4px 12px', fontSize: '14px' }}>
-                  {diary.weather}
-                </Tag>
-              )}
-            </Space>
+                {diary.mood && (
+                  <Tag icon={<SmileOutlined />} color="orange" style={{ padding: '4px 12px', fontSize: '14px' }}>
+                    {diary.mood}
+                  </Tag>
+                )}
+                {diary.weather && (
+                  <Tag icon={<CloudOutlined />} color="cyan" style={{ padding: '4px 12px', fontSize: '14px' }}>
+                    {diary.weather}
+                  </Tag>
+                )}
+              </Space>
 
-            <Divider />
+              <Divider />
 
-            <Paragraph style={{
-              whiteSpace: 'pre-wrap',
-              lineHeight: 1.8,
-              fontSize: '15px',
-              color: '#333'
-            }}>
-              {diary.content}
-            </Paragraph>
+              <Paragraph style={{
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                overflowWrap: 'anywhere',
+                lineHeight: 1.8,
+                fontSize: '15px',
+                color: '#333',
+                marginBottom: 0
+              }}>
+                {diary.content}
+              </Paragraph>
+            </div>
           </Card>
 
           {history.length > 0 && (
@@ -309,7 +374,7 @@ export default function DiaryDetail() {
                       style={{ background: '#fafafa', border: 'none' }}
                     >
                       <div style={{ fontWeight: 500, marginBottom: 4 }}>{h.title}</div>
-                      <div style={{ fontSize: '14px', color: '#666' }}>{h.content}</div>
+                      <div style={{ fontSize: '14px', color: '#666', whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{h.content}</div>
                     </Card>
                   </Timeline.Item>
                 ))}
@@ -330,6 +395,8 @@ export default function DiaryDetail() {
           <DiaryListContent />
         </Drawer>
       )}
+
+      <BackTop />
     </Layout>
   );
 }

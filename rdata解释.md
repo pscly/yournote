@@ -470,7 +470,6 @@ user_config.paired_user_config.last_login_time  是她最后登录时间
 
 ### 查询单个日记详情
 
-这个接口可以不用，因为 上面 那个接口就完全够了
 
 ```python
 
@@ -502,6 +501,30 @@ response = requests.post(url, data=payload, headers=headers)
 
 print(response.text)
 ```
+
+```json
+{
+    "diaries": [
+        {
+            "id": 35302264,
+            "user": 1022956,
+            "createddate": "2025-12-12",
+            "ts": 1765475980,
+            "content": "我要和以前的你告状xxxxxxxxxxxxxxxxx日记内容",
+            "weather": "",
+            "mood": "",
+            "mood_id": null,
+            "mood_color": null,
+            "title": "",
+            "space": "girl",
+            "createdtime": 1765475980
+        }
+    ],
+    "error": 0,
+    "version": "74a2cd58b0c4967c35c085e27395af63"
+}
+```
+
 
 
 

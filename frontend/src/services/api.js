@@ -27,6 +27,7 @@ export const diaryAPI = {
   list: (params) => api.get('/diaries', { params }),
   get: (id) => api.get(`/diaries/${id}`),
   byAccount: (accountId, limit = 50) => api.get(`/diaries/by-account/${accountId}`, { params: { limit } }),
+  refresh: (id) => api.post(`/diaries/${id}/refresh`),
 };
 
 // 用户信息

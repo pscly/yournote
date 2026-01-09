@@ -5,6 +5,16 @@
   min-height: 100vh;
 }
 
+.app-content {
+  padding: 24px 50px;
+}
+
+@media (max-width: 768px) {
+  .app-content {
+    padding: 16px;
+  }
+}
+
 .logo {
   height: 6em;
   padding: 1.5em;

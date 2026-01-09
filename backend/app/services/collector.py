@@ -1,29 +1,380 @@
-"""Data collection service"""
-import requests
+"""数据采集服务
+
+说明：
+- 主同步接口：`https://nideriji.cn/api/v2/sync/`
+- 当日记内容过短（通常是公开日记的“简略内容”）时，会额外调用
+  `https://nideriji.cn/api/diary/all_by_ids/{userid}/` 再取一次完整内容。
+
+采集策略：
+- 若数据库里已存在“完整内容”，则不会重复请求详情，也不会用短内容覆盖长内容。
+"""
+
+from __future__ import annotations
+
 from datetime import datetime
+from typing import Any
+
+import requests
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from ..models import Account, User, Diary, PairedRelationship, SyncLog, DiaryHistory
+
+from ..models import (
+    Account,
+    Diary,
+    DiaryDetailFetch,
+    DiaryHistory,
+    PairedRelationship,
+    SyncLog,
+    User,
+)
 
 
 class CollectorService:
     """数据采集服务"""
 
+    _DETAIL_CONTENT_MIN_LEN = 100
+    _DETAIL_FETCH_BATCH_SIZE = 50
+    _REQUEST_TIMEOUT_SECONDS = 15
+
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    def _build_headers(self, auth_token: str) -> dict[str, str]:
+        return {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36"
+            ),
+            "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "auth": auth_token,
+            "origin": "https://nideriji.cn",
+            "referer": "https://nideriji.cn/w/",
+        }
+
+    def _content_len(self, content: str | None) -> int:
+        return len((content or "").strip())
+
+    def _needs_detail_fetch(self, content: str | None, is_simple: Any) -> bool:
+        if is_simple == 1:
+            return True
+        return self._content_len(content) < self._DETAIL_CONTENT_MIN_LEN
+
+    async def _get_detail_fetch_state_map(self, diary_db_ids: list[int]) -> dict[int, DiaryDetailFetch]:
+        if not diary_db_ids:
+            return {}
+        result = await self.db.execute(
+            select(DiaryDetailFetch).where(DiaryDetailFetch.diary_id.in_(diary_db_ids))
+        )
+        return {row.diary_id: row for row in result.scalars().all()}
+
+    async def _upsert_detail_fetch_state(
+        self,
+        diary: Diary,
+        *,
+        success: bool,
+        is_short: bool,
+        content_len: int | None,
+        error: str | None,
+    ) -> None:
+        """记录“all_by_ids 详情请求”的结果，用于后续跳过重复请求。"""
+        result = await self.db.execute(
+            select(DiaryDetailFetch).where(DiaryDetailFetch.diary_id == diary.id)
+        )
+        state = result.scalar_one_or_none()
+        now = datetime.utcnow()
+
+        if not state:
+            state = DiaryDetailFetch(
+                diary_id=diary.id,
+                nideriji_diary_id=diary.nideriji_diary_id,
+                attempts=0,
+            )
+            self.db.add(state)
+
+        state.nideriji_diary_id = diary.nideriji_diary_id
+        state.last_detail_at = now
+        state.last_detail_success = bool(success)
+        state.last_detail_is_short = bool(is_short) if success else False
+        state.last_detail_content_len = content_len
+        state.last_detail_error = error
+        state.attempts = (state.attempts or 0) + 1
 
     async def fetch_nideriji_data(self, auth_token: str) -> dict:
         """从 nideriji API 获取数据"""
         url = "https://nideriji.cn/api/v2/sync/"
-        headers = {
-            'User-Agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            'accept-language': "zh-CN,zh;q=0.9,en;q=0.8",
-            'auth': auth_token,
-            'origin': "https://nideriji.cn",
-            'referer': "https://nideriji.cn/w/",
-        }
-        response = requests.post(url, headers=headers)
+        headers = self._build_headers(auth_token)
+        response = requests.post(
+            url,
+            headers=headers,
+            timeout=self._REQUEST_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
         return response.json()
+
+    async def fetch_nideriji_diaries_by_ids(
+        self,
+        auth_token: str,
+        diary_owner_userid: int,
+        diary_ids: list[int],
+    ) -> dict[int, dict[str, Any]]:
+        """按日记 id 列表拉取完整日记内容（用于补全简略内容）。
+
+        参考：rdata解释.md 中的 `api/diary/all_by_ids/{userid}/`。
+
+        返回：{nideriji_diary_id: diary_data}
+        """
+        if not diary_ids:
+            return {}
+
+        url = f"https://nideriji.cn/api/diary/all_by_ids/{diary_owner_userid}/"
+        headers = self._build_headers(auth_token)
+
+        # 接口支持一次传多个 id（字符串），这里做分批，避免过长的 form body。
+        results: dict[int, dict[str, Any]] = {}
+        for start in range(0, len(diary_ids), self._DETAIL_FETCH_BATCH_SIZE):
+            batch = diary_ids[start : start + self._DETAIL_FETCH_BATCH_SIZE]
+            payload = {"diary_ids": ",".join(str(diary_id) for diary_id in batch)}
+            resp = requests.post(
+                url,
+                data=payload,
+                headers=headers,
+                timeout=self._REQUEST_TIMEOUT_SECONDS,
+            )
+            resp.raise_for_status()
+            data: Any = resp.json()
+
+            diary_list: list[dict[str, Any]] = []
+            if isinstance(data, list):
+                diary_list = [d for d in data if isinstance(d, dict)]
+            elif isinstance(data, dict):
+                for key in ("diaries", "data", "result", "items"):
+                    value = data.get(key)
+                    if isinstance(value, list):
+                        diary_list = [d for d in value if isinstance(d, dict)]
+                        break
+                if not diary_list and isinstance(data.get("diary"), dict):
+                    diary_list = [data["diary"]]
+
+            for d in diary_list:
+                diary_id = d.get("id") or d.get("diary_id")
+                if isinstance(diary_id, int):
+                    results[diary_id] = d
+
+        return results
+
+    def _merge_diary_data(self, base: dict[str, Any], detail: dict[str, Any]) -> dict[str, Any]:
+        """用详情数据补全/覆盖主接口返回的简略字段。"""
+        merged = dict(base)
+        for key in (
+            "title",
+            "content",
+            "weather",
+            "mood",
+            "mood_id",
+            "mood_color",
+            "space",
+            "is_simple",
+            "msg_count",
+            "createddate",
+            "createdtime",
+            "ts",
+        ):
+            if key in detail and detail[key] is not None:
+                merged[key] = detail[key]
+        return merged
+
+    async def refresh_diary(self, diary_id: int) -> tuple[Diary, dict[str, Any]]:
+        """强制刷新某条日记内容（仍然遵循：先 sync，不合适再 all_by_ids）。
+
+        返回： (Diary, refresh_info)
+        - Diary：数据库中的最终日记记录（可能被更新，也可能不变）
+        - refresh_info：用于前端展示刷新过程与结果的结构化信息
+        """
+        result = await self.db.execute(select(Diary).where(Diary.id == diary_id))
+        diary = result.scalar_one_or_none()
+        if not diary:
+            raise ValueError(f"Diary {diary_id} not found")
+
+        result = await self.db.execute(select(Account).where(Account.id == diary.account_id))
+        account = result.scalar_one_or_none()
+        if not account:
+            raise ValueError(f"Account {diary.account_id} not found")
+
+        result = await self.db.execute(select(User).where(User.id == diary.user_id))
+        user = result.scalar_one_or_none()
+        if not user:
+            raise ValueError(f"User {diary.user_id} not found")
+
+        refresh_info: dict[str, Any] = {
+            "min_len_threshold": self._DETAIL_CONTENT_MIN_LEN,
+            "used_sync": True,
+            "sync_found": False,
+            "sync_content_len": None,
+            "sync_is_simple": None,
+            "used_all_by_ids": False,
+            "all_by_ids_returned": None,
+            "detail_content_len": None,
+            "detail_is_short": None,
+            "detail_attempts": None,
+            "updated": False,
+            "update_source": None,
+            "skipped_reason": None,
+        }
+
+        rdata = await self.fetch_nideriji_data(account.auth_token)
+        all_diaries: list[dict[str, Any]] = []
+        for key in ("diaries", "diaries_paired"):
+            value = rdata.get(key)
+            if isinstance(value, list):
+                all_diaries.extend([d for d in value if isinstance(d, dict)])
+
+        matched = None
+        for d in all_diaries:
+            if d.get("id") == diary.nideriji_diary_id:
+                matched = d
+                break
+
+        diary_data: dict[str, Any] | None = matched
+        if diary_data:
+            refresh_info["sync_found"] = True
+            refresh_info["sync_content_len"] = self._content_len(diary_data.get("content"))
+            refresh_info["sync_is_simple"] = bool(diary_data.get("is_simple") == 1)
+
+        should_try_detail = False
+        if diary_data and self._needs_detail_fetch(diary_data.get("content"), diary_data.get("is_simple")):
+            should_try_detail = True
+        if not diary_data:
+            # sync 没找到该日记：视为“不合适”，直接尝试详情接口
+            should_try_detail = True
+
+        if should_try_detail:
+            refresh_info["used_all_by_ids"] = True
+            details_by_id = await self.fetch_nideriji_diaries_by_ids(
+                auth_token=account.auth_token,
+                diary_owner_userid=user.nideriji_userid,
+                diary_ids=[diary.nideriji_diary_id],
+            )
+            detail = details_by_id.get(diary.nideriji_diary_id)
+            if detail:
+                refresh_info["all_by_ids_returned"] = True
+                if diary_data:
+                    diary_data = self._merge_diary_data(diary_data, detail)
+                else:
+                    diary_data = detail
+
+                detail_content_len = self._content_len(diary_data.get("content"))
+                refresh_info["detail_content_len"] = detail_content_len
+                refresh_info["detail_is_short"] = detail_content_len < self._DETAIL_CONTENT_MIN_LEN
+
+                await self._upsert_detail_fetch_state(
+                    diary,
+                    success=True,
+                    is_short=detail_content_len < self._DETAIL_CONTENT_MIN_LEN,
+                    content_len=detail_content_len,
+                    error=None,
+                )
+            else:
+                refresh_info["all_by_ids_returned"] = False
+                await self._upsert_detail_fetch_state(
+                    diary,
+                    success=False,
+                    is_short=False,
+                    content_len=None,
+                    error="详情接口未返回该日记",
+                )
+
+            # 尝试读取 attempts（用于前端展示）
+            state_result = await self.db.execute(
+                select(DiaryDetailFetch).where(DiaryDetailFetch.diary_id == diary.id)
+            )
+            state = state_result.scalar_one_or_none()
+            if state:
+                refresh_info["detail_attempts"] = state.attempts
+
+        if diary_data:
+            created_time = None
+            if diary_data.get("createdtime"):
+                created_time = datetime.fromtimestamp(diary_data["createdtime"])
+
+            new_title = diary_data.get("title", "")
+            new_content = (diary_data.get("content", "") or "").strip("\ufeff")
+            new_weather = diary_data.get("weather", "")
+            new_mood = diary_data.get("mood", "")
+            new_mood_id = diary_data.get("mood_id")
+            new_mood_color = diary_data.get("mood_color")
+            new_space = diary_data.get("space", "")
+            new_is_simple = diary_data.get("is_simple", 0)
+            new_msg_count = diary_data.get("msg_count", 0)
+            new_ts = diary_data.get("ts")
+
+            changed = any(
+                [
+                    diary.title != new_title,
+                    (diary.content or "") != new_content,
+                    diary.created_time != created_time,
+                    (diary.weather or "") != new_weather,
+                    (diary.mood or "") != new_mood,
+                    diary.mood_id != new_mood_id,
+                    diary.mood_color != new_mood_color,
+                    (diary.space or "") != new_space,
+                    diary.is_simple != new_is_simple,
+                    diary.msg_count != new_msg_count,
+                    diary.ts != new_ts,
+                ]
+            )
+
+            # 强制刷新也不允许“短内容”覆盖“完整内容”
+            if (
+                self._content_len(new_content) < self._DETAIL_CONTENT_MIN_LEN
+                and self._content_len(diary.content) >= self._DETAIL_CONTENT_MIN_LEN
+            ):
+                refresh_info["updated"] = False
+                refresh_info["update_source"] = None
+                refresh_info["skipped_reason"] = "短内容不会覆盖数据库中已存在的完整内容"
+                return diary, refresh_info
+
+            if not changed:
+                refresh_info["updated"] = False
+                refresh_info["update_source"] = None
+                refresh_info["skipped_reason"] = "内容未发生变化"
+                return diary, refresh_info
+
+            if diary.content != new_content or diary.title != new_title:
+                history = DiaryHistory(
+                    diary_id=diary.id,
+                    nideriji_diary_id=diary.nideriji_diary_id,
+                    title=diary.title,
+                    content=diary.content,
+                    weather=diary.weather,
+                    mood=diary.mood,
+                    ts=diary.ts,
+                )
+                self.db.add(history)
+
+            diary.title = new_title
+            diary.content = new_content
+            diary.created_time = created_time
+            diary.weather = new_weather
+            diary.mood = new_mood
+            diary.mood_id = new_mood_id
+            diary.mood_color = new_mood_color
+            diary.space = new_space
+            diary.is_simple = new_is_simple
+            diary.msg_count = new_msg_count
+            diary.ts = new_ts
+
+            # 判断本次更新来源（仅用于展示）
+            if refresh_info["used_all_by_ids"] and refresh_info["all_by_ids_returned"]:
+                refresh_info["update_source"] = "all_by_ids"
+            elif refresh_info["sync_found"]:
+                refresh_info["update_source"] = "sync"
+
+            refresh_info["updated"] = True
+        else:
+            refresh_info["updated"] = False
+            refresh_info["skipped_reason"] = "sync 未找到且详情接口也未返回该日记"
+
+        return diary, refresh_info
 
     async def sync_account(self, account_id: int) -> dict:
         """同步单个账号的数据"""
@@ -48,7 +399,8 @@ class CollectorService:
             diaries_count = await self._save_diaries(
                 rdata['diaries'],
                 account_id,
-                rdata['user_config']['userid']
+                rdata['user_config']['userid'],
+                account.auth_token,
             )
 
             paired_diaries_count = 0
@@ -57,7 +409,8 @@ class CollectorService:
                 paired_diaries_count = await self._save_diaries(
                     rdata['diaries_paired'],
                     account_id,
-                    paired_user_id
+                    paired_user_id,
+                    account.auth_token,
                 )
 
             await self._log_sync(account_id, 'success', diaries_count, paired_diaries_count)
@@ -146,21 +499,85 @@ class CollectorService:
                 )
                 self.db.add(relationship)
 
-    async def _save_diaries(self, diaries: list, account_id: int, user_nideriji_id: int) -> int:
+    async def _save_diaries(
+        self,
+        diaries: list[dict[str, Any]],
+        account_id: int,
+        user_nideriji_id: int,
+        auth_token: str,
+    ) -> int:
         """保存日记数据"""
+        if not diaries:
+            return 0
+
         result = await self.db.execute(
-            select(User).where(User.nideriji_userid == user_nideriji_id)
+            select(User).where(User.nideriji_userid == user_nideriji_id)        
         )
         user = result.scalar_one_or_none()
         if not user:
             return 0
 
+        # 预查当前批次的日记，避免循环里逐条查库，同时用于“已有完整内容则跳过详情请求”。
+        diary_ids: list[int] = []
+        for d in diaries:
+            diary_id = d.get("id")
+            if isinstance(diary_id, int):
+                diary_ids.append(diary_id)
+
+        existing_by_id: dict[int, Diary] = {}
+        if diary_ids:
+            existing_result = await self.db.execute(
+                select(Diary).where(Diary.nideriji_diary_id.in_(diary_ids))
+            )
+            for diary in existing_result.scalars().all():
+                existing_by_id[diary.nideriji_diary_id] = diary
+
+        detail_state_by_diary_db_id = await self._get_detail_fetch_state_map(
+            [d.id for d in existing_by_id.values() if d.id is not None]
+        )
+
+        need_detail_ids: list[int] = []
+        for d in diaries:
+            diary_id = d.get("id")
+            if not isinstance(diary_id, int):
+                continue
+
+            if not self._needs_detail_fetch(d.get("content"), d.get("is_simple")):
+                continue
+
+            existing = existing_by_id.get(diary_id)
+            if existing and self._content_len(existing.content) >= self._DETAIL_CONTENT_MIN_LEN:
+                # 数据库已有完整内容：不再采集详情，也不允许被短内容覆盖。
+                continue
+
+            if existing:
+                state = detail_state_by_diary_db_id.get(existing.id)
+                if state and state.last_detail_success and state.last_detail_is_short:
+                    # 该日记已请求过详情接口，但内容仍然过短：后续同步不再重复请求详情
+                    continue
+
+            need_detail_ids.append(diary_id)
+
+        details_by_id: dict[int, dict[str, Any]] = {}
+        if need_detail_ids:
+            details_by_id = await self.fetch_nideriji_diaries_by_ids(
+                auth_token=auth_token,
+                diary_owner_userid=user_nideriji_id,
+                diary_ids=need_detail_ids,
+            )
+
+        requested_detail_ids = set(need_detail_ids)
+
         count = 0
         for diary_data in diaries:
-            result = await self.db.execute(
-                select(Diary).where(Diary.nideriji_diary_id == diary_data['id'])
-            )
-            diary = result.scalar_one_or_none()
+            diary_id = diary_data.get("id")
+            if not isinstance(diary_id, int):
+                continue
+
+            if diary_id in details_by_id:
+                diary_data = self._merge_diary_data(diary_data, details_by_id[diary_id])
+
+            diary = existing_by_id.get(diary_id)
 
             created_time = None
             if diary_data.get('createdtime'):
@@ -168,7 +585,7 @@ class CollectorService:
 
             if not diary:
                 diary = Diary(
-                    nideriji_diary_id=diary_data['id'],
+                    nideriji_diary_id=diary_id,
                     user_id=user.id,
                     account_id=account_id,
                     title=diary_data.get('title', ''),
@@ -185,11 +602,20 @@ class CollectorService:
                     ts=diary_data.get('ts')
                 )
                 self.db.add(diary)
+                existing_by_id[diary_id] = diary
                 count += 1
             else:
                 # 检查内容是否有变化
-                new_content = diary_data.get('content', '')
+                new_content = diary_data.get('content', '') or ''
                 new_title = diary_data.get('title', '')
+
+                # 防止“短内容”覆盖“完整内容”（常见于 paired 日记只返回预览）。
+                if (
+                    self._content_len(new_content) < self._DETAIL_CONTENT_MIN_LEN
+                    and self._content_len(diary.content) >= self._DETAIL_CONTENT_MIN_LEN
+                ):
+                    continue
+
                 if diary.content != new_content or diary.title != new_title:
                     # 保存历史记录
                     history = DiaryHistory(
@@ -208,6 +634,26 @@ class CollectorService:
                     diary.weather = diary_data.get('weather', '')
                     diary.mood = diary_data.get('mood', '')
                     diary.ts = diary_data.get('ts')
+
+            # 若本次对该日记发起过详情请求，则记录结果（用于后续跳过重复请求）
+            if diary and diary_id in requested_detail_ids:
+                if diary_id in details_by_id:
+                    detail_content_len = self._content_len(diary_data.get("content"))
+                    await self._upsert_detail_fetch_state(
+                        diary,
+                        success=True,
+                        is_short=detail_content_len < self._DETAIL_CONTENT_MIN_LEN,
+                        content_len=detail_content_len,
+                        error=None,
+                    )
+                else:
+                    await self._upsert_detail_fetch_state(
+                        diary,
+                        success=False,
+                        is_short=False,
+                        content_len=None,
+                        error="详情接口未返回该日记",
+                    )
 
         return count
 

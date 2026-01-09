@@ -1,4 +1,4 @@
-import { test, expect, devices } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 
 test.describe('日记详情页测试', () => {
   test('桌面端 - 应该显示固定导航栏', async ({ page }) => {
@@ -30,7 +30,7 @@ test.describe('日记详情页测试', () => {
       const sider = page.locator('.ant-layout-sider');
       await expect(sider).toBeVisible();
 
-      const listTitle = page.locator('text=日记列表');
+      const listTitle = page.getByRole('heading', { name: '日记列表' });
       await expect(listTitle).toBeVisible();
     }
   });
@@ -164,13 +164,12 @@ test.describe('响应式布局测试', () => {
     await page.goto('/diaries');
     await page.waitForTimeout(1000);
 
-    const detailButton = page.locator('text=查看详情').first();
+      const detailButton = page.locator('text=查看详情').first();
     if (await detailButton.isVisible()) {
       await detailButton.click();
       await page.waitForTimeout(1000);
 
-      const content = page.locator('.ant-layout-content');
-      await expect(content).toBeVisible();
+      await expect(page.getByRole('button', { name: '返回' })).toBeVisible();
     }
   });
 
@@ -187,8 +186,7 @@ test.describe('响应式布局测试', () => {
       const sider = page.locator('.ant-layout-sider');
       await expect(sider).toBeVisible();
 
-      const content = page.locator('.ant-layout-content');
-      await expect(content).toBeVisible();
+      await expect(page.getByRole('button', { name: '返回' })).toBeVisible();
     }
   });
 });

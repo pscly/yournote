@@ -53,10 +53,13 @@ uv run python run.py
 - `POST /api/sync/trigger/{account_id}` - 触发同步
 - `GET /api/sync/logs` - 获取同步历史
 
+补充说明：同步时主要使用 `https://nideriji.cn/api/v2/sync/` 获取日记列表；当发现日记内容少于 100 个字（通常是 paired 公开日记的“简略内容”）时，后端会自动再调用 `https://nideriji.cn/api/diary/all_by_ids/{userid}/` 取一次完整内容，并且不会用短内容覆盖数据库中已存在的完整内容。
+
 ### 日记查询
 - `GET /api/diaries` - 获取日记列表
 - `GET /api/diaries/{id}` - 获取日记详情
 - `GET /api/diaries/by-account/{account_id}` - 按账号查询
+- `POST /api/diaries/{id}/refresh` - 强制刷新单条日记（返回 `diary + refresh_info`）
 
 ### 用户信息
 - `GET /api/users` - 获取用户列表

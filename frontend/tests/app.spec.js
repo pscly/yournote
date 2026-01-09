@@ -50,7 +50,7 @@ test.describe('YourNote 应用测试', () => {
     if (await detailButton.isVisible()) {
       await detailButton.click();
       await page.waitForTimeout(1000);
-      await expect(page.locator('.ant-card')).toBeVisible();
+      await expect(page.getByRole('heading', { level: 2 })).toBeVisible();
     }
   });
 });

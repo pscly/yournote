@@ -35,5 +35,9 @@ async def get_db():
 
 async def init_db():
     """Initialize database tables"""
+    # 确保所有模型都已被导入，从而注册到 Base.metadata
+    # （否则单独运行 init_db.py 时可能出现“没有建表”的情况）
+    from . import models  # noqa: F401
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

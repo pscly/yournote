@@ -4,7 +4,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import get_db
 from ..models import Diary, User
-from ..schemas import DiaryResponse
+from ..schemas import DiaryRefreshResponse, DiaryResponse
+from ..services import CollectorService
 
 router = APIRouter(prefix="/diaries", tags=["diaries"])
 
@@ -60,3 +61,19 @@ async def get_diaries_by_account(
     )
     diaries = result.scalars().all()
     return diaries
+
+
+@router.post("/{diary_id}/refresh", response_model=DiaryRefreshResponse)
+async def refresh_diary(
+    diary_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """强制刷新某条日记详情（先走 sync，不合适再走 all_by_ids）。"""
+    collector = CollectorService(db)
+    try:
+        diary, refresh_info = await collector.refresh_diary(diary_id)
+        return {"diary": diary, "refresh_info": refresh_info}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Refresh failed: {str(e)}")

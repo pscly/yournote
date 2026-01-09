@@ -10,16 +10,33 @@ import UserDetail from './pages/UserDetail';
 import './App.css';
 
 const { Header, Content } = Layout;
+const APP_HEADER_HEIGHT = 'var(--app-header-height)';
 
 function App() {
   return (
     <BrowserRouter>
       <Layout style={{ minHeight: '100vh' }}>
-        <Header style={{ position: 'fixed', top: 0, zIndex: 1000, width: '100%' }}>
-          <div style={{ color: 'white', fontSize: '20px', float: 'left', marginRight: '50px' }}>
+        <Header
+          style={{
+            position: 'fixed',
+            top: 0,
+            zIndex: 1000,
+            width: '100%',
+            height: APP_HEADER_HEIGHT,
+            display: 'flex',
+            alignItems: 'center',
+            paddingInline: 24
+          }}
+        >
+          <div style={{ color: 'white', fontSize: 20, marginRight: 24, whiteSpace: 'nowrap' }}>
             YourNote
           </div>
-          <Menu theme="dark" mode="horizontal" defaultSelectedKeys={['1']}>
+          <Menu
+            theme="dark"
+            mode="horizontal"
+            defaultSelectedKeys={['1']}
+            style={{ flex: 1, minWidth: 0 }}
+          >
             <Menu.Item key="1" icon={<DashboardOutlined />}>
               <Link to="/">仪表盘</Link>
             </Menu.Item>
@@ -34,7 +51,7 @@ function App() {
             </Menu.Item>
           </Menu>
         </Header>
-        <Content style={{ padding: '80px 50px 0 50px' }}>
+        <Content className="app-content" style={{ marginTop: APP_HEADER_HEIGHT }}>
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/accounts" element={<AccountManage />} />

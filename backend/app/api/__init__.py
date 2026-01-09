@@ -5,6 +5,7 @@ from .users import router as users_router
 from .diary_history import router as diary_history_router
 from .stats import router as stats_router
 from .access_logs import router as access_logs_router
+from .publish_diary import router as publish_diary_router
 
 __all__ = [
     "accounts_router",
@@ -14,4 +15,5 @@ __all__ = [
     "diary_history_router",
     "stats_router",
     "access_logs_router",
+    "publish_diary_router",
 ]

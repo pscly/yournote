@@ -22,7 +22,7 @@ export async function waitForLatestSyncLog(accountId, startedAtMs, options = {})
           if (acceptRunning || log.status !== 'running') return log;
         }
       }
-    } catch (e) {
+    } catch {
       // 轮询期间忽略临时错误，继续重试
     }
 

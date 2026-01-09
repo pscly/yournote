@@ -54,4 +54,13 @@ export const accessLogAPI = {
   file: (params) => api.get('/access-logs/file', { params }),
 };
 
+// 发布日记（草稿/历史/一键发布）
+export const publishDiaryAPI = {
+  getDraft: (date) => api.get(`/publish-diaries/draft/${encodeURIComponent(date)}`),
+  saveDraft: (date, data) => api.put(`/publish-diaries/draft/${encodeURIComponent(date)}`, data),
+  listRuns: (params) => api.get('/publish-diaries/runs', { params }),
+  getRun: (id) => api.get(`/publish-diaries/runs/${id}`),
+  publish: (data) => api.post('/publish-diaries/publish', data),
+};
+
 export default api;

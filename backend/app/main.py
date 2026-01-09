@@ -11,6 +11,7 @@ from .api import (
     diary_history_router,
     stats_router,
     access_logs_router,
+    publish_diary_router,
 )
 from .scheduler import scheduler
 from .utils.access_log import AccessLogTimer, log_http_request
@@ -64,6 +65,7 @@ app.include_router(users_router, prefix=settings.api_prefix)
 app.include_router(diary_history_router, prefix=settings.api_prefix)
 app.include_router(stats_router, prefix=settings.api_prefix)
 app.include_router(access_logs_router, prefix=settings.api_prefix)
+app.include_router(publish_diary_router, prefix=settings.api_prefix)
 
 
 @app.on_event("startup")

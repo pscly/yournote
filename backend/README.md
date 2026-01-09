@@ -64,6 +64,15 @@ uv run python run.py
 - `GET /api/diaries/by-account/{account_id}` - 按账号查询
 - `POST /api/diaries/{id}/refresh` - 强制刷新单条日记（返回 `diary + refresh_info`）
 
+### 发布日记（草稿/历史/批量发布）
+说明：该功能用于“写作与一键发布”，其草稿与发布历史会单独存储，不会与采集到的 `Diary` 表混在一起。
+
+- `GET /api/publish-diaries/draft/{date}` - 获取指定日期草稿（不存在则返回空草稿）
+- `PUT /api/publish-diaries/draft/{date}` - 保存/更新指定日期草稿
+- `POST /api/publish-diaries/publish` - 发布/更新指定日期日记（可选择多个账号）
+- `GET /api/publish-diaries/runs` - 发布历史列表（支持按 `date` 过滤）
+- `GET /api/publish-diaries/runs/{run_id}` - 查看一次发布详情（含每个账号结果）
+
 ### 用户信息
 - `GET /api/users` - 获取用户列表
 - `GET /api/users/{id}` - 获取用户详情

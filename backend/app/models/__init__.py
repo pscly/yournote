@@ -5,6 +5,7 @@ from .diary_detail_fetch import DiaryDetailFetch
 from .paired_relationship import PairedRelationship
 from .sync_log import SyncLog
 from .diary_history import DiaryHistory
+from .publish_diary import PublishDiaryDraft, PublishDiaryRun, PublishDiaryRunItem
 
 __all__ = [
     "Account",
@@ -14,4 +15,7 @@ __all__ = [
     "PairedRelationship",
     "SyncLog",
     "DiaryHistory",
+    "PublishDiaryDraft",
+    "PublishDiaryRun",
+    "PublishDiaryRunItem",
 ]

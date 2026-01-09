@@ -32,14 +32,14 @@ uv run python init_db.py
 uv run python run.py
 ```
 
-服务将在 http://localhost:8000 启动。
+服务将在 http://localhost:31012 启动。
 
 ## API 文档
 
 启动服务后，访问以下地址查看 API 文档：
 
-- Swagger UI: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
+- Swagger UI: http://localhost:31012/docs
+- ReDoc: http://localhost:31012/redoc
 
 ## 主要功能
 
@@ -48,6 +48,8 @@ uv run python run.py
 - `GET /api/accounts` - 获取账号列表
 - `GET /api/accounts/{id}` - 获取账号详情
 - `DELETE /api/accounts/{id}` - 删除账号
+- `POST /api/accounts/{id}/validate` - 远程校验账号 Token 是否可用
+- `POST /api/accounts/validate-token` - 远程校验任意 Token（不落库）
 
 ### 数据同步
 - `POST /api/sync/trigger/{account_id}` - 触发同步
@@ -71,25 +73,23 @@ uv run python run.py
 ### 1. 添加账号
 
 ```bash
-curl -X POST "http://localhost:8000/api/accounts" \
+curl -X POST "http://localhost:31012/api/accounts" \
   -H "Content-Type: application/json" \
   -d '{
-    "nideriji_userid": 460100,
-    "auth_token": "token eyJhbGci...",
-    "email": "your@email.com"
+    "auth_token": "token eyJhbGci..."
   }'
 ```
 
 ### 2. 触发数据同步
 
 ```bash
-curl -X POST "http://localhost:8000/api/sync/trigger/1"
+curl -X POST "http://localhost:31012/api/sync/trigger/1"
 ```
 
 ### 3. 查询日记
 
 ```bash
-curl "http://localhost:8000/api/diaries?account_id=1&limit=10"
+curl "http://localhost:31012/api/diaries?account_id=1&limit=10"
 ```
 
 ## 数据库

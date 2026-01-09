@@ -10,10 +10,12 @@ const api = axios.create({
 
 // 账号管理
 export const accountAPI = {
-  list: () => api.get('/accounts'),
+  list: () => api.get('/accounts'),      
   create: (data) => api.post('/accounts', data),
   get: (id) => api.get(`/accounts/${id}`),
   delete: (id) => api.delete(`/accounts/${id}`),
+  validate: (id) => api.post(`/accounts/${id}/validate`),
+  validateToken: (data) => api.post('/accounts/validate-token', data),
 };
 
 // 数据同步

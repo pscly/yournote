@@ -1,11 +1,19 @@
 """FastAPI application entry point"""
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
 from .database import init_db
-from .api import accounts_router, sync_router, diaries_router, users_router, diary_history_router
-from .api import stats_router
+from .api import (
+    accounts_router,
+    sync_router,
+    diaries_router,
+    users_router,
+    diary_history_router,
+    stats_router,
+    access_logs_router,
+)
 from .scheduler import scheduler
+from .utils.access_log import AccessLogTimer, log_http_request
 
 app = FastAPI(
     title="YourNote API",
@@ -22,6 +30,32 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Access log middleware（按天写入本地 logs/）
+@app.middleware("http")
+async def access_log_middleware(request: Request, call_next):
+    timer = AccessLogTimer()
+    status_code = 500
+    error: str | None = None
+
+    try:
+        response = await call_next(request)
+        status_code = getattr(response, "status_code", 200) or 200
+        return response
+    except Exception as e:
+        error = str(e)
+        raise
+    finally:
+        # 访问日志不应影响业务逻辑；任何写日志异常都吞掉
+        try:
+            await log_http_request(
+                request,
+                status_code=status_code,
+                duration_ms=timer.elapsed_ms(),
+                error=error,
+            )
+        except Exception:
+            pass
+
 # Register API routers
 app.include_router(accounts_router, prefix=settings.api_prefix)
 app.include_router(sync_router, prefix=settings.api_prefix)
@@ -29,6 +63,7 @@ app.include_router(diaries_router, prefix=settings.api_prefix)
 app.include_router(users_router, prefix=settings.api_prefix)
 app.include_router(diary_history_router, prefix=settings.api_prefix)
 app.include_router(stats_router, prefix=settings.api_prefix)
+app.include_router(access_logs_router, prefix=settings.api_prefix)
 
 
 @app.on_event("startup")

@@ -47,6 +47,16 @@ class Settings(BaseSettings):
     api_prefix: str = "/api"
     debug: bool = True
 
+    # Access Log（本地访问日志，按天落盘）
+    # - 文件：<repo>/logs/YYYY-MM-DD.logs
+    # - 目的：方便直接在电脑上打开查看“谁在什么时候访问了什么”
+    access_log_enabled: bool = True
+    access_log_dir: str = "logs"
+    # 逗号分隔：完全匹配 path（不含 query）时跳过记录（例如健康检查、pageview 上报接口）
+    access_log_ignore_paths: str = "/health,/api/access-logs/pageview,/api/access-logs/file"
+    # 是否记录 querystring（建议默认关闭，避免无意间写入敏感参数）
+    access_log_include_query: bool = False
+
     # Sync
     sync_interval_hours: int = 6
 

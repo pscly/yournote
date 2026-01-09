@@ -48,4 +48,10 @@ export const userAPI = {
   paired: (accountId) => api.get(`/users/paired/${accountId}`),
 };
 
+// 访问日志（页面访问上报）
+export const accessLogAPI = {
+  pageview: (data) => api.post('/access-logs/pageview', data),
+  file: (params) => api.get('/access-logs/file', { params }),
+};
+
 export default api;

@@ -526,5 +526,112 @@ print(response.text)
 ```
 
 
+### 发布or更新日记
 
+```python
+import requests
+
+url = "https://nideriji.cn/api/write/"
+
+payload = {
+  'content': '''
+[15:53]
+emmm 突然又感觉时间过得好快啊，一转眼又周五了，我周末还没想好怎么安排…
+''',
+  'date': '2026-01-09'
+}
+
+headers = {
+  'User-Agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0",
+  'accept-language': "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+  'auth': "token eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJPaFNoZW5naHVvIiwiZXhwIjoxODI5ODA4NzY0LjYzODIwMiwidXNhZ2UiOiJsb2dpbiIsInVzZXJfaWQiOjQ2MDEwMH0.QPo7_h30nVre6sZ4KyziDC5mzjc446invEsE-hHCgbc",
+  'origin': "https://nideriji.cn",
+  'priority': "u=1, i",
+  'referer': "https://nideriji.cn/w/write",
+  'sec-ch-ua': "\"Microsoft Edge\";v=\"143\", \"Chromium\";v=\"143\", \"Not A(Brand\";v=\"24\"",
+  'sec-ch-ua-mobile': "?0",
+  'sec-ch-ua-platform': "\"Windows\"",
+  'sec-fetch-dest': "empty",
+  'sec-fetch-mode': "cors",
+  'sec-fetch-site': "same-origin"
+}
+
+response = requests.post(url, data=payload, headers=headers)
+
+print(response.text)
+
+```
+
+返回参数:
+```json 
+{
+  "diary": {
+    "id": "35454790",
+    "user": "460100",
+    "createddate": "2026-01-09",
+    "ts": "2026-01-09 14:57:53.837832+00:00",
+    "deleteddate": "None",
+    "content": "\n[15:53]\nemmm 突然又感觉时间过得好快啊，一转眼又周五了，我周末还没想好怎么安排…\n",
+    "status": "0",
+    "weather": "",
+    "mood": "",
+    "mood_id": "None",
+    "mood_color": "None",
+    "title": "",
+    "space": "boy",
+    "createdtime": "2026-01-09 13:07:43+00:00"
+  },
+  "user_config": {
+    "userid": 460100,
+    "useremail": "550191537@qq.com",
+    "frequency": "d",
+    "send_hour": "20",
+    "stop_mail": 0,
+    "enable_first_line_indent": false,
+    "enable_auto_format": true,
+    "pn_pref": 15,
+    "role": "boy",
+    "paired": true,
+    "pair_requested": false,
+    "pair_requested_opposite": false,
+    "random_paired": true,
+    "random_pair_joined": false,
+    "name": "cly",
+    "description": "人间枝头，各自乘流",
+    "avatar": "",
+    "diary_count": 19,
+    "word_count": 12585,
+    "image_count": 4,
+    "paired_user_config": {
+      "userid": 1022956,
+      "role": "girl",
+      "name": "玹子",
+      "description": null,
+      "avatar": "/avatar/2a992be3e22c4e3ebfc5de80828e8c16/",
+      "diary_count": 120,
+      "word_count": 72176,
+      "image_count": 26,
+      "last_login_time": 1767919625,
+      "ts": 1767890247,
+      "paired_time": 1767614422
+    },
+    "is_member": true,
+    "member_expiry_time": 1805442012,
+    "theme_image": null,
+    "theme_id": 4,
+    "age_range": "00-05",
+    "enable_treehole": true,
+    "is_guard": false,
+    "phone_verified": true,
+    "language": null,
+    "ad_config": {
+      "should_show_splash": false
+    },
+    "createdtime": 1521874760,
+    "ts": 1767970674
+  },
+  "error": 0,
+  "version": "5c910068f2ddcfcf2ff88749bf92e042"
+}
+```
 

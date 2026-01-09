@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { BrowserRouter, Link, Route, Routes, useLocation } from 'react-router-dom';
 import { Button, Drawer, Grid, Layout, Menu, Space, Typography } from 'antd';
 import { BookOutlined, DashboardOutlined, HistoryOutlined, TeamOutlined, UserOutlined } from '@ant-design/icons';
@@ -11,6 +11,7 @@ import AllUsers from './pages/AllUsers';
 import UserDetail from './pages/UserDetail';
 import SyncLogs from './pages/SyncLogs';
 import SyncMonitor from './components/SyncMonitor';
+import { accessLogAPI } from './services/api';
 import './App.css';
 
 const { Header, Content } = Layout;
@@ -81,6 +82,32 @@ function AppShell() {
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.md;
   const headerPadding = isMobile ? 12 : 24;
+  const location = useLocation();
+
+  useEffect(() => {
+    const path = `${location.pathname || '/'}${location.search || ''}`;
+
+    const getClientId = () => {
+      const key = 'yournote_client_id';
+      try {
+        const existing = localStorage.getItem(key);
+        if (existing) return existing;
+        const id = globalThis.crypto?.randomUUID?.() ?? `cid_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+        localStorage.setItem(key, id);
+        return id;
+      } catch {
+        return null;
+      }
+    };
+
+    // 上报失败不影响页面；只做 best-effort 的本地访问记录
+    accessLogAPI.pageview({
+      path,
+      client_id: getClientId(),
+      title: document.title || null,
+      referrer: document.referrer || null,
+    }).catch(() => {});
+  }, [location.pathname, location.search]);
 
   return (
     <Layout style={{ minHeight: '100vh' }}>

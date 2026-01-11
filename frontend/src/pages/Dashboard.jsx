@@ -16,7 +16,7 @@ export default function Dashboard() {
   const pagePadding = isMobile ? 12 : 24;
   const [loading, setLoading] = useState(true);
   const [syncingId, setSyncingId] = useState(null);
-  const [accounts, setAccounts] = useState([]);
+  const [accounts, setAccounts] = useState([]);    
   const [stats, setStats] = useState({
     totalAccounts: 0,
     totalUsers: 0,
@@ -24,7 +24,13 @@ export default function Dashboard() {
   });
   const [latestLoading, setLatestLoading] = useState(false);
   const [latestDiaries, setLatestDiaries] = useState([]);
-  const [latestAuthorByUserId, setLatestAuthorByUserId] = useState({});
+  const [latestAuthorByUserId, setLatestAuthorByUserId] = useState({});   
+  const todayText = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date()).replace(/\//g, '-');
 
   useEffect(() => {
     loadData();
@@ -311,7 +317,14 @@ export default function Dashboard() {
       </Card>
 
       <Card
-        title="最近日记"
+        title={(
+          <Space size={8} align="baseline">
+            <span>最近日记</span>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              （今天是 {todayText}）
+            </Text>
+          </Space>
+        )}
         style={{ marginTop: 16 }}
         extra={
           <Button

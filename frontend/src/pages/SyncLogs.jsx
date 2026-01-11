@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button, Card, Grid, Select, Space, Table, Tag, Typography, message } from 'antd';
+import { Button, Card, Select, Space, Table, Tag, Typography, message } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import { accountAPI, syncAPI } from '../services/api';
 import { formatBeijingDateTime } from '../utils/time';
+import Page from '../components/Page';
 
 const { Title } = Typography;
 
@@ -20,9 +21,6 @@ function statusTag(status) {
 }
 
 export default function SyncLogs() {
-  const screens = Grid.useBreakpoint();
-  const isMobile = !screens.md;
-  const pagePadding = isMobile ? 12 : 24;
   const [loading, setLoading] = useState(false);
   const [logs, setLogs] = useState([]);
   const [accounts, setAccounts] = useState([]);
@@ -73,14 +71,14 @@ export default function SyncLogs() {
   }, [accounts]);
 
   return (
-    <div style={{ padding: pagePadding }}>
+    <Page>
       <Title level={3} style={{ marginTop: 0 }}>
         同步记录
       </Title>
 
       <Card style={{ marginBottom: 16 }}>
         <Space wrap>
-          <span style={{ color: '#666' }}>筛选账号：</span>
+          <Typography.Text type="secondary">筛选账号：</Typography.Text>
           <Select
             style={{ width: 280 }}
             value={selectedAccount}
@@ -109,6 +107,6 @@ export default function SyncLogs() {
           ]}
         />
       </Card>
-    </div>
+    </Page>
   );
 }

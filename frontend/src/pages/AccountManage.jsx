@@ -1,22 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Form, Grid, Input, message, Modal, Radio, Table, Tag, Tooltip, Typography } from 'antd';
+import { Alert, Button, Form, Input, message, Modal, Radio, Table, Tag, Tooltip, Typography } from 'antd';
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import { accountAPI } from '../services/api';
 import { waitForLatestSyncLog } from '../utils/sync';
+import Page from '../components/Page';
+import { formatBeijingDateTime } from '../utils/time';
 
 const { Title } = Typography;
 
 function formatDateTime(value) {
-  if (!value) return '-';
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return String(value);
-  return d.toLocaleString();
+  return formatBeijingDateTime(value);
 }
 
 export default function AccountManage() {
-  const screens = Grid.useBreakpoint();
-  const isMobile = !screens.md;
-  const pagePadding = isMobile ? 12 : 24;
   const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
@@ -274,7 +270,7 @@ export default function AccountManage() {
   ];
 
   return (
-    <div style={{ padding: pagePadding }}>
+    <Page>
       <Title level={3} style={{ marginTop: 0 }}>
         账号管理
       </Title>
@@ -386,6 +382,6 @@ export default function AccountManage() {
           </Form.Item>
         </Form>
       </Modal>
-    </div>
+    </Page>
   );
 }

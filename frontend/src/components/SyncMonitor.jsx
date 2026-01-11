@@ -3,14 +3,14 @@ import { Badge, Button, Divider, List, Popover, Space, Tag, Typography, message 
 import { HistoryOutlined, ReloadOutlined, SyncOutlined } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import { accountAPI, syncAPI } from '../services/api';
+import { formatBeijingDateTime } from '../utils/time';
 
 const { Text } = Typography;
 
 function formatTime(value) {
   if (!value) return '-';
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return String(value);
-  return d.toLocaleString('zh-CN');
+  const text = formatBeijingDateTime(value);
+  return text === '-' ? String(value) : text;
 }
 
 function getStatusTag(status) {
@@ -350,7 +350,6 @@ export default function SyncMonitor() {
       <Badge count={runningCount} size="small" offset={[-2, 2]}>
         <Button
           type="text"
-          style={{ color: 'rgba(255,255,255,0.85)' }}
           icon={runningCount > 0 ? <SyncOutlined spin /> : <SyncOutlined />}
         >
           同步

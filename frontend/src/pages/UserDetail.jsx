@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Button, Card, Descriptions, Grid, List, Space, Spin, Table, Tag, Typography, message } from 'antd';
+import { Button, Card, Descriptions, Grid, List, Space, Spin, Table, Tag, Typography, message, theme as antdTheme } from 'antd';
 import { ArrowLeftOutlined } from '@ant-design/icons';
 import { accountAPI, diaryAPI, userAPI } from '../services/api';
 import { getDiaryWordStats } from '../utils/wordCount';
 import { formatBeijingDateTime, parseServerDate } from '../utils/time';
+import Page from '../components/Page';
 
 const { Title, Paragraph, Text } = Typography;
 
@@ -18,7 +19,7 @@ export default function UserDetail() {
   const navigate = useNavigate();
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.md;
-  const pagePadding = isMobile ? 12 : 24;
+  const { token } = antdTheme.useToken();
   const [user, setUser] = useState(null);
   const [diaries, setDiaries] = useState([]);
   const [pairedRecord, setPairedRecord] = useState(null);
@@ -104,7 +105,7 @@ export default function UserDetail() {
         render: (v) => v || '-',
         onCell: (record) => ({
           onClick: () => navigate(`/diary/${record.id}`),
-          style: { cursor: 'pointer', color: '#1677ff' },
+          style: { cursor: 'pointer', color: token.colorPrimary },
         }),
       },
       {
@@ -120,7 +121,7 @@ export default function UserDetail() {
       },
       { title: '心情', dataIndex: 'mood', key: 'mood', width: 90, render: (m) => (m ? <Tag>{m}</Tag> : '-') },
     ];
-  }, [navigate]);
+  }, [navigate, token]);
 
   if (loading) {
     return (
@@ -132,22 +133,22 @@ export default function UserDetail() {
 
   if (!user) {
     return (
-      <div style={{ padding: pagePadding }}>
-        <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)}>
+      <Page>
+        <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)}>      
           返回
         </Button>
         <Card style={{ marginTop: 16 }}>
-          <div style={{ color: '#999' }}>用户不存在或已被删除。</div>
+          <Text type="secondary">用户不存在或已被删除。</Text>
         </Card>
-      </div>
+      </Page>
     );
   }
 
   return (
-    <div style={{ padding: pagePadding }}>
+    <Page>
       <Space direction="vertical" style={{ width: '100%' }} size={16}>
         <div>
-          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)}>
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)}>    
             返回
           </Button>
         </div>
@@ -211,7 +212,7 @@ export default function UserDetail() {
                       {item.mood && <Tag>{item.mood}</Tag>}
                     </Space>
                     <Text strong>{item.title || '无标题'}</Text>
-                    <Paragraph style={{ margin: 0, color: '#666' }} ellipsis={{ rows: 2 }}>
+                    <Paragraph style={{ margin: 0, color: token.colorTextSecondary }} ellipsis={{ rows: 2 }}>
                       {item.content || '-'}
                     </Paragraph>
                   </Space>
@@ -229,6 +230,6 @@ export default function UserDetail() {
           )}
         </Card>
       </Space>
-    </div>
+    </Page>
   );
 }

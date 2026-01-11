@@ -1,53 +1,68 @@
 #root {
-  margin: 0;
-  padding: 0;
   width: 100%;
   min-height: 100vh;
 }
 
+.ant-layout {
+  background: transparent;
+}
+
 .app-content {
-  padding: 0;
-  background: #f5f5f5;
+  background:
+    radial-gradient(900px 540px at 0% 0%, rgba(22, 119, 255, 0.16), transparent 60%),
+    radial-gradient(900px 540px at 100% 0%, rgba(235, 47, 150, 0.12), transparent 60%);
+  transition: background-color 180ms ease, color 180ms ease;
 }
 
-@media (max-width: 768px) {
-  .app-content {
-    padding: 0;
-  }
+:root[data-theme="dark"] .app-content {
+  background:
+    radial-gradient(900px 540px at 0% 0%, rgba(59, 130, 246, 0.22), transparent 62%),
+    radial-gradient(900px 540px at 100% 0%, rgba(236, 72, 153, 0.14), transparent 62%);
 }
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
-}
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafbaa);
+/* 让界面更“灵动”：卡片 hover 轻微抬起 + 更柔和阴影 */
+.ant-card {
+  transition:
+    transform 120ms ease,
+    box-shadow 120ms ease,
+    border-color 180ms ease,
+    background-color 180ms ease;
 }
 
-@keyframes logo-spin {
+.ant-card:hover {
+  transform: translateY(-1px);
+}
+
+/* 页面切换轻微动效 */
+.yournote-page {
+  animation: yn-fade-in 180ms ease both;
+}
+
+@keyframes yn-fade-in {
   from {
-    transform: rotate(0deg);
+    opacity: 0;
+    transform: translateY(4px);
   }
   to {
-    transform: rotate(360deg);
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  a:nth-of-type(2) .logo {
-    animation: logo-spin infinite 20s linear;
+/* 统一滚动条观感（可选） */
+@media (min-width: 768px) {
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
   }
-}
-
-.card {
-  padding: 2em;
-}
-
-.read-the-docs {
-  color: #888;
+  ::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.18);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  :root[data-theme="dark"] ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+    background-clip: content-box;
+  }
 }

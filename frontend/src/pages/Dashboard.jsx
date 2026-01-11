@@ -6,6 +6,7 @@ import { waitForLatestSyncLog } from '../utils/sync';
 import { useNavigate } from 'react-router-dom';
 import { formatBeijingDateTimeFromTs, normalizeEpochMs, parseServerDate } from '../utils/time';
 import { getDiaryWordStats } from '../utils/wordCount';
+import Page from '../components/Page';
 
 const { Title, Text } = Typography;
 
@@ -13,10 +14,9 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.md;
-  const pagePadding = isMobile ? 12 : 24;
   const [loading, setLoading] = useState(true);
   const [syncingId, setSyncingId] = useState(null);
-  const [accounts, setAccounts] = useState([]);    
+  const [accounts, setAccounts] = useState([]);
   const [stats, setStats] = useState({
     totalAccounts: 0,
     totalUsers: 0,
@@ -184,7 +184,7 @@ export default function Dashboard() {
   }
 
   return (
-    <div style={{ padding: pagePadding }}>
+    <Page>
       <Title level={3} style={{ marginTop: 0 }}>
         仪表盘
       </Title>
@@ -237,9 +237,9 @@ export default function Dashboard() {
                       <Tag>{r?.user_name || '未命名'}</Tag>
                       {tokenTag}
                     </Space>
-                    <div style={{ color: '#999', fontSize: 12 }}>
+                    <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
                       {r?.email || '无邮箱'}
-                    </div>
+                    </Text>
                     <Button
                       type="primary"
                       icon={<SyncOutlined />}
@@ -297,7 +297,11 @@ export default function Dashboard() {
             ]}
           />
         )}
-        {accounts.length === 0 && <div style={{ padding: 12, color: '#999' }}>暂无账号，请先去“账号管理”添加。</div>}
+        {accounts.length === 0 && (
+          <Text type="secondary" style={{ padding: 12, display: 'block' }}>
+            暂无账号，请先去“账号管理”添加。
+          </Text>
+        )}
       </Card>
 
       <Card
@@ -379,6 +383,6 @@ export default function Dashboard() {
           </Button>
         </div>
       </Card>
-    </div>
+    </Page>
   );
 }

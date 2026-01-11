@@ -1,90 +1,151 @@
 import { useEffect, useMemo, useState } from 'react';
-import { BrowserRouter, Link, Route, Routes, useLocation } from 'react-router-dom';
-import { Button, Drawer, Grid, Layout, Menu, Space, Typography } from 'antd';
-import { BookOutlined, SendOutlined, TeamOutlined, UserOutlined } from '@ant-design/icons';
-import { MenuOutlined } from '@ant-design/icons';    
+import { BrowserRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import {
+  Button,
+  ConfigProvider,
+  Drawer,
+  Grid,
+  Layout,
+  Menu,
+  Space,
+  Switch,
+  Typography,
+  message,
+  theme as antdTheme,
+} from 'antd';
+import {
+  AppstoreOutlined,
+  BookOutlined,
+  HistoryOutlined,
+  LogoutOutlined,
+  MenuOutlined,
+  MoonOutlined,
+  SendOutlined,
+  SunOutlined,
+  TeamOutlined,
+  UserOutlined,
+} from '@ant-design/icons';
+
 import Dashboard from './pages/Dashboard';
-import AccountManage from './pages/AccountManage';   
-import DiaryList from './pages/DiaryList';    
+import AccountManage from './pages/AccountManage';
+import DiaryList from './pages/DiaryList';
 import DiaryDetail from './pages/DiaryDetail';
 import PublishDiary from './pages/PublishDiary';
-import AccessGate from './pages/AccessGate';
 import AllUsers from './pages/AllUsers';
 import UserDetail from './pages/UserDetail';
 import SyncLogs from './pages/SyncLogs';
+import AccessGate from './pages/AccessGate';
+
 import SyncMonitor from './components/SyncMonitor';
-import { accessLogAPI } from './services/api';
+import { accessAPI, accessLogAPI } from './services/api';
 import './App.css';
 
-const { Header, Content } = Layout;
-const APP_HEADER_HEIGHT = 'var(--app-header-height)';
+const { Header, Sider, Content } = Layout;
 
-function AppHeaderMenu() {
+const THEME_KEY = 'yournote_theme_mode';
+
+function getInitialThemeMode() {
+  const apply = (mode) => {
+    try {
+      document.documentElement.setAttribute('data-theme', mode);
+    } catch {
+      // ignore
+    }
+    return mode;
+  };
+
+  try {
+    const saved = localStorage.getItem(THEME_KEY);
+    if (saved === 'light' || saved === 'dark') return apply(saved);
+  } catch {
+    // ignore
+  }
+  const prefersDark = globalThis.matchMedia?.('(prefers-color-scheme: dark)')?.matches;
+  return apply(prefersDark ? 'dark' : 'light');
+}
+
+function BeijingClock() {
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const text = useMemo(() => {
+    try {
+      return new Intl.DateTimeFormat('zh-CN', {
+        timeZone: 'Asia/Shanghai',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      }).format(now).replace(/\//g, '-');
+    } catch {
+      return '';
+    }
+  }, [now]);
+
+  if (!text) return null;
+  return (
+    <Typography.Text type="secondary" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+      北京时间 {text}
+    </Typography.Text>
+  );
+}
+
+function AppShell({ themeMode, setThemeMode }) {
   const location = useLocation();
-  const screens = Grid.useBreakpoint();
-  const isMobile = !screens.md;
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const navigate = useNavigate();
+  const { token } = antdTheme.useToken();
 
-  const pathname = location.pathname || '/';
-  const selectedKey = (() => {
+  const screens = Grid.useBreakpoint();
+  const isMobile = !screens.lg;
+  const isAccessPage = (location.pathname || '').startsWith('/access');
+
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [siderCollapsed, setSiderCollapsed] = useState(false);
+
+  const selectedKey = useMemo(() => {
+    const pathname = location.pathname || '/';
+    if (pathname === '/' || pathname.startsWith('/dashboard')) return '/';
     if (pathname.startsWith('/accounts')) return '/accounts';
     if (pathname.startsWith('/diaries') || pathname.startsWith('/diary/')) return '/diaries';
     if (pathname.startsWith('/publish')) return '/publish';
     if (pathname.startsWith('/users') || pathname.startsWith('/user/')) return '/users';
+    if (pathname.startsWith('/sync-logs')) return '/sync-logs';
     return null;
-  })();
+  }, [location.pathname]);
 
-  const items = useMemo(() => ([
-    { key: '/accounts', icon: <UserOutlined />, label: <Link to="/accounts">账号管理</Link> },
-    { key: '/diaries', icon: <BookOutlined />, label: <Link to="/diaries">日记列表</Link> },
-    { key: '/publish', icon: <SendOutlined />, label: <Link to="/publish">发布日记</Link> },
-    { key: '/users', icon: <TeamOutlined />, label: <Link to="/users">所有用户</Link> },
+  const navItems = useMemo(() => ([
+    { key: '/', icon: <AppstoreOutlined />, label: '仪表盘' },
+    { key: '/accounts', icon: <UserOutlined />, label: '账号管理' },
+    { key: '/diaries', icon: <BookOutlined />, label: '日记列表' },
+    { key: '/publish', icon: <SendOutlined />, label: '发布日记' },
+    { key: '/users', icon: <TeamOutlined />, label: '所有用户' },
+    { key: '/sync-logs', icon: <HistoryOutlined />, label: '同步记录' },
   ]), []);
 
-  if (isMobile) {
-    return (
-      <>
-        <Button
-          type="text"
-          icon={<MenuOutlined style={{ color: 'white', fontSize: 18 }} />}
-          onClick={() => setDrawerOpen(true)}
-          aria-label="打开菜单"
-        />
-        <Drawer
-          title="菜单"
-          placement="left"
-          open={drawerOpen}
-          onClose={() => setDrawerOpen(false)}
-          width={280}
-        >
-          <Menu
-            mode="inline"
-            selectedKeys={selectedKey ? [selectedKey] : []}
-            items={items}
-            onClick={() => setDrawerOpen(false)}
-          />
-        </Drawer>
-      </>
-    );
-  }
+  const titleText = useMemo(() => {
+    const match = navItems.find(i => i.key === selectedKey);
+    return match?.label || 'YourNote';
+  }, [navItems, selectedKey]);
 
-  return (
+  const menuNode = (
     <Menu
-      theme="dark"
-      mode="horizontal"
+      mode="inline"
       selectedKeys={selectedKey ? [selectedKey] : []}
-      style={{ flex: 1, minWidth: 0 }}
-      items={items}
+      items={navItems}
+      onClick={(e) => {
+        setDrawerOpen(false);
+        if (e?.key) navigate(e.key);
+      }}
+      style={{ borderInlineEnd: 0 }}
     />
   );
-}
-
-function AppShell() {
-  const screens = Grid.useBreakpoint();
-  const isMobile = !screens.md;
-  const headerPadding = isMobile ? 12 : 24;
-  const location = useLocation();
-  const isAccessPage = (location.pathname || '').startsWith('/access');
 
   useEffect(() => {
     const path = `${location.pathname || '/'}${location.search || ''}`;
@@ -94,7 +155,8 @@ function AppShell() {
       try {
         const existing = localStorage.getItem(key);
         if (existing) return existing;
-        const id = globalThis.crypto?.randomUUID?.() ?? `cid_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+        const id = globalThis.crypto?.randomUUID?.()
+          ?? `cid_${Date.now()}_${Math.random().toString(16).slice(2)}`;
         localStorage.setItem(key, id);
         return id;
       } catch {
@@ -111,70 +173,177 @@ function AppShell() {
     }).catch(() => {});
   }, [location.pathname, location.search]);
 
+  const handleThemeChange = (checked) => {
+    setThemeMode(checked ? 'dark' : 'light');
+  };
+
+  const handleLogout = async () => {
+    try {
+      await accessAPI.logout();
+    } catch {
+      // ignore
+    } finally {
+      message.info('已退出访问');
+      navigate('/access', { replace: true });
+    }
+  };
+
+  const logoGradient = `linear-gradient(135deg, ${token.colorPrimary}, ${token.colorPrimaryHover || token.colorPrimary})`;
+
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      {!isAccessPage && (
-        <Header
+      {!isAccessPage && !isMobile && (
+        <Sider
+          collapsible
+          collapsed={siderCollapsed}
+          onCollapse={setSiderCollapsed}
+          width={240}
           style={{
-            position: 'fixed',
-            top: 0,
-            zIndex: 1000,
-            width: '100%',
-            height: APP_HEADER_HEIGHT,
-            display: 'flex',
-            alignItems: 'center',
-            paddingInline: headerPadding,
-            gap: 12,
+            background: token.colorBgContainer,
+            borderRight: `1px solid ${token.colorBorderSecondary}`,
           }}
         >
-          <Space align="center" style={{ flex: 1, minWidth: 0 }} size={12}>
-            <Typography.Title
-              level={4}
+          <div
+            style={{
+              height: 64,
+              display: 'flex',
+              alignItems: 'center',
+              paddingInline: siderCollapsed ? 12 : 16,
+              gap: 10,
+              borderBottom: `1px solid ${token.colorBorderSecondary}`,
+            }}
+          >
+            <div
               style={{
-                color: 'white',
-                margin: 0,
-                whiteSpace: 'nowrap',
+                width: 36,
+                height: 36,
+                borderRadius: 12,
+                background: logoGradient,
               }}
-            >
-              <Link
-                to="/"
-                style={{
-                  color: 'white',
-                  textDecoration: 'none',
-                }}
-              >
-                YourNote
-              </Link>
-            </Typography.Title>
-            <AppHeaderMenu />
-          </Space>
-          <div>
-            <SyncMonitor />
+            />
+            {!siderCollapsed && (
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 700, lineHeight: 1.1 }}>YourNote</div>
+                <div style={{ fontSize: 12, color: token.colorTextSecondary }}>本地日记采集与发布</div>
+              </div>
+            )}
           </div>
-        </Header>
+
+          <div style={{ padding: 8 }}>
+            {menuNode}
+          </div>
+        </Sider>
       )}
 
-      <Content className="app-content" style={{ marginTop: isAccessPage ? 0 : APP_HEADER_HEIGHT }}>
-        <Routes>
-          <Route path="/access" element={<AccessGate />} />
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/accounts" element={<AccountManage />} />
-          <Route path="/diaries" element={<DiaryList />} />
-          <Route path="/diary/:id" element={<DiaryDetail />} />
-          <Route path="/publish" element={<PublishDiary />} />
-          <Route path="/users" element={<AllUsers />} />
-          <Route path="/user/:id" element={<UserDetail />} />
-          <Route path="/sync-logs" element={<SyncLogs />} />
-        </Routes>
-      </Content>
+      <Layout>
+        {!isAccessPage && (
+          <Header
+            style={{
+              position: 'sticky',
+              top: 0,
+              zIndex: 100,
+              height: 64,
+              paddingInline: isMobile ? 12 : 20,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              background: token.colorBgContainer,
+              borderBottom: `1px solid ${token.colorBorderSecondary}`,
+            }}
+          >
+            <Space align="center" size={10}>
+              {isMobile && (
+                <Button
+                  type="text"
+                  icon={<MenuOutlined />}
+                  onClick={() => setDrawerOpen(true)}
+                  aria-label="打开菜单"
+                />
+              )}
+              <Typography.Title level={4} style={{ margin: 0 }}>
+                {titleText}
+              </Typography.Title>
+              {!isMobile && <BeijingClock />}
+            </Space>
+
+            <Space align="center" size={12} wrap>
+              {isMobile && <BeijingClock />}
+              <Switch
+                checked={themeMode === 'dark'}
+                onChange={handleThemeChange}
+                checkedChildren={<MoonOutlined />}
+                unCheckedChildren={<SunOutlined />}
+              />
+              <SyncMonitor />
+              <Button
+                type="text"
+                icon={<LogoutOutlined />}
+                onClick={handleLogout}
+                aria-label="退出访问"
+              />
+            </Space>
+          </Header>
+        )}
+
+        {isMobile && !isAccessPage && (
+          <Drawer
+            title="菜单"
+            placement="left"
+            open={drawerOpen}
+            onClose={() => setDrawerOpen(false)}
+            width={280}
+            bodyStyle={{ padding: 8 }}
+          >
+            {menuNode}
+          </Drawer>
+        )}
+
+        <Content className="app-content" style={{ padding: 0 }}>
+          <Routes>
+            <Route path="/access" element={<AccessGate />} />
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/accounts" element={<AccountManage />} />
+            <Route path="/diaries" element={<DiaryList />} />
+            <Route path="/diary/:id" element={<DiaryDetail />} />
+            <Route path="/publish" element={<PublishDiary />} />
+            <Route path="/users" element={<AllUsers />} />
+            <Route path="/user/:id" element={<UserDetail />} />
+            <Route path="/sync-logs" element={<SyncLogs />} />
+          </Routes>
+        </Content>
+      </Layout>
     </Layout>
   );
 }
 
 export default function App() {
+  const [themeMode, setThemeMode] = useState(() => getInitialThemeMode());
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(THEME_KEY, themeMode);
+    } catch {
+      // ignore
+    }
+    document.documentElement.setAttribute('data-theme', themeMode);
+  }, [themeMode]);
+
+  const themeConfig = useMemo(() => {
+    const isDark = themeMode === 'dark';
+    return {
+      algorithm: isDark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
+      token: {
+        colorPrimary: isDark ? '#3b82f6' : '#1677ff',
+        borderRadius: 10,
+      },
+    };
+  }, [themeMode]);
+
   return (
-    <BrowserRouter>
-      <AppShell />
-    </BrowserRouter>
+    <ConfigProvider theme={themeConfig}>
+      <BrowserRouter>
+        <AppShell themeMode={themeMode} setThemeMode={setThemeMode} />
+      </BrowserRouter>
+    </ConfigProvider>
   );
 }

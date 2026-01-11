@@ -19,6 +19,7 @@ import {
   Tag,
   Timeline,
   Typography,
+  theme,
   message,
 } from 'antd';
 import {
@@ -31,7 +32,7 @@ import {
 } from '@ant-design/icons';
 import { diaryAPI, diaryHistoryAPI, userAPI } from '../services/api';
 import { downloadText, formatExportTimestamp, safeFilenamePart } from '../utils/download';
-import { formatBeijingDateTimeFromTs, parseServerDate } from '../utils/time';
+import { formatBeijingDateTime, formatBeijingDateTimeFromTs, parseServerDate } from '../utils/time';
 import { getDiaryWordStats } from '../utils/wordCount';
 
 const { Sider, Content } = Layout;
@@ -41,6 +42,7 @@ const APP_HEADER_HEIGHT = 'var(--app-header-height)';
 export default function DiaryDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { token } = theme.useToken();
   const [diary, setDiary] = useState(null);
   const [diaryList, setDiaryList] = useState([]);
   const [history, setHistory] = useState([]);
@@ -266,11 +268,11 @@ export default function DiaryDetail() {
   };
 
   const getBorderColor = (item) => {
-    return getDiaryOwner(item) === 'matched' ? '#ff85c0' : '#1890ff';
+    return getDiaryOwner(item) === 'matched' ? token.magenta6 : token.colorPrimary;
   };
 
   const getActiveBgColor = (item) => {
-    return getDiaryOwner(item) === 'matched' ? '#fff0f6' : '#e6f7ff';
+    return getDiaryOwner(item) === 'matched' ? token.magenta1 : token.colorPrimaryBg;
   };
 
   const canExportMatched = !!(showMatched && pairUsers?.main?.id && pairUsers?.matched?.id);
@@ -421,7 +423,7 @@ export default function DiaryDetail() {
     const payload = {
       meta: {
         exported_at: exportedAt.toISOString(),
-        exported_at_local: exportedAt.toLocaleString('zh-CN'),
+        exported_at_local: formatBeijingDateTime(exportedAt),
         count: items.length,
         order,
         can_export_matched: canExportMatched,
@@ -537,12 +539,12 @@ export default function DiaryDetail() {
       height: '100%',
       display: 'flex',
       flexDirection: 'column',
-      background: '#fff'
+      background: token.colorBgContainer,
     }}>
       <div style={{
         padding: '20px',
-        borderBottom: '1px solid #f0f0f0',
-        background: '#fafafa'
+        borderBottom: `1px solid ${token.colorBorderSecondary}`,
+        background: token.colorBgLayout,
       }}>
         <Title level={4} style={{ margin: '0 0 16px 0' }}>日记列表</Title>
         <Space direction="vertical" style={{ width: '100%' }}>
@@ -558,13 +560,13 @@ export default function DiaryDetail() {
             导出…
           </Button>
           {pairUsers?.main?.id && pairUsers?.matched?.id && (
-            <div style={{ fontSize: '12px', color: '#999' }}>
+            <div style={{ fontSize: '12px', color: token.colorTextSecondary }}>
               <div>
-                <span style={{ display: 'inline-block', width: 12, height: 12, background: '#1890ff', marginRight: 6, borderRadius: 2 }}></span>
-                主用户{pairUsers.main?.name ? `：${pairUsers.main.name}` : ''}
+                <span style={{ display: 'inline-block', width: 12, height: 12, background: token.colorPrimary, marginRight: 6, borderRadius: 2 }}></span>
+                主用户{pairUsers.main?.name ? `：${pairUsers.main.name}` : ''}  
               </div>
               <div>
-                <span style={{ display: 'inline-block', width: 12, height: 12, background: '#ff85c0', marginRight: 6, borderRadius: 2 }}></span>
+                <span style={{ display: 'inline-block', width: 12, height: 12, background: token.magenta6, marginRight: 6, borderRadius: 2 }}></span>
                 被匹配用户{pairUsers.matched?.name ? `：${pairUsers.matched.name}` : ''}
               </div>
             </div>
@@ -585,7 +587,7 @@ export default function DiaryDetail() {
               style={{
                 marginBottom: 12,
                 borderLeft: `4px solid ${getBorderColor(item)}`,
-                background: item.id === parseInt(id) ? getActiveBgColor(item) : '#fff',
+                background: item.id === parseInt(id) ? getActiveBgColor(item) : token.colorBgContainer,
                 cursor: 'pointer'
               }}
               bodyStyle={{ padding: '12px 16px' }}
@@ -593,7 +595,7 @@ export default function DiaryDetail() {
               <div style={{ fontWeight: 500, marginBottom: 4, fontSize: '14px' }}>
                 {item.title || '无标题'}
               </div>
-              <div style={{ fontSize: '12px', color: '#999' }}>
+              <div style={{ fontSize: '12px', color: token.colorTextSecondary }}>
                 <CalendarOutlined style={{ marginRight: 4 }} />
                 {item.created_date}
               </div>
@@ -608,12 +610,12 @@ export default function DiaryDetail() {
   const stickyHeight = `calc(100vh - ${APP_HEADER_HEIGHT} - 48px)`;
 
   return (
-    <Layout style={{ minHeight: `calc(100vh - ${APP_HEADER_HEIGHT})`, background: '#f5f5f5' }}>
+    <Layout style={{ minHeight: `calc(100vh - ${APP_HEADER_HEIGHT})`, background: token.colorBgLayout }}>
       {!isMobile && (
         <Sider
           width={320}
           style={{
-            background: '#fff',
+            background: token.colorBgContainer,
             boxShadow: '2px 0 8px rgba(0,0,0,0.05)',
             height: stickyHeight,
             position: 'sticky',
@@ -634,15 +636,15 @@ export default function DiaryDetail() {
         <Space direction="vertical" size={isMobile ? 'middle' : 'large'} style={{ width: '100%' }}>
           <div
             style={{
-              position: 'sticky',
-              top: `calc(${APP_HEADER_HEIGHT} + 12px)`,
-              zIndex: 20,
-              background: 'rgba(245,245,245,0.92)',
-              backdropFilter: 'blur(8px)',
-              padding: isMobile ? '8px 0' : '12px 0',
-              borderBottom: '1px solid rgba(0,0,0,0.06)'
-            }}
-          >
+               position: 'sticky',
+               top: `calc(${APP_HEADER_HEIGHT} + 12px)`,
+               zIndex: 20,
+               background: token.colorBgLayout,
+               backdropFilter: 'blur(8px)',
+               padding: isMobile ? '8px 0' : '12px 0',
+               borderBottom: `1px solid ${token.colorBorderSecondary}`,
+             }}
+           >
             <Space wrap size={isMobile ? 'small' : 'middle'} style={{ width: '100%' }}>
               <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)} size={isMobile ? 'middle' : 'large'}>
                 返回
@@ -693,7 +695,7 @@ export default function DiaryDetail() {
                 </Tag>
               </Space>
 
-              <div style={{ color: '#999', fontSize: 12, marginBottom: isMobile ? 12 : 16 }}>
+              <div style={{ color: token.colorTextSecondary, fontSize: 12, marginBottom: isMobile ? 12 : 16 }}>
                 修改时间：{modifiedTimeText}；字数（不含空白）：标题 {titleWordCount} / 正文 {contentWordCount} / 合计 {totalWordCount}；正文原始字符数 {contentRawCount}
               </div>
 
@@ -705,7 +707,7 @@ export default function DiaryDetail() {
                 overflowWrap: 'anywhere',
                 lineHeight: 1.8,
                 fontSize: '15px',
-                color: '#333',
+                color: token.colorText,
                 marginBottom: 0
               }}>
                 {diary.content}
@@ -717,7 +719,7 @@ export default function DiaryDetail() {
             <Card
               title={
                 <Space>
-                  <ClockCircleOutlined style={{ color: '#1890ff' }} />
+                  <ClockCircleOutlined style={{ color: token.colorPrimary }} />
                   <span>修改历史</span>
                 </Space>
               }
@@ -730,15 +732,15 @@ export default function DiaryDetail() {
               <Timeline>
                 {history.map(h => (
                   <Timeline.Item key={h.id} color="blue">
-                    <div style={{ fontSize: '12px', color: '#999', marginBottom: 8 }}>
-                      {new Date(h.recorded_at).toLocaleString('zh-CN')}
+                    <div style={{ fontSize: '12px', color: token.colorTextSecondary, marginBottom: 8 }}>
+                      {formatBeijingDateTime(h.recorded_at)}
                     </div>
                     <Card
                       size="small"
-                      style={{ background: '#fafafa', border: 'none' }}
+                      style={{ background: token.colorFillAlter, border: 'none' }}
                     >
                       <div style={{ fontWeight: 500, marginBottom: 4 }}>{h.title}</div>
-                      <div style={{ fontSize: '14px', color: '#666', whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{h.content}</div>
+                      <div style={{ fontSize: '14px', color: token.colorText, whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{h.content}</div>
                     </Card>
                   </Timeline.Item>
                 ))}
@@ -783,7 +785,7 @@ export default function DiaryDetail() {
                 </Checkbox>
               </Space>
             ) : (
-              <div style={{ color: '#666' }}>当前仅可导出我的日记（未开启/不可用“显示匹配日记”）。</div>
+              <div style={{ color: token.colorTextSecondary }}>当前仅可导出我的日记（未开启/不可用“显示匹配日记”）。</div>
             )}
           </div>
 
@@ -870,7 +872,7 @@ export default function DiaryDetail() {
                 >
                   仅当前日记
                 </Button>
-                <span style={{ color: '#999' }}>
+                <span style={{ color: token.colorTextSecondary }}>
                   已选 {exportSelectedIds.length} / {exportCandidateDiaries.length}
                 </span>
               </Space>
@@ -904,7 +906,7 @@ export default function DiaryDetail() {
                             <div style={{ fontWeight: 500, marginBottom: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                               {item?.title || '无标题'}
                             </div>
-                            <div style={{ fontSize: 12, color: '#999' }}>
+                            <div style={{ fontSize: 12, color: token.colorTextSecondary }}>
                               <Tag color={color} style={{ marginRight: 6 }}>{getUsernameForExport(item)}</Tag>
                               <span>{item?.created_date || '-'}</span>
                             </div>

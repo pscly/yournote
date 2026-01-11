@@ -1,4 +1,5 @@
 import { syncAPI } from '../services/api';
+import { parseServerDate } from './time';
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -14,10 +15,10 @@ export async function waitForLatestSyncLog(accountId, startedAtMs, options = {})
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const res = await syncAPI.logs({ account_id: accountId, limit: 1 });
+      const res = await syncAPI.logs({ account_id: accountId, limit: 1 });      
       const log = res?.data?.[0];
       if (log?.sync_time) {
-        const t = new Date(log.sync_time).getTime();
+        const t = parseServerDate(log.sync_time)?.getTime();
         if (!Number.isNaN(t) && t >= startedAtMs - 2000) {
           if (acceptRunning || log.status !== 'running') return log;
         }

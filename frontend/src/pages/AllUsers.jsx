@@ -4,7 +4,6 @@ import {
   Badge,
   Card,
   Col,
-  Grid,
   List,
   Row,
   Space,
@@ -15,9 +14,12 @@ import {
   Tooltip,
   Typography,
   message,
+  theme as antdTheme,
 } from 'antd';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';       
 import { accountAPI, userAPI } from '../services/api';
+import Page from '../components/Page';
+import { formatBeijingDateTime, parseServerDate } from '../utils/time';
 
 const { Title, Text } = Typography;
 
@@ -28,8 +30,9 @@ function getAvatarText(name) {
 }
 
 function toTime(value) {
-  if (!value) return 0;
-  const t = new Date(value).getTime();
+  const d = parseServerDate(value);
+  if (!d) return 0;
+  const t = d.getTime();
   if (Number.isNaN(t)) return 0;
   return t;
 }
@@ -43,17 +46,13 @@ function formatUserLabel(user) {
 
 function formatShortTime(value) {
   if (!value) return null;
-  const s = String(value);
-  // ISO 字符串：2026-01-09T12:34:56+08:00
-  // 这里做“更短更好读”的展示
-  return s.replace('T', ' ').slice(0, 19);
+  const text = formatBeijingDateTime(value);
+  return text === '-' ? String(value) : text;
 }
 
 export default function AllUsers() {
   const navigate = useNavigate();
-  const screens = Grid.useBreakpoint();
-  const isMobile = !screens.md;
-  const pagePadding = isMobile ? 12 : 24;
+  const { token } = antdTheme.useToken();
   const [users, setUsers] = useState([]);
   const [activePairs, setActivePairs] = useState([]);
   const [unpairedMains, setUnpairedMains] = useState([]);
@@ -197,7 +196,7 @@ export default function AllUsers() {
   }
 
   return (
-    <div style={{ padding: pagePadding }}>
+    <Page>
       <Title level={3} style={{ marginTop: 0 }}>
         所有用户
       </Title>
@@ -320,7 +319,7 @@ export default function AllUsers() {
                       <Avatar
                         size={56}
                         style={{
-                          backgroundColor: isPaired ? '#eb2f96' : '#1677ff',
+                          backgroundColor: isPaired ? token.magenta6 : token.colorPrimary,
                           marginBottom: 12,
                         }}
                       >
@@ -329,17 +328,17 @@ export default function AllUsers() {
                       <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>
                         {user.name || '未命名'}
                       </div>
-                      <div style={{ color: '#999', fontSize: 12 }}>
+                      <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
                         Nideriji ID: {user.nideriji_userid}
-                      </div>
-                      <div style={{ marginTop: 8, color: '#666' }}>
+                      </Text>
+                      <Text type="secondary" style={{ marginTop: 8, display: 'block' }}>
                         日记数：{user.diary_count ?? 0}
-                      </div>
+                      </Text>
                       {isPaired && pairedSource && (
                         <div style={{ marginTop: 10 }}>
-                          <div style={{ color: '#666', fontSize: 12, marginBottom: 6 }}>
+                          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
                             匹配主账号：
-                          </div>
+                          </Text>
                           <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: 6 }}>
                             <Tag
                               key={`${pairedSource.accountId || 'a'}-${pairedSource.mainUserId || 'u'}`}
@@ -371,7 +370,6 @@ export default function AllUsers() {
           },
         ]}
       />
-    </div>
+    </Page>
   );
 }
-

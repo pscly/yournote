@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button, Card, Grid, List, Select, Space, Spin, Table, Tag, Typography, message } from 'antd';
+import { Button, Card, Grid, List, Select, Space, Spin, Table, Tag, Typography, message, theme as antdTheme } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { accountAPI, diaryAPI, userAPI } from '../services/api';
 import { getDiaryWordStats } from '../utils/wordCount';
 import { formatBeijingDateTimeFromTs, normalizeEpochMs, parseServerDate } from '../utils/time';
+import Page from '../components/Page';
 
 const { Title, Paragraph, Text } = Typography;
 const ALL_ACCOUNTS = 'all';
@@ -15,10 +16,10 @@ export default function DiaryList() {
   const [searchParams] = useSearchParams();
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.md;
-  const pagePadding = isMobile ? 12 : 24;
+  const { token } = antdTheme.useToken();
   const [diaries, setDiaries] = useState([]);
   const [accounts, setAccounts] = useState([]);
-  const [userNameByNiderijiUserid, setUserNameByNiderijiUserid] = useState({});
+  const [userNameByNiderijiUserid, setUserNameByNiderijiUserid] = useState({}); 
   const [userById, setUserById] = useState({});
   const [userIdByNiderijiUserid, setUserIdByNiderijiUserid] = useState({});
   const [loading, setLoading] = useState(false);
@@ -212,7 +213,7 @@ export default function DiaryList() {
       render: (v) => v || '-',
       onCell: (record) => ({
         onClick: () => navigate(`/diary/${record.id}`),
-        style: { cursor: 'pointer', color: '#1677ff' },
+        style: { cursor: 'pointer', color: token.colorPrimary },
       }),
     },
     {
@@ -228,30 +229,30 @@ export default function DiaryList() {
     },
     { title: '心情', dataIndex: 'mood', key: 'mood', width: 90, render: (m) => (m ? <Tag>{m}</Tag> : '-') },
     { title: '天气', dataIndex: 'weather', key: 'weather', width: 90, render: (w) => (w ? <Tag color="blue">{w}</Tag> : '-') },
-  ], [navigate, userById]);
+  ], [navigate, userById, token]);
 
   if (accounts.length === 0) {
     return (
-      <div style={{ padding: pagePadding }}>
+      <Page>
         <Title level={3} style={{ marginTop: 0 }}>
           日记列表
         </Title>
         <Card>
-          <div style={{ color: '#999' }}>暂无账号，请先去“账号管理”添加并等待同步完成。</div>
+          <Text type="secondary">暂无账号，请先去“账号管理”添加并等待同步完成。</Text>
         </Card>
-      </div>
+      </Page>
     );
   }
 
   return (
-    <div style={{ padding: pagePadding }}>
+    <Page>
       <Title level={3} style={{ marginTop: 0 }}>
         日记列表
       </Title>
 
       <Card style={{ marginBottom: 16 }}>
         <Space wrap direction={isMobile ? 'vertical' : 'horizontal'} style={{ width: '100%' }}>
-          <span style={{ color: '#666' }}>选择账号：</span>
+          <Text type="secondary">选择账号：</Text>
           <Select
             style={{ width: isMobile ? '100%' : 280 }}
             value={selectedAccount}
@@ -296,7 +297,7 @@ export default function DiaryList() {
                     </Space>
                     <Text strong>{item.title || '无标题'}</Text>
                     <Paragraph
-                      style={{ margin: 0, color: '#666' }}
+                      style={{ margin: 0, color: token.colorTextSecondary }}
                       ellipsis={{ rows: 2 }}
                     >
                       {item.content || '-'}
@@ -323,6 +324,6 @@ export default function DiaryList() {
           </div>
         )}
       </Card>
-    </div>
+    </Page>
   );
 }

@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Card, Checkbox, Grid, Input, message, Modal, Space, Table, Tabs, Tag, Typography } from 'antd';
+import { Alert, Button, Card, Checkbox, Input, message, Modal, Space, Table, Tabs, Tag, Typography, Grid } from 'antd';
 import { ReloadOutlined, SaveOutlined, SendOutlined } from '@ant-design/icons';
 import { accountAPI, publishDiaryAPI } from '../services/api';
+import Page from '../components/Page';
+import { formatBeijingDateTime } from '../utils/time';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
@@ -10,46 +12,70 @@ function pad2(n) {
   return String(n).padStart(2, '0');
 }
 
-function formatDateYYYYMMDD(date) {
+function formatDateYYYYMMDDUTC(date) {
   const d = date instanceof Date ? date : new Date(date);
   if (Number.isNaN(d.getTime())) return '';
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+}
+
+function formatBeijingDateYYYYMMDD(date = new Date()) {
+  const d = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(d.getTime())) return '';
+
+  try {
+    const parts = new Intl.DateTimeFormat('zh-CN', {
+      timeZone: 'Asia/Shanghai',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(d);
+    const y = parts.find(p => p.type === 'year')?.value;
+    const m = parts.find(p => p.type === 'month')?.value;
+    const day = parts.find(p => p.type === 'day')?.value;
+    if (!y || !m || !day) return '';
+    return `${y}-${m}-${day}`;
+  } catch {
+    // 极少数环境 Intl 不可用时，退回浏览器本地时区
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  }
 }
 
 function todayStr() {
-  return formatDateYYYYMMDD(new Date());
+  return formatBeijingDateYYYYMMDD(new Date());
 }
 
 function yesterdayStr() {
-  const d = new Date();
-  d.setDate(d.getDate() - 1);
-  return formatDateYYYYMMDD(d);
+  const now = new Date();
+  return formatBeijingDateYYYYMMDD(new Date(now.getTime() - 24 * 60 * 60 * 1000));
 }
 
 function parseDateYYYYMMDD(value) {
   const raw = String(value || '').trim();
-  const parts = raw.split('-').map(v => Number.parseInt(v, 10));
-  if (parts.length !== 3) return null;
-  const [y, m, d] = parts;
-  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return null;
-  // 使用本地时区构造，避免 new Date('YYYY-MM-DD') 的 UTC 解析差异
-  const dt = new Date(y, m - 1, d);
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const y = Number.parseInt(match[1], 10);
+  const month = Number.parseInt(match[2], 10);
+  const day = Number.parseInt(match[3], 10);
+  if (!Number.isFinite(y) || !Number.isFinite(month) || !Number.isFinite(day)) return null;
+  // 用 UTC 解析“纯日期”，避免不同时区/DST 引起的 +/-1 天问题
+  const dt = new Date(Date.UTC(y, month - 1, day));
   if (Number.isNaN(dt.getTime())) return null;
   return dt;
 }
 
 function shiftDateStr(value, deltaDays) {
-  const base = parseDateYYYYMMDD(value) || new Date();
-  base.setDate(base.getDate() + (Number(deltaDays) || 0));
-  return formatDateYYYYMMDD(base);
+  const base = parseDateYYYYMMDD(value) || parseDateYYYYMMDD(todayStr());
+  const days = Number(deltaDays) || 0;
+  if (!base) return todayStr();
+  base.setUTCDate(base.getUTCDate() + days);
+  return formatDateYYYYMMDDUTC(base);
 }
 
 export default function PublishDiary() {
-  const screens = Grid.useBreakpoint();
-  const isMobile = !screens.md;
-  const pagePadding = isMobile ? 12 : 24;
-
   const LAST_SELECTION_KEY = 'yournote_publish_diary_last_account_ids';
+
+  const screens = Grid.useBreakpoint();
+  const isMobile = !screens?.md;
 
   const [activeTab, setActiveTab] = useState('edit'); // edit | history
 
@@ -336,10 +362,7 @@ export default function PublishDiary() {
       key: 'created_at',
       width: 180,
       render: (v) => {
-        if (!v) return '-';
-        const d = new Date(v);
-        if (Number.isNaN(d.getTime())) return String(v);
-        return d.toLocaleString();
+        return formatBeijingDateTime(v);
       },
     },
     {
@@ -356,10 +379,10 @@ export default function PublishDiary() {
   ];
 
   return (
-    <div style={{ padding: pagePadding, maxWidth: 1200, margin: '0 auto' }}>
-      <Space direction="vertical" size={16} style={{ width: '100%' }}>
+    <Page maxWidth={1200}>
+      <Space direction="vertical" size={16} style={{ width: '100%' }}>     
         <div>
-          <Title level={3} style={{ margin: 0 }}>一键发布日记</Title>
+          <Title level={3} style={{ margin: 0 }}>一键发布日记</Title>      
           <Text type="secondary">草稿/发布历史独立存储，不会和“采集日记列表”混在一起。</Text>
         </div>
 
@@ -395,7 +418,7 @@ export default function PublishDiary() {
                       <Button onClick={() => setDate((prev) => shiftDateStr(prev, 1))}>下一天</Button>
                       <Button icon={<ReloadOutlined />} onClick={() => loadDraft(date)} loading={draftLoading}>重新加载草稿</Button>
                       <Text type="secondary">
-                        {draftUpdatedAt ? `草稿更新时间：${new Date(draftUpdatedAt).toLocaleString()}` : '草稿尚未保存'}
+                        {draftUpdatedAt ? `草稿更新时间：${formatBeijingDateTime(draftUpdatedAt)}` : '草稿尚未保存'}
                       </Text>
                     </Space>
                   </Card>
@@ -563,6 +586,6 @@ export default function PublishDiary() {
           </Space>
         )}
       </Modal>
-    </div>
+    </Page>
   );
 }

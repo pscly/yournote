@@ -23,7 +23,9 @@ export const accountAPI = {
 
 // 数据同步
 export const syncAPI = {
-  trigger: (accountId) => api.post(`/sync/trigger/${accountId}`),     
+  // 手动同步可能需要更长时间，单独放宽 timeout，避免被 axios 默认 10s 误判超时。
+  trigger: (accountId, config = {}) =>
+    api.post(`/sync/trigger/${accountId}`, null, { timeout: 0, ...config }),
   logs: (params) => api.get('/sync/logs', { params }),
 };
 

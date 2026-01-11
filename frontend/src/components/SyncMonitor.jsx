@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Badge, Button, Divider, List, Popover, Space, Tag, Typography, message } from 'antd';
-import { HistoryOutlined, SyncOutlined } from '@ant-design/icons';
+import { HistoryOutlined, ReloadOutlined, SyncOutlined } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import { accountAPI, syncAPI } from '../services/api';
 
@@ -23,6 +23,7 @@ function getStatusTag(status) {
 export default function SyncMonitor() {
   const [latestLogs, setLatestLogs] = useState([]);
   const [accountMeta, setAccountMeta] = useState(new Map());
+  const [triggeringAll, setTriggeringAll] = useState(false);
 
   const initializedRef = useRef(false);
   const lastSeenIdRef = useRef(new Map()); // accountId -> logId
@@ -30,7 +31,7 @@ export default function SyncMonitor() {
   const accountMetaRef = useRef(new Map());
   const pollingRef = useRef(false);
 
-  const loadAccounts = async () => {
+  const loadAccounts = async ({ silent = true } = {}) => {
     try {
       const res = await accountAPI.list();
       const map = new Map();
@@ -43,7 +44,8 @@ export default function SyncMonitor() {
       });
       setAccountMeta(map);
       accountMetaRef.current = map;
-    } catch {
+    } catch (e) {
+      if (!silent) message.error('加载账号失败: ' + (e?.message || String(e)));
       // 忽略：同步指示器不应影响主功能
     }
   };
@@ -156,7 +158,6 @@ export default function SyncMonitor() {
       clearInterval(logTimer);
       clearInterval(accountTimer);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const runningLogs = useMemo(() => latestLogs.filter(l => l.status === 'running'), [latestLogs]);
@@ -166,15 +167,120 @@ export default function SyncMonitor() {
     [latestLogs],
   );
 
+  const handleRefresh = async () => {
+    await loadAccounts({ silent: false });
+    await pollLogs();
+  };
+
+  const handleSyncAllNow = async () => {
+    const msgKey = 'sync-all';
+    if (triggeringAll) return;
+
+    setTriggeringAll(true);
+    try {
+      await loadAccounts({ silent: false });
+
+      const accounts = Array.from(accountMetaRef.current.values());
+      if (accounts.length === 0) {
+        message.info('暂无账号，请先在“账号管理”添加。');
+        return;
+      }
+
+      const runningIds = new Set(runningLogs.map(l => l?.account_id).filter(Boolean));
+      const targets = accounts.filter(a => !runningIds.has(a.id));
+      const skipped = accounts.length - targets.length;
+
+      if (targets.length === 0) {
+        message.info('当前所有账号都在同步中');
+        return;
+      }
+
+      message.open({
+        key: msgKey,
+        type: 'loading',
+        content: `开始同步：${targets.length} 个账号...`,
+        duration: 0,
+      });
+
+      let ok = 0;
+      let failed = 0;
+
+      for (let i = 0; i < targets.length; i += 1) {
+        const account = targets[i];
+        const label = account.user_name
+          ? `${account.user_name}（${account.nideriji_userid}）`
+          : `账号 ${account.nideriji_userid ?? account.id}`;
+
+        message.open({
+          key: msgKey,
+          type: 'loading',
+          content: `(${i + 1}/${targets.length}) ${label}：同步中...`,
+          duration: 0,
+        });
+
+        try {
+          await syncAPI.trigger(account.id);
+          ok += 1;
+        } catch (e) {
+          failed += 1;
+          const errText = String(e?.message || e || '未知错误');
+          if (/timeout|超时/i.test(errText)) {
+            message.warning(`${label}：请求超时，但后台可能仍在同步，请稍后查看结果`);
+          } else {
+            message.error(`${label}：同步请求失败：${errText}`);
+          }
+        } finally {
+          await pollLogs();
+        }
+      }
+
+      if (failed === 0) {
+        const extra = skipped > 0 ? `（跳过正在同步的 ${skipped} 个账号）` : '';
+        message.open({
+          key: msgKey,
+          type: 'success',
+          content: `已完成：${ok} 个账号同步${extra}`,
+        });
+      } else {
+        message.open({
+          key: msgKey,
+          type: 'warning',
+          content: `已完成：成功 ${ok}，失败 ${failed}`,
+        });
+      }
+    } finally {
+      setTriggeringAll(false);
+    }
+  };
+
   const popoverContent = (
     <div style={{ width: 360 }}>
       <Space style={{ width: '100%', justifyContent: 'space-between' }}>
         <Text strong>同步状态</Text>
-        <Link to="/sync-logs">
-          <Button type="link" size="small" icon={<HistoryOutlined />}>
-            查看记录
+        <Space size={6} wrap>
+          <Button
+            type="primary"
+            size="small"
+            icon={<SyncOutlined />}
+            loading={triggeringAll}
+            onClick={handleSyncAllNow}
+          >
+            现在同步
           </Button>
-        </Link>
+          <Button
+            size="small"
+            icon={<ReloadOutlined />}
+            disabled={triggeringAll}
+            onClick={handleRefresh}
+          >
+            刷新
+          </Button>
+          <Link to="/sync-logs">
+            <Button type="link" size="small" icon={<HistoryOutlined />}>
+              查看记录
+            </Button>
+          </Link>
+        </Space>
       </Space>
 
       <Divider style={{ margin: '12px 0' }} />

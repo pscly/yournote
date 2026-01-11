@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Button, Card, Descriptions, Grid, List, Space, Spin, Table, Tag, Typography, message } from 'antd';
 import { ArrowLeftOutlined } from '@ant-design/icons';
 import { accountAPI, diaryAPI, userAPI } from '../services/api';
+import { getDiaryWordStats } from '../utils/wordCount';
 
 const { Title, Paragraph, Text } = Typography;
 
@@ -108,6 +109,17 @@ export default function UserDetail() {
           style: { cursor: 'pointer', color: '#1677ff' },
         }),
       },
+      {
+        title: '字数',
+        key: 'word_count',
+        width: 110,
+        align: 'right',
+        render: (_, record) => {
+          const stats = getDiaryWordStats(record);
+          const n = stats?.content?.no_whitespace ?? 0;
+          return <Tag color="geekblue">{n} 字</Tag>;
+        },
+      },
       { title: '心情', dataIndex: 'mood', key: 'mood', width: 90, render: (m) => (m ? <Tag>{m}</Tag> : '-') },
     ];
   }, [navigate]);
@@ -196,7 +208,8 @@ export default function UserDetail() {
                 >
                   <Space direction="vertical" size={8} style={{ width: '100%' }}>
                     <Space wrap size={8}>
-                      <Tag color="blue">{item.created_date || '未知日期'}</Tag>
+                      <Tag color="blue">{item.created_date || '未知日期'}</Tag> 
+                      <Tag color="geekblue">{getDiaryWordStats(item).content.no_whitespace} 字</Tag>
                       {item.mood && <Tag>{item.mood}</Tag>}
                     </Space>
                     <Text strong>{item.title || '无标题'}</Text>
@@ -213,7 +226,7 @@ export default function UserDetail() {
               dataSource={diaries}
               rowKey="id"
               pagination={{ pageSize: 20 }}
-              scroll={{ x: 800 }}
+              scroll={{ x: 920 }}
             />
           )}
         </Card>

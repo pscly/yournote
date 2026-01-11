@@ -36,3 +36,19 @@ export function formatBeijingDateTime(value) {
   return d.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
 }
 
+export function normalizeEpochMs(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  // 经验规则：Unix 秒级时间戳通常 < 1e12；毫秒级时间戳通常 >= 1e12（约 2001 年之后）
+  if (n < 1e12) return n * 1000;
+  return n;
+}
+
+export function formatBeijingDateTimeFromTs(ts) {
+  const ms = normalizeEpochMs(ts);
+  if (!ms) return '-';
+
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return '-';
+  return d.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+}

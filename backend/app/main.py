@@ -77,7 +77,7 @@ async def startup_event():
     print("[STARTUP] Running initial sync on startup...")
     await scheduler.sync_all_accounts()
 
-    # 启动定时任务（每小时运行一次）
+    # 启动定时任务（按配置定期运行）
     scheduler.start()
 
 

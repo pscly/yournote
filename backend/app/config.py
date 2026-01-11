@@ -58,7 +58,10 @@ class Settings(BaseSettings):
     access_log_include_query: bool = False
 
     # Sync
-    sync_interval_hours: int = 6
+    # - 优先使用分钟粒度，方便配置 20 分钟等场景
+    # - 兼容旧配置：SYNC_INTERVAL_HOURS
+    sync_interval_minutes: int | None = None
+    sync_interval_hours: int | None = None
 
     @model_validator(mode="after")
     def _build_database_url_if_missing(self) -> "Settings":
@@ -70,7 +73,22 @@ class Settings(BaseSettings):
             db_path = (_REPO_ROOT / db_path).resolve()
 
         # SQLAlchemy 在 Windows 下推荐使用形如：sqlite+aiosqlite:///C:/path/to/db 的写法
-        self.database_url = f"sqlite+aiosqlite:///{db_path.as_posix()}"
+        self.database_url = f"sqlite+aiosqlite:///{db_path.as_posix()}"   
+        return self
+
+    @model_validator(mode="after")
+    def _normalize_sync_interval(self) -> "Settings":
+        minutes = self.sync_interval_minutes
+        if minutes is None:
+            if self.sync_interval_hours is not None:
+                minutes = int(self.sync_interval_hours) * 60
+            else:
+                minutes = 20
+
+        if minutes <= 0:
+            minutes = 20
+
+        self.sync_interval_minutes = minutes
         return self
 
     model_config = SettingsConfigDict(

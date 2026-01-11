@@ -33,7 +33,8 @@ import axios from 'axios';
 import { API_BASE_URL } from '../config';
 import { diaryAPI, userAPI } from '../services/api';
 import { downloadText, formatExportTimestamp, safeFilenamePart } from '../utils/download';
-import { parseServerDate } from '../utils/time';
+import { formatBeijingDateTimeFromTs, parseServerDate } from '../utils/time';
+import { getDiaryWordStats } from '../utils/wordCount';
 
 const { Sider, Content } = Layout;
 const { Title, Paragraph } = Typography;
@@ -271,6 +272,13 @@ export default function DiaryDetail() {
   };
 
   const canExportMatched = !!(showMatched && pairUsers?.main?.id && pairUsers?.matched?.id);
+
+  const wordStats = useMemo(() => getDiaryWordStats(diary), [diary]);
+  const titleWordCount = wordStats?.title?.no_whitespace ?? 0;
+  const contentWordCount = wordStats?.content?.no_whitespace ?? 0;
+  const totalWordCount = wordStats?.total?.no_whitespace ?? 0;
+  const contentRawCount = wordStats?.content?.raw ?? 0;
+  const modifiedTimeText = useMemo(() => formatBeijingDateTimeFromTs(diary?.ts), [diary?.ts]);
 
   const exportCandidateDiaries = useMemo(() => {
     const list = (diaryList || []).filter(Boolean);
@@ -675,7 +683,17 @@ export default function DiaryDetail() {
                     {diary.weather}
                   </Tag>
                 )}
+                <Tag icon={<ClockCircleOutlined />} color="purple" style={{ padding: isMobile ? '2px 10px' : '4px 12px', fontSize: isMobile ? '13px' : '14px' }}>
+                  修改时间：{modifiedTimeText}
+                </Tag>
+                <Tag color="geekblue" style={{ padding: isMobile ? '2px 10px' : '4px 12px', fontSize: isMobile ? '13px' : '14px' }}>
+                  字数：{contentWordCount} 字
+                </Tag>
               </Space>
+
+              <div style={{ color: '#999', fontSize: 12, marginBottom: isMobile ? 12 : 16 }}>
+                修改时间：{modifiedTimeText}；字数（不含空白）：标题 {titleWordCount} / 正文 {contentWordCount} / 合计 {totalWordCount}；正文原始字符数 {contentRawCount}
+              </div>
 
               <Divider />
 

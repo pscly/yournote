@@ -3,6 +3,7 @@ import asyncio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select
+from .config import settings
 from .database import AsyncSessionLocal
 from .models import Account
 from .services import CollectorService
@@ -49,17 +50,21 @@ class DataSyncScheduler:
 
     def start(self):
         """启动定时任务"""
-        # 添加每小时执行一次的任务
+        interval_minutes = int(getattr(settings, "sync_interval_minutes", 20) or 20)
+        if interval_minutes <= 0:
+            interval_minutes = 20
+
+        # 添加定时执行的任务（按配置间隔运行）
         self.scheduler.add_job(
             self.sync_all_accounts,
-            trigger=IntervalTrigger(hours=1),
+            trigger=IntervalTrigger(minutes=interval_minutes),
             id='sync_all_accounts',
-            name='Sync all accounts every hour',
+            name=f'Sync all accounts every {interval_minutes} minutes',
             replace_existing=True
         )
 
         self.scheduler.start()
-        print("[SCHEDULER] Scheduler started: sync every 1 hour")
+        print(f"[SCHEDULER] Scheduler started: sync every {interval_minutes} minutes")
 
     def shutdown(self):
         """关闭定时任务"""

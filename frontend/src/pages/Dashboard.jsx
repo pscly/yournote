@@ -1,12 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button, Card, Col, Grid, List, Row, Space, Spin, Statistic, Table, Tag, Typography, message } from 'antd';
 import { BookOutlined, SyncOutlined, TeamOutlined, UserOutlined } from '@ant-design/icons';
-import { accountAPI, statsAPI, syncAPI } from '../services/api';
+import { accountAPI, diaryAPI, statsAPI, syncAPI, userAPI } from '../services/api';
 import { waitForLatestSyncLog } from '../utils/sync';
 import { useNavigate } from 'react-router-dom';
-import { formatBeijingDateTime } from '../utils/time';
+import { parseServerDate } from '../utils/time';
+import { getDiaryWordStats } from '../utils/wordCount';
 
-const { Title } = Typography;
+const { Title, Text } = Typography;
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -20,8 +21,10 @@ export default function Dashboard() {
     totalAccounts: 0,
     totalUsers: 0,
     pairedDiaries: 0,
-    lastSync: null,
   });
+  const [latestLoading, setLatestLoading] = useState(false);
+  const [latestDiaries, setLatestDiaries] = useState([]);
+  const [latestAuthorByUserId, setLatestAuthorByUserId] = useState({});
 
   useEffect(() => {
     loadData();
@@ -35,14 +38,17 @@ export default function Dashboard() {
         statsAPI.overview(),
       ]);
 
-      setAccounts(accountsRes.data);
+      const accountList = accountsRes.data || [];
+      setAccounts(accountList);
       const overview = statsRes?.data || {};
       setStats({
-        totalAccounts: overview.total_accounts ?? accountsRes.data.length,
+        totalAccounts: overview.total_accounts ?? accountList.length,     
         totalUsers: overview.total_users ?? 0,
         pairedDiaries: overview.paired_diaries_count ?? 0,
-        lastSync: overview.last_sync_time || null,
       });
+
+      // 最近日记（被匹配用户）默认聚合所有账号；这里做 best-effort 的异步刷新
+      loadLatestPairedDiariesAll(accountList);
     } catch (error) {
       message.error('加载数据失败: ' + error.message);
     } finally {
@@ -50,11 +56,100 @@ export default function Dashboard() {
     }
   };
 
-  const latestSyncTimeText = useMemo(() => {
-    if (!stats.lastSync) return '未同步';
-    const text = formatBeijingDateTime(stats.lastSync);
-    return text === '-' ? String(stats.lastSync) : text;
-  }, [stats.lastSync]);
+  const getDiaryTimestamp = (item) => {
+    const raw = item?.created_date || item?.created_time;
+    const d = parseServerDate(raw);
+    if (!d) return 0;
+    return d.getTime();
+  };
+
+  const normalizeEpochMs = (value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) return 0;
+    // 经验规则：Unix 秒级时间戳通常 < 1e12；毫秒级时间戳通常 >= 1e12（约 2001 年之后）
+    if (n < 1e12) return n * 1000;
+    return n;
+  };
+
+  const getDiarySortKey = (item) => {
+    // 优先使用同步接口带回来的 ts（更像“最后修改时间”）
+    const tsMs = normalizeEpochMs(item?.ts);
+    if (tsMs) return tsMs;
+    return getDiaryTimestamp(item);
+  };
+
+  const formatBeijingDateTimeFromTs = (ts) => {
+    const ms = normalizeEpochMs(ts);
+    if (!ms) return null;
+    const d = new Date(ms);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+  };
+
+  const loadLatestPairedDiariesAll = async (accountList = accounts) => {
+    const list = accountList || [];
+    if (list.length === 0) {
+      setLatestDiaries([]);
+      setLatestAuthorByUserId({});
+      return;
+    }
+
+    setLatestLoading(true);
+    try {
+      const results = await Promise.all(
+        list.map(async (acc) => {
+          const accountId = acc?.id;
+          if (!accountId) return { diaries: [], authors: {} };
+
+          // 先取配对关系（用于确定“被匹配用户”是谁）
+          const pairedRes = await userAPI.paired(accountId);
+          const relationships = pairedRes?.data || [];
+
+          const matchedUsers = relationships
+            .map(r => r?.paired_user)
+            .filter(u => u?.id);
+
+          const authors = {};
+          matchedUsers.forEach((u) => {
+            authors[u.id] = u;
+          });
+
+          const matchedUserIds = new Set(matchedUsers.map(u => u.id));
+          if (matchedUserIds.size === 0) return { diaries: [], authors };
+
+          // 再取该账号的日记列表，并仅保留“被匹配用户”的日记
+          const diariesRes = await diaryAPI.byAccount(accountId, 100);
+          const filtered = (diariesRes?.data || []).filter(d => matchedUserIds.has(d?.user_id));
+          return { diaries: filtered, authors };
+        }),
+      );
+
+      const mergedById = new Map();
+      const authorById = {};
+
+      results.forEach((r) => {
+        Object.assign(authorById, r?.authors || {});
+        (r?.diaries || []).forEach((d) => {
+          if (!d) return;
+          const key = d?.id ?? `${d?.account_id ?? 'acc'}_${d?.nideriji_diary_id ?? 'nid'}_${d?.created_date ?? 'date'}_${d?.user_id ?? 'uid'}`;
+          mergedById.set(key, d);
+        });
+      });
+
+      const merged = Array.from(mergedById.values()).sort((a, b) => (
+        getDiarySortKey(b) - getDiarySortKey(a)
+      ));
+
+      setLatestAuthorByUserId(authorById);
+      setLatestDiaries(merged);
+    } catch (error) {
+      setLatestDiaries([]);
+      setLatestAuthorByUserId({});
+      message.error('加载最近日记失败: ' + error.message);
+    } finally {
+      setLatestLoading(false);
+    }
+  };
 
   const handleSync = async (accountId) => {
     const msgKey = `sync-${accountId}`;
@@ -82,7 +177,7 @@ export default function Dashboard() {
         message.open({ key: msgKey, type: 'success', content: '更新完成' });
       }
 
-      loadData();
+      await loadData();
     } catch (error) {
       message.open({ key: msgKey, type: 'error', content: '更新失败: ' + error.message });
     } finally {
@@ -105,24 +200,19 @@ export default function Dashboard() {
       </Title>
 
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-        <Col xs={12} md={6}>
+        <Col xs={12} md={8}>
           <Card hoverable onClick={() => navigate('/accounts')} style={{ cursor: 'pointer' }}>
             <Statistic title="账号数量" value={stats.totalAccounts} prefix={<UserOutlined />} />
           </Card>
         </Col>
-        <Col xs={12} md={6}>
+        <Col xs={12} md={8}>
           <Card hoverable onClick={() => navigate('/users')} style={{ cursor: 'pointer' }}>
             <Statistic title="用户数量" value={stats.totalUsers} prefix={<TeamOutlined />} />
           </Card>
         </Col>
-        <Col xs={12} md={6}>
+        <Col xs={12} md={8}>
           <Card hoverable onClick={() => navigate('/diaries')} style={{ cursor: 'pointer' }}>
             <Statistic title="配对日记数" value={stats.pairedDiaries} prefix={<BookOutlined />} />
-          </Card>
-        </Col>
-        <Col xs={12} md={6}>
-          <Card>
-            <Statistic title="最后同步" value={latestSyncTimeText} />
           </Card>
         </Col>
       </Row>
@@ -218,6 +308,79 @@ export default function Dashboard() {
           />
         )}
         {accounts.length === 0 && <div style={{ padding: 12, color: '#999' }}>暂无账号，请先去“账号管理”添加。</div>}
+      </Card>
+
+      <Card
+        title="最近日记"
+        style={{ marginTop: 16 }}
+        extra={
+          <Button
+            onClick={() => loadLatestPairedDiariesAll()}
+            disabled={accounts.length === 0}
+            loading={latestLoading}
+          >
+            刷新
+          </Button>
+        }
+      >
+        <Space wrap style={{ width: '100%', marginBottom: 12 }}>
+          <Tag color="blue">全部账号</Tag>
+          <Tag color="magenta">仅显示被匹配用户日记</Tag>
+          <Tag color="purple">按 ts（最后修改）优先排序</Tag>
+        </Space>
+
+        <List
+          dataSource={(latestDiaries || []).slice(0, isMobile ? 5 : 8)}
+          loading={latestLoading}
+          locale={{
+            emptyText: accounts.length === 0
+              ? '暂无账号，请先去“账号管理”添加。'
+              : '暂无配对日记',
+          }}
+          renderItem={(item) => {
+            const stats = getDiaryWordStats(item);
+            const wordCount = stats?.content?.no_whitespace ?? 0;
+
+            const author = latestAuthorByUserId?.[item?.user_id];
+            const authorName = author?.name || (item?.user_id ? `用户 ${item.user_id}` : '未知作者');
+            const authorText = author?.nideriji_userid ? `${authorName}（${author.nideriji_userid}）` : authorName;
+
+            const updatedAtText = formatBeijingDateTimeFromTs(item?.ts);
+
+            const content = String(item?.content ?? '');
+            const snippetLimit = isMobile ? 60 : 120;
+            const snippet = content
+              ? (content.length > snippetLimit ? `${content.slice(0, snippetLimit)}…` : content)
+              : '（空）';
+
+            return (
+              <List.Item
+                key={item?.id}
+                style={{ cursor: 'pointer', paddingLeft: 4, paddingRight: 4 }}
+                onClick={() => navigate(`/diary/${item.id}`)}
+              >
+                <List.Item.Meta
+                  title={
+                    <Space wrap size={8}>
+                      <Tag color="magenta">{authorText}</Tag>
+                      <Tag color="blue">{item?.created_date || '-'}</Tag>
+                      {updatedAtText && <Tag color="purple">更新 {updatedAtText}</Tag>}
+                      <Tag color="geekblue">{wordCount} 字</Tag>
+                      <span style={{ fontWeight: 500 }}>{item?.title || '无标题'}</span>
+                    </Space>
+                  }
+                  description={<Text type="secondary">{snippet}</Text>}
+                />
+              </List.Item>
+            );
+          }}
+        />
+
+        <div style={{ textAlign: 'center', marginTop: 4 }}>
+          <Button type="link" onClick={() => navigate('/diaries')} disabled={accounts.length === 0}>
+            显示更多
+          </Button>
+        </div>
       </Card>
     </div>
   );

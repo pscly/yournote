@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { BrowserRouter, Link, Route, Routes, useLocation } from 'react-router-dom';
 import { Button, Drawer, Grid, Layout, Menu, Space, Typography } from 'antd';
-import { BookOutlined, DashboardOutlined, HistoryOutlined, SendOutlined, TeamOutlined, UserOutlined } from '@ant-design/icons';
-import { MenuOutlined } from '@ant-design/icons';
+import { BookOutlined, SendOutlined, TeamOutlined, UserOutlined } from '@ant-design/icons';
+import { MenuOutlined } from '@ant-design/icons';    
 import Dashboard from './pages/Dashboard';
-import AccountManage from './pages/AccountManage';
-import DiaryList from './pages/DiaryList';
-import DiaryDetail from './pages/DiaryDetail';
+import AccountManage from './pages/AccountManage';   
+import DiaryList from './pages/DiaryList';    
+import DiaryDetail from './pages/DiaryDetail';       
 import PublishDiary from './pages/PublishDiary';
 import AllUsers from './pages/AllUsers';
 import UserDetail from './pages/UserDetail';
@@ -30,17 +30,14 @@ function AppHeaderMenu() {
     if (pathname.startsWith('/diaries') || pathname.startsWith('/diary/')) return '/diaries';
     if (pathname.startsWith('/publish')) return '/publish';
     if (pathname.startsWith('/users') || pathname.startsWith('/user/')) return '/users';
-    if (pathname.startsWith('/sync-logs')) return '/sync-logs';
-    return '/';
+    return null;
   })();
 
   const items = useMemo(() => ([
-    { key: '/', icon: <DashboardOutlined />, label: <Link to="/">仪表盘</Link> },
     { key: '/accounts', icon: <UserOutlined />, label: <Link to="/accounts">账号管理</Link> },
     { key: '/diaries', icon: <BookOutlined />, label: <Link to="/diaries">日记列表</Link> },
     { key: '/publish', icon: <SendOutlined />, label: <Link to="/publish">发布日记</Link> },
     { key: '/users', icon: <TeamOutlined />, label: <Link to="/users">所有用户</Link> },
-    { key: '/sync-logs', icon: <HistoryOutlined />, label: <Link to="/sync-logs">同步记录</Link> },
   ]), []);
 
   if (isMobile) {
@@ -61,7 +58,7 @@ function AppHeaderMenu() {
         >
           <Menu
             mode="inline"
-            selectedKeys={[selectedKey]}
+            selectedKeys={selectedKey ? [selectedKey] : []}
             items={items}
             onClick={() => setDrawerOpen(false)}
           />
@@ -74,7 +71,7 @@ function AppHeaderMenu() {
     <Menu
       theme="dark"
       mode="horizontal"
-      selectedKeys={[selectedKey]}
+      selectedKeys={selectedKey ? [selectedKey] : []}
       style={{ flex: 1, minWidth: 0 }}
       items={items}
     />
@@ -136,7 +133,15 @@ function AppShell() {
               whiteSpace: 'nowrap',
             }}
           >
-            YourNote
+            <Link
+              to="/"
+              style={{
+                color: 'white',
+                textDecoration: 'none',
+              }}
+            >
+              YourNote
+            </Link>
           </Typography.Title>
           <AppHeaderMenu />
         </Space>

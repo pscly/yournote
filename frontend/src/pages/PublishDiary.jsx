@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Card, Checkbox, Input, message, Modal, Space, Table, Tabs, Tag, Typography, Grid } from 'antd';
 import { ReloadOutlined, SaveOutlined, SendOutlined } from '@ant-design/icons';
 import { accountAPI, publishDiaryAPI } from '../services/api';
@@ -7,6 +7,56 @@ import { formatBeijingDateTime } from '../utils/time';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
+
+const LAST_SELECTION_KEY = 'yournote_publish_diary_last_account_ids';
+
+function readLocalLastSelection() {
+  try {
+    const raw = localStorage.getItem(LAST_SELECTION_KEY);
+    if (!raw) return [];
+    const data = JSON.parse(raw);
+    if (!Array.isArray(data)) return [];
+    return data.filter(v => Number.isInteger(v));
+  } catch {
+    return [];
+  }
+}
+
+function writeLocalLastSelection(ids) {
+  try {
+    const list = Array.isArray(ids) ? ids.filter(v => Number.isInteger(v)) : [];
+    localStorage.setItem(LAST_SELECTION_KEY, JSON.stringify(list));
+  } catch {
+    // localStorage 失败不影响业务
+  }
+}
+
+async function getDefaultSelectionFromLastRun(accountList) {
+  const existingIds = (accountList || []).map(a => a?.id).filter(Boolean);
+  if (existingIds.length === 0) return [];
+
+  const filterExisting = (ids) => {
+    const set = new Set(existingIds);
+    return (ids || []).filter(id => set.has(id));
+  };
+
+  // 1) 优先从后端“上次发布记录”读取账号组合
+  try {
+    const res = await publishDiaryAPI.listRuns({ limit: 1 });
+    const last = res?.data?.[0];
+    const ids = filterExisting(last?.target_account_ids || []);
+    if (ids.length > 0) return ids;
+  } catch {
+    // 失败则走本地回退
+  }
+
+  // 2) 回退：使用本地缓存的“上次选择账号”
+  const localIds = filterExisting(readLocalLastSelection());
+  if (localIds.length > 0) return localIds;
+
+  // 3) 兜底：全选
+  return existingIds;
+}
 
 function pad2(n) {
   return String(n).padStart(2, '0');
@@ -72,8 +122,6 @@ function shiftDateStr(value, deltaDays) {
 }
 
 export default function PublishDiary() {
-  const LAST_SELECTION_KEY = 'yournote_publish_diary_last_account_ids';
-
   const screens = Grid.useBreakpoint();
   const isMobile = !screens?.md;
 
@@ -111,55 +159,7 @@ export default function PublishDiary() {
   const checkAll = selectedAccountIds.length > 0 && selectedAccountIds.length === allAccountIds.length;
   const indeterminate = selectedAccountIds.length > 0 && selectedAccountIds.length < allAccountIds.length;
 
-  const readLocalLastSelection = () => {
-    try {
-      const raw = localStorage.getItem(LAST_SELECTION_KEY);
-      if (!raw) return [];
-      const data = JSON.parse(raw);
-      if (!Array.isArray(data)) return [];
-      return data.filter(v => Number.isInteger(v));
-    } catch {
-      return [];
-    }
-  };
-
-  const writeLocalLastSelection = (ids) => {
-    try {
-      const list = Array.isArray(ids) ? ids.filter(v => Number.isInteger(v)) : [];
-      localStorage.setItem(LAST_SELECTION_KEY, JSON.stringify(list));
-    } catch {
-      // localStorage 失败不影响业务
-    }
-  };
-
-  const getDefaultSelectionFromLastRun = async (accountList) => {
-    const existingIds = (accountList || []).map(a => a?.id).filter(Boolean);
-    if (existingIds.length === 0) return [];
-
-    const filterExisting = (ids) => {
-      const set = new Set(existingIds);
-      return (ids || []).filter(id => set.has(id));
-    };
-
-    // 1) 优先从后端“上次发布记录”读取账号组合
-    try {
-      const res = await publishDiaryAPI.listRuns({ limit: 1 });
-      const last = res?.data?.[0];
-      const ids = filterExisting(last?.target_account_ids || []);
-      if (ids.length > 0) return ids;
-    } catch {
-      // 失败则走本地回退
-    }
-
-    // 2) 回退：使用本地缓存的“上次选择账号”
-    const localIds = filterExisting(readLocalLastSelection());
-    if (localIds.length > 0) return localIds;
-
-    // 3) 兜底：全选
-    return existingIds;
-  };
-
-  const loadAccounts = async () => {
+  const loadAccounts = useCallback(async () => {
     setAccountsLoading(true);
     try {
       const res = await accountAPI.list();
@@ -184,7 +184,7 @@ export default function PublishDiary() {
     } finally {
       setAccountsLoading(false);
     }
-  };
+  }, []);
 
   const loadDraft = async (targetDate) => {
     if (!targetDate) return;
@@ -319,7 +319,7 @@ export default function PublishDiary() {
 
   useEffect(() => {
     loadAccounts();
-  }, []);
+  }, [loadAccounts]);
 
   useEffect(() => {
     if (!date) return;

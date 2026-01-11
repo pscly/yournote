@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Button, Card, Descriptions, Grid, List, Space, Spin, Table, Tag, Typography, message, theme as antdTheme } from 'antd';
 import { ArrowLeftOutlined } from '@ant-design/icons';
@@ -25,31 +25,7 @@ export default function UserDetail() {
   const [pairedRecord, setPairedRecord] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    loadData();
-  }, [id]);
-
-  const loadData = async () => {
-    try {
-      setLoading(true);
-      setPairedRecord(null);
-      const [userRes, diariesRes] = await Promise.all([
-        userAPI.get(id),
-        diaryAPI.list({ user_id: id, limit: 100 }),
-      ]);
-      setUser(userRes.data);
-      setDiaries(diariesRes.data || []);
-
-      const record = await loadPairedRecord(parseInt(id, 10));
-      setPairedRecord(record);
-    } catch (error) {
-      message.error('加载失败: ' + error.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadPairedRecord = async (currentUserId) => {
+  const loadPairedRecord = useCallback(async (currentUserId) => {
     if (!currentUserId || Number.isNaN(currentUserId)) return null;
 
     const toTime = (value) => {
@@ -91,7 +67,31 @@ export default function UserDetail() {
     } catch {
       return null;
     }
-  };
+  }, []);
+
+  const loadData = useCallback(async () => {
+    try {
+      setLoading(true);
+      setPairedRecord(null);
+      const [userRes, diariesRes] = await Promise.all([
+        userAPI.get(id),
+        diaryAPI.list({ user_id: id, limit: 100 }),
+      ]);
+      setUser(userRes.data);
+      setDiaries(diariesRes.data || []);
+
+      const record = await loadPairedRecord(Number.parseInt(id, 10));
+      setPairedRecord(record);
+    } catch (error) {
+      message.error('加载失败: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [id, loadPairedRecord]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   const columns = useMemo(() => {
     return [

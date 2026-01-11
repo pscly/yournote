@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button, Card, Grid, List, Select, Space, Spin, Table, Tag, Typography, message, theme as antdTheme } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -7,9 +7,26 @@ import { getDiaryWordStats } from '../utils/wordCount';
 import { formatBeijingDateTimeFromTs, normalizeEpochMs, parseServerDate } from '../utils/time';
 import Page from '../components/Page';
 
-const { Title, Paragraph, Text } = Typography;
+const { Title, Paragraph, Text } = Typography; 
 const ALL_ACCOUNTS = 'all';
 const FETCH_LIMIT_PER_ACCOUNT = 200;
+
+function getDiarySortKey(item) {
+  const tsMs = normalizeEpochMs(item?.ts);
+  if (tsMs) return tsMs;
+
+  const raw = item?.created_time || item?.created_date;
+  const d = parseServerDate(raw);
+  if (d) return d.getTime();
+
+  const fallback = new Date(raw);
+  if (Number.isNaN(fallback.getTime())) return 0;
+  return fallback.getTime();
+}
+
+function sortDiariesByLatest(list) {
+  return (list || []).slice().sort((a, b) => getDiarySortKey(b) - getDiarySortKey(a));
+}
 
 export default function DiaryList() {
   const navigate = useNavigate();
@@ -25,17 +42,7 @@ export default function DiaryList() {
   const [loading, setLoading] = useState(false);
   const [selectedAccount, setSelectedAccount] = useState(ALL_ACCOUNTS);
 
-  useEffect(() => {
-    loadInit();
-  }, [searchParams]);
-
-  useEffect(() => {
-    if (!selectedAccount) return;
-    if (selectedAccount === ALL_ACCOUNTS && accounts.length === 0) return;
-    loadDiaries();
-  }, [selectedAccount, accounts]);
-
-  const loadInit = async () => {
+  const loadInit = useCallback(async () => {
     try {
       const [accountsRes, usersRes] = await Promise.all([accountAPI.list(), userAPI.list(5000)]);
       const accountList = accountsRes.data || [];
@@ -70,27 +77,9 @@ export default function DiaryList() {
     } catch (error) {
       message.error('初始化失败: ' + error.message);
     }
-  };
+  }, [searchParams]);
 
-  const getDiarySortKey = (item) => {
-    // 优先使用同步接口带回来的 ts（更像“最后修改时间”）
-    const tsMs = normalizeEpochMs(item?.ts);
-    if (tsMs) return tsMs;
-
-    const raw = item?.created_time || item?.created_date;
-    const d = parseServerDate(raw);
-    if (d) return d.getTime();
-
-    const fallback = new Date(raw);
-    if (Number.isNaN(fallback.getTime())) return 0;
-    return fallback.getTime();
-  };
-
-  const sortDiariesByLatest = (list) => {
-    return (list || []).slice().sort((a, b) => getDiarySortKey(b) - getDiarySortKey(a));
-  };
-
-  const filterMatchedDiaries = async (accountId, list) => {
+  const filterMatchedDiaries = useCallback(async (accountId, list) => {
     // 优先使用配对关系，确保“仅被匹配用户”的口径准确；失败时再退回“排除主用户”口径。
     try {
       const pairedRes = await userAPI.paired(accountId);
@@ -106,9 +95,12 @@ export default function DiaryList() {
       if (!mainUserId) return [];
       return (list || []).filter(d => d?.user_id !== mainUserId);
     }
-  };
+  }, [accounts, userIdByNiderijiUserid]);
 
-  const loadDiaries = async () => {
+  const loadDiaries = useCallback(async () => {
+    if (!selectedAccount) return;
+    if (selectedAccount === ALL_ACCOUNTS && accounts.length === 0) return;
+
     setLoading(true);
     try {
       if (selectedAccount === ALL_ACCOUNTS) {
@@ -154,7 +146,15 @@ export default function DiaryList() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedAccount, accounts, filterMatchedDiaries]);
+
+  useEffect(() => {
+    loadInit();
+  }, [loadInit]);
+
+  useEffect(() => {
+    loadDiaries();
+  }, [loadDiaries]);
 
   const accountOptions = useMemo(() => {
     const items = (accounts || []).map((a) => {

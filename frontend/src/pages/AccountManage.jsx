@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Form, Input, message, Modal, Radio, Table, Tag, Tooltip, Typography } from 'antd';
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import { accountAPI } from '../services/api';
@@ -23,11 +23,7 @@ export default function AccountManage() {
   const [form] = Form.useForm();
   const [tokenForm] = Form.useForm();
 
-  useEffect(() => {
-    loadAccounts();
-  }, []);
-
-  const validateAccounts = async (list) => {
+  const validateAccounts = useCallback(async (list) => {
     const ids = (list || []).map(a => a?.id).filter(Boolean);
     if (ids.length === 0) return;
 
@@ -47,9 +43,9 @@ export default function AccountManage() {
       return { ...a, token_status: tokenStatus };
     }));
     setCheckingIds(new Set());
-  };
+  }, []);
 
-  const loadAccounts = async () => {
+  const loadAccounts = useCallback(async () => {
     setLoading(true);
     try {
       const res = await accountAPI.list();
@@ -60,7 +56,11 @@ export default function AccountManage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [validateAccounts]);
+
+  useEffect(() => {
+    loadAccounts();
+  }, [loadAccounts]);
 
   const invalidAccounts = useMemo(() => {
     return (accounts || []).filter(a => {

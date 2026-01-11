@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button, Card, Select, Space, Table, Tag, Typography, message } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import { accountAPI, syncAPI } from '../services/api';
@@ -26,21 +26,16 @@ export default function SyncLogs() {
   const [accounts, setAccounts] = useState([]);
   const [selectedAccount, setSelectedAccount] = useState(null);
 
-  useEffect(() => {
-    loadAccounts();
-    loadLogs();
-  }, []);
-
-  const loadAccounts = async () => {
+  const loadAccounts = useCallback(async () => {
     try {
       const res = await accountAPI.list();
       setAccounts(res.data || []);
     } catch (e) {
       message.error('加载账号失败: ' + e.message);
     }
-  };
+  }, []);
 
-  const loadLogs = async () => {
+  const loadLogs = useCallback(async () => {
     setLoading(true);
     try {
       const res = await syncAPI.logs({
@@ -53,12 +48,15 @@ export default function SyncLogs() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedAccount]);
+
+  useEffect(() => {
+    loadAccounts();
+  }, [loadAccounts]);
 
   useEffect(() => {
     loadLogs();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedAccount]);
+  }, [loadLogs]);
 
   const accountOptions = useMemo(() => {
     return [

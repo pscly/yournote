@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Button, Card, Col, Grid, List, Row, Space, Spin, Statistic, Table, Tag, Typography, message } from 'antd';
 import { BookOutlined, SyncOutlined, TeamOutlined, UserOutlined } from '@ant-design/icons';
 import { accountAPI, diaryAPI, statsAPI, syncAPI, userAPI } from '../services/api';
@@ -9,6 +9,19 @@ import { getDiaryWordStats } from '../utils/wordCount';
 import Page from '../components/Page';
 
 const { Title, Text } = Typography;
+
+function getDiaryTimestamp(item) {
+  const raw = item?.created_date || item?.created_time;
+  const d = parseServerDate(raw);
+  if (!d) return 0;
+  return d.getTime();
+}
+
+function getDiarySortKey(item) {
+  const tsMs = normalizeEpochMs(item?.ts);
+  if (tsMs) return tsMs;
+  return getDiaryTimestamp(item);
+}
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -32,51 +45,7 @@ export default function Dashboard() {
     day: '2-digit',
   }).format(new Date()).replace(/\//g, '-');
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
-    try {
-      setLoading(true);
-      const [accountsRes, statsRes] = await Promise.all([
-        accountAPI.list(),
-        statsAPI.overview(),
-      ]);
-
-      const accountList = accountsRes.data || [];
-      setAccounts(accountList);
-      const overview = statsRes?.data || {};
-      setStats({
-        totalAccounts: overview.total_accounts ?? accountList.length,     
-        totalUsers: overview.total_users ?? 0,
-        pairedDiaries: overview.paired_diaries_count ?? 0,
-      });
-
-      // 最近日记（被匹配用户）默认聚合所有账号；这里做 best-effort 的异步刷新
-      loadLatestPairedDiariesAll(accountList);
-    } catch (error) {
-      message.error('加载数据失败: ' + error.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const getDiaryTimestamp = (item) => {
-    const raw = item?.created_date || item?.created_time;
-    const d = parseServerDate(raw);
-    if (!d) return 0;
-    return d.getTime();
-  };
-
-  const getDiarySortKey = (item) => {
-    // 优先使用同步接口带回来的 ts（更像“最后修改时间”）
-    const tsMs = normalizeEpochMs(item?.ts);
-    if (tsMs) return tsMs;
-    return getDiaryTimestamp(item);
-  };
-
-  const loadLatestPairedDiariesAll = async (accountList = accounts) => {
+  const loadLatestPairedDiariesAll = useCallback(async (accountList) => {        
     const list = accountList || [];
     if (list.length === 0) {
       setLatestDiaries([]);
@@ -139,7 +108,37 @@ export default function Dashboard() {
     } finally {
       setLatestLoading(false);
     }
-  };
+  }, []);
+
+  const loadData = useCallback(async () => {
+    try {
+      setLoading(true);
+      const [accountsRes, statsRes] = await Promise.all([
+        accountAPI.list(),
+        statsAPI.overview(),
+      ]);
+
+      const accountList = accountsRes.data || [];
+      setAccounts(accountList);
+      const overview = statsRes?.data || {};
+      setStats({
+        totalAccounts: overview.total_accounts ?? accountList.length,
+        totalUsers: overview.total_users ?? 0,
+        pairedDiaries: overview.paired_diaries_count ?? 0,
+      });
+
+      // 最近日记（被匹配用户）默认聚合所有账号；这里做 best-effort 的异步刷新  
+      loadLatestPairedDiariesAll(accountList);
+    } catch (error) {
+      message.error('加载数据失败: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [loadLatestPairedDiariesAll]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   const handleSync = async (accountId) => {
     const msgKey = `sync-${accountId}`;
@@ -316,7 +315,7 @@ export default function Dashboard() {
         style={{ marginTop: 16 }}
         extra={
           <Button
-            onClick={() => loadLatestPairedDiariesAll()}
+            onClick={() => loadLatestPairedDiariesAll(accounts)}
             disabled={accounts.length === 0}
             loading={latestLoading}
           >

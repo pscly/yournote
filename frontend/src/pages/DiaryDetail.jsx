@@ -71,10 +71,13 @@ export default function DiaryDetail() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  // 说明：这里仅希望在 id 变化时触发加载；不把 loadData 放进依赖，避免函数重建导致重复拉取
   useEffect(() => {
     loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  // 说明：此处仅关注 showMatched / diary / pairUsers 切换逻辑，避免函数重建导致重复拉取
   useEffect(() => {
     if (!diary) return;
 
@@ -85,6 +88,7 @@ export default function DiaryDetail() {
     }
 
     loadMyDiaries();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showMatched, diary, pairedUserId, pairUsers]);
 
   const loadData = async () => {

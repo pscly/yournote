@@ -11,10 +11,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from typing import Any
 
-import requests
+import httpx
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,6 +28,8 @@ from ..models import (
     SyncLog,
     User,
 )
+
+_ACCOUNT_SYNC_LOCKS: dict[int, asyncio.Lock] = {}
 
 
 class CollectorService:
@@ -71,12 +74,12 @@ class CollectorService:
         """
         url = "https://nideriji.cn/api/login/"
         payload = {"email": email, "password": password}
-        resp = requests.post(
-            url,
-            data=payload,
-            headers=self._build_login_headers(),
-            timeout=self._LOGIN_TIMEOUT_SECONDS,
-        )
+        async with httpx.AsyncClient(timeout=self._LOGIN_TIMEOUT_SECONDS) as client:
+            resp = await client.post(
+                url,
+                data=payload,
+                headers=self._build_login_headers(),
+            )
         resp.raise_for_status()
         data: Any = resp.json()
         if not isinstance(data, dict):
@@ -90,6 +93,17 @@ class CollectorService:
 
     def _content_len(self, content: str | None) -> int:
         return len((content or "").strip())
+
+    def _to_utc_datetime(self, value: Any) -> datetime | None:
+        """把上游的 epoch 时间戳统一转换为 UTC 时间（用 naive datetime 表示 UTC）。"""
+        try:
+            dt = datetime.fromtimestamp(float(value), tz=timezone.utc)
+            # SQLite 通常会丢失 tzinfo；前端也会把“无时区字符串”按 UTC 处理。
+            # 因此这里统一存成“naive 但代表 UTC”的 datetime，避免每次同步都因 tzinfo
+            # 差异导致误判为“字段变更”。（尤其是 refresh_diary 会写入历史记录）
+            return dt.replace(tzinfo=None)
+        except Exception:
+            return None
 
     def _needs_detail_fetch(self, content: str | None, is_simple: Any) -> bool:
         if is_simple == 1:
@@ -165,11 +179,11 @@ class CollectorService:
         """从 nideriji API 获取数据"""
         url = "https://nideriji.cn/api/v2/sync/"
         headers = self._build_headers(auth_token)
-        response = requests.post(
-            url,
-            headers=headers,
-            timeout=self._REQUEST_TIMEOUT_SECONDS,
-        )
+        async with httpx.AsyncClient(timeout=self._REQUEST_TIMEOUT_SECONDS) as client:
+            response = await client.post(
+                url,
+                headers=headers,
+            )
         response.raise_for_status()
         return response.json()
 
@@ -182,7 +196,7 @@ class CollectorService:
         """
         try:
             return await self.fetch_nideriji_data(account.auth_token)
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
             status_code = getattr(getattr(e, "response", None), "status_code", None)
             can_relogin = (
                 isinstance(status_code, int)
@@ -220,34 +234,34 @@ class CollectorService:
 
         # 接口支持一次传多个 id（字符串），这里做分批，避免过长的 form body。
         results: dict[int, dict[str, Any]] = {}
-        for start in range(0, len(diary_ids), self._DETAIL_FETCH_BATCH_SIZE):
-            batch = diary_ids[start : start + self._DETAIL_FETCH_BATCH_SIZE]
-            payload = {"diary_ids": ",".join(str(diary_id) for diary_id in batch)}
-            resp = requests.post(
-                url,
-                data=payload,
-                headers=headers,
-                timeout=self._REQUEST_TIMEOUT_SECONDS,
-            )
-            resp.raise_for_status()
-            data: Any = resp.json()
+        async with httpx.AsyncClient(timeout=self._REQUEST_TIMEOUT_SECONDS) as client:
+            for start in range(0, len(diary_ids), self._DETAIL_FETCH_BATCH_SIZE):
+                batch = diary_ids[start : start + self._DETAIL_FETCH_BATCH_SIZE]
+                payload = {"diary_ids": ",".join(str(diary_id) for diary_id in batch)}
+                resp = await client.post(
+                    url,
+                    data=payload,
+                    headers=headers,
+                )
+                resp.raise_for_status()
+                data: Any = resp.json()
 
-            diary_list: list[dict[str, Any]] = []
-            if isinstance(data, list):
-                diary_list = [d for d in data if isinstance(d, dict)]
-            elif isinstance(data, dict):
-                for key in ("diaries", "data", "result", "items"):
-                    value = data.get(key)
-                    if isinstance(value, list):
-                        diary_list = [d for d in value if isinstance(d, dict)]
-                        break
-                if not diary_list and isinstance(data.get("diary"), dict):
-                    diary_list = [data["diary"]]
+                diary_list: list[dict[str, Any]] = []
+                if isinstance(data, list):
+                    diary_list = [d for d in data if isinstance(d, dict)]
+                elif isinstance(data, dict):
+                    for key in ("diaries", "data", "result", "items"):
+                        value = data.get(key)
+                        if isinstance(value, list):
+                            diary_list = [d for d in value if isinstance(d, dict)]
+                            break
+                    if not diary_list and isinstance(data.get("diary"), dict):
+                        diary_list = [data["diary"]]
 
-            for d in diary_list:
-                diary_id = d.get("id") or d.get("diary_id")
-                if isinstance(diary_id, int):
-                    results[diary_id] = d
+                for d in diary_list:
+                    diary_id = d.get("id") or d.get("diary_id")
+                    if isinstance(diary_id, int):
+                        results[diary_id] = d
 
         return results
 
@@ -383,7 +397,7 @@ class CollectorService:
         if diary_data:
             created_time = None
             if diary_data.get("createdtime"):
-                created_time = datetime.fromtimestamp(diary_data["createdtime"])
+                created_time = self._to_utc_datetime(diary_data["createdtime"])
 
             new_title = diary_data.get("title", "")
             new_content = (diary_data.get("content", "") or "").strip("\ufeff")
@@ -467,82 +481,88 @@ class CollectorService:
 
     async def sync_account(self, account_id: int) -> dict:
         """同步单个账号的数据"""
-        result = await self.db.execute(
-            select(Account).where(Account.id == account_id)
-        )
-        account = result.scalar_one_or_none()
-        if not account:
-            raise ValueError(f"Account {account_id} not found")
+        lock = _ACCOUNT_SYNC_LOCKS.get(account_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            _ACCOUNT_SYNC_LOCKS[account_id] = lock
 
-        log = await self._start_sync_log(account_id)
-        # 先提交“running”日志，便于前端实时显示“正在更新中”。
-        await self.db.commit()
-
-        try:
-            rdata = await self.fetch_nideriji_data_for_account(account)
-
-            await self._save_user_info(rdata['user_config'], account_id)
-
-            # 注意：_save_diaries 的返回值是“本次新增日记数”，并非“当前总数”。
-            # 仪表盘与同步日志展示需要的是“总数”，否则二次同步很容易显示为 0。
-            main_user = await self.db.scalar(
-                select(User).where(User.nideriji_userid == rdata["user_config"]["userid"])
+        async with lock:
+            result = await self.db.execute(
+                select(Account).where(Account.id == account_id)
             )
+            account = result.scalar_one_or_none()
+            if not account:
+                raise ValueError(f"Account {account_id} not found")
 
-            if rdata['user_config'].get('paired_user_config'):
-                await self._save_paired_user_info(
-                    rdata['user_config']['paired_user_config'],
-                    account_id
+            log = await self._start_sync_log(account_id)
+            # 先提交“running”日志，便于前端实时显示“正在更新中”。
+            await self.db.commit()
+
+            try:
+                rdata = await self.fetch_nideriji_data_for_account(account)
+
+                await self._save_user_info(rdata['user_config'], account_id)
+
+                # 注意：_save_diaries 的返回值是“本次新增日记数”，并非“当前总数”。
+                # 仪表盘与同步日志展示需要的是“总数”，否则二次同步很容易显示为 0。
+                main_user = await self.db.scalar(
+                    select(User).where(User.nideriji_userid == rdata["user_config"]["userid"])
                 )
 
-            await self._save_diaries(
-                rdata['diaries'],
-                account_id,
-                rdata['user_config']['userid'],
-                account.auth_token,
-            )
+                if rdata['user_config'].get('paired_user_config'):
+                    await self._save_paired_user_info(
+                        rdata['user_config']['paired_user_config'],
+                        account_id
+                    )
 
-            if rdata.get('diaries_paired'):
-                paired_user_id = rdata['user_config']['paired_user_config']['userid']
                 await self._save_diaries(
-                    rdata['diaries_paired'],
+                    rdata['diaries'],
                     account_id,
-                    paired_user_id,
+                    rdata['user_config']['userid'],
                     account.auth_token,
                 )
 
-            diaries_count = 0
-            paired_diaries_count = 0
-            if main_user and main_user.id is not None:
-                diaries_count, paired_diaries_count = await self._get_account_diary_totals(
-                    account_id=account_id,
-                    main_user_id=main_user.id,
+                if rdata.get('diaries_paired'):
+                    paired_user_id = rdata['user_config']['paired_user_config']['userid']
+                    await self._save_diaries(
+                        rdata['diaries_paired'],
+                        account_id,
+                        paired_user_id,
+                        account.auth_token,
+                    )
+
+                diaries_count = 0
+                paired_diaries_count = 0
+                if main_user and main_user.id is not None:
+                    diaries_count, paired_diaries_count = await self._get_account_diary_totals(
+                        account_id=account_id,
+                        main_user_id=main_user.id,
+                    )
+
+                await self._finish_sync_log(
+                    log,
+                    status='success',
+                    diaries_count=diaries_count,
+                    paired_diaries_count=paired_diaries_count,
+                    error_message=None,
                 )
+                await self.db.commit()
 
-            await self._finish_sync_log(
-                log,
-                status='success',
-                diaries_count=diaries_count,
-                paired_diaries_count=paired_diaries_count,
-                error_message=None,
-            )
-            await self.db.commit()
-
-            return {
-                'status': 'success',
-                'diaries_count': diaries_count,
-                'paired_diaries_count': paired_diaries_count
-            }
-        except Exception as e:
-            await self._finish_sync_log(
-                log,
-                status='failed',
-                diaries_count=0,
-                paired_diaries_count=0,
-                error_message=str(e),
-            )
-            await self.db.commit()
-            raise
+                return {
+                    'status': 'success',
+                    'diaries_count': diaries_count,
+                    'paired_diaries_count': paired_diaries_count
+                }
+            except Exception as e:
+                await self._finish_sync_log(
+                    log,
+                    status='failed',
+                    diaries_count=0,
+                    paired_diaries_count=0,
+                    error_message=str(e),
+                )
+                await self.db.commit()
+                raise
 
     async def _save_user_info(self, user_config: dict, account_id: int):
         """保存用户信息"""
@@ -553,7 +573,7 @@ class CollectorService:
 
         last_login_time = None
         if user_config.get('last_login_time'):
-            last_login_time = datetime.fromtimestamp(user_config['last_login_time'])
+            last_login_time = self._to_utc_datetime(user_config['last_login_time'])
 
         if user:
             user.name = user_config.get('name')
@@ -606,7 +626,7 @@ class CollectorService:
             if not relationship:
                 paired_time = None
                 if paired_config.get('paired_time'):
-                    paired_time = datetime.fromtimestamp(paired_config['paired_time'])
+                    paired_time = self._to_utc_datetime(paired_config['paired_time'])
 
                 relationship = PairedRelationship(
                     account_id=account_id,
@@ -699,7 +719,7 @@ class CollectorService:
 
             created_time = None
             if diary_data.get('createdtime'):
-                created_time = datetime.fromtimestamp(diary_data['createdtime'])
+                created_time = self._to_utc_datetime(diary_data['createdtime'])
 
             if not diary:
                 diary = Diary(

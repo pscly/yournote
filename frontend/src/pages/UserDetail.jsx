@@ -4,14 +4,13 @@ import { Button, Card, Descriptions, Grid, List, Space, Spin, Table, Tag, Typogr
 import { ArrowLeftOutlined } from '@ant-design/icons';
 import { accountAPI, diaryAPI, userAPI } from '../services/api';
 import { getDiaryWordStats } from '../utils/wordCount';
+import { formatBeijingDateTime, parseServerDate } from '../utils/time';
 
 const { Title, Paragraph, Text } = Typography;
 
 function formatDateTime(value) {
-  if (!value) return '未知';
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return String(value);
-  return d.toLocaleString('zh-CN');
+  const text = formatBeijingDateTime(value);
+  return text === '-' ? '未知' : text;
 }
 
 export default function UserDetail() {
@@ -53,10 +52,9 @@ export default function UserDetail() {
     if (!currentUserId || Number.isNaN(currentUserId)) return null;
 
     const toTime = (value) => {
-      if (!value) return 0;
-      const t = new Date(value).getTime();
-      if (Number.isNaN(t)) return 0;
-      return t;
+      const d = parseServerDate(value);
+      if (!d) return 0;
+      return d.getTime();
     };
 
     try {

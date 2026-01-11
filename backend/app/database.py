@@ -1,14 +1,34 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
-from sqlalchemy import text
+from sqlalchemy import event, text
 from .config import settings
+
+# 针对 SQLite 做一些“更像生产”的默认优化：
+# - busy_timeout：降低并发写入下的 “database is locked”
+# - WAL：提升并发读写能力（尤其是后台同步 + 前端查询并行）
+# - foreign_keys：打开外键约束（SQLite 默认关闭）
+_is_sqlite = str(settings.database_url or "").startswith("sqlite")
+_connect_args = {"timeout": 30} if _is_sqlite else {}
 
 # Create async engine (supports both SQLite and PostgreSQL)
 engine = create_async_engine(
     settings.database_url,
     echo=settings.debug,
-    future=True
+    pool_pre_ping=True,
+    future=True,
+    connect_args=_connect_args,
 )
+
+# 只有 SQLite 才需要 PRAGMA；PostgreSQL 会忽略
+if _is_sqlite:
+    @event.listens_for(engine.sync_engine, "connect")
+    def _set_sqlite_pragma(dbapi_connection, _connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL;")
+        cursor.execute("PRAGMA synchronous=NORMAL;")
+        cursor.execute("PRAGMA foreign_keys=ON;")
+        cursor.execute("PRAGMA busy_timeout=30000;")
+        cursor.close()
 
 # Create async session factory
 AsyncSessionLocal = async_sessionmaker(

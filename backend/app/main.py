@@ -1,4 +1,7 @@
 """FastAPI application entry point"""
+import asyncio
+import logging
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
@@ -16,6 +19,8 @@ from .api import (
 from .scheduler import scheduler
 from .utils.access_log import AccessLogTimer, log_http_request
 
+logger = logging.getLogger(__name__)
+
 app = FastAPI(
     title="YourNote API",
     description="Diary collection system with multi-account support",
@@ -23,12 +28,31 @@ app = FastAPI(
 )
 
 # CORS middleware
+def _split_csv(value: str) -> list[str]:
+    return [v.strip() for v in (value or "").split(",") if v.strip()]
+
+
+cors_origins = _split_csv(settings.cors_allow_origins)
+if not cors_origins or cors_origins == ["*"]:
+    cors_origins = ["*"]
+    cors_allow_credentials = False
+else:
+    cors_allow_credentials = bool(settings.cors_allow_credentials)
+
+cors_methods = _split_csv(settings.cors_allow_methods)
+if not cors_methods or cors_methods == ["*"]:
+    cors_methods = ["*"]
+
+cors_headers = _split_csv(settings.cors_allow_headers)
+if not cors_headers or cors_headers == ["*"]:
+    cors_headers = ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=cors_origins,
+    allow_credentials=cors_allow_credentials,
+    allow_methods=cors_methods,
+    allow_headers=cors_headers,
 )
 
 # Access log middleware（按天写入本地 logs/）
@@ -73,9 +97,19 @@ async def startup_event():
     """Initialize database and start scheduler on startup"""
     await init_db()
 
-    # 启动时运行一次同步
-    print("[STARTUP] Running initial sync on startup...")
-    await scheduler.sync_all_accounts()
+    def _log_task_result(task: asyncio.Task) -> None:
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            logger.exception("[STARTUP] Initial sync task failed")
+
+    # 启动时触发一次“全账号同步”（后台运行，不阻塞启动）
+    if settings.sync_on_startup:
+        logger.info("[STARTUP] Scheduling initial sync on startup...")
+        task = asyncio.create_task(scheduler.sync_all_accounts())
+        task.add_done_callback(_log_task_result)
 
     # 启动定时任务（按配置定期运行）
     scheduler.start()

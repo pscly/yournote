@@ -47,6 +47,14 @@ class Settings(BaseSettings):
     api_prefix: str = "/api"
     debug: bool = True
 
+    # CORS
+    # - 逗号分隔（例如：http://localhost:31011,http://127.0.0.1:31011）
+    # - 默认 "*" 表示允许所有来源（此时会强制关闭 allow_credentials）
+    cors_allow_origins: str = "*"
+    cors_allow_credentials: bool = False
+    cors_allow_methods: str = "*"
+    cors_allow_headers: str = "*"
+
     # Access Log（本地访问日志，按天落盘）
     # - 文件：<repo>/logs/YYYY-MM-DD.logs
     # - 目的：方便直接在电脑上打开查看“谁在什么时候访问了什么”
@@ -56,6 +64,10 @@ class Settings(BaseSettings):
     access_log_ignore_paths: str = "/health,/api/access-logs/pageview,/api/access-logs/file"
     # 是否记录 querystring（建议默认关闭，避免无意间写入敏感参数）
     access_log_include_query: bool = False
+
+    # Startup
+    # 是否在服务启动时自动触发一次“全账号同步”（异步后台执行，不阻塞启动）
+    sync_on_startup: bool = True
 
     # Sync
     # - 优先使用分钟粒度，方便配置 20 分钟等场景

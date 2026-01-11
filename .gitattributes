@@ -16,6 +16,15 @@
 # Shell scripts
 *.sh text eol=lf
 
+# Frontend
+*.js text eol=lf
+*.jsx text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.css text eol=lf
+*.scss text eol=lf
+*.html text eol=lf
+
 # Documentation
 *.md text eol=lf
 *.txt text eol=lf

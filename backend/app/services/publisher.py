@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
-import requests
+import httpx
 
 from ..models import Account
 from .collector import CollectorService
@@ -39,12 +39,12 @@ class DiaryPublisherService:
         """直接用 token 写入/更新日记（不落库、不做 token 刷新）。"""
         url = "https://nideriji.cn/api/write/"
         payload = {"content": content, "date": date}
-        resp = requests.post(
-            url,
-            data=payload,
-            headers=self._build_headers(auth_token),
-            timeout=self._REQUEST_TIMEOUT_SECONDS,
-        )
+        async with httpx.AsyncClient(timeout=self._REQUEST_TIMEOUT_SECONDS) as client:
+            resp = await client.post(
+                url,
+                data=payload,
+                headers=self._build_headers(auth_token),
+            )
         resp.raise_for_status()
         data: Any = resp.json()
         if not isinstance(data, dict):
@@ -55,7 +55,7 @@ class DiaryPublisherService:
         """按账号发布日记，必要时自动刷新 token 并重试一次。"""
         try:
             return await self.write_diary(auth_token=account.auth_token, date=date, content=content)
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
             status_code = getattr(getattr(e, "response", None), "status_code", None)
             can_relogin = (
                 isinstance(status_code, int)
@@ -73,4 +73,3 @@ class DiaryPublisherService:
             account.auth_token = new_token
             await self.collector.db.flush()
             return await self.write_diary(auth_token=account.auth_token, date=date, content=content)
-

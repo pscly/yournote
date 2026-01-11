@@ -11,7 +11,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-import requests
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -193,11 +193,11 @@ async def publish(body: PublishDiaryRequest, db: AsyncSession = Depends(get_db))
     # account_ids 为空时默认“全部活跃账号”
     account_ids = [int(x) for x in (body.account_ids or []) if isinstance(x, int)]
     if not account_ids:
-        result = await db.execute(select(Account).where(Account.is_active == True))
+        result = await db.execute(select(Account).where(Account.is_active.is_(True)))
         accounts = result.scalars().all()
     else:
         result = await db.execute(
-            select(Account).where(Account.is_active == True, Account.id.in_(account_ids))
+            select(Account).where(Account.is_active.is_(True), Account.id.in_(account_ids))
         )
         accounts = result.scalars().all()
 
@@ -253,13 +253,19 @@ async def publish(body: PublishDiaryRequest, db: AsyncSession = Depends(get_db))
             item.nideriji_diary_id = nideriji_diary_id
             item.error_message = None
             item.response_json = json.dumps(resp_json, ensure_ascii=False)
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
             status_code = getattr(getattr(e, "response", None), "status_code", None)
             item.status = "failed"
             item.error_message = (
                 f"HTTPError: {e}"
                 + (f" (HTTP {status_code})" if isinstance(status_code, int) else "")
             )
+        except httpx.TimeoutException:
+            item.status = "failed"
+            item.error_message = "发布超时（上游无响应）"
+        except httpx.RequestError as e:
+            item.status = "failed"
+            item.error_message = f"网络异常: {e}"
         except Exception as e:
             item.status = "failed"
             item.error_message = f"发布异常: {e}"
@@ -294,4 +300,3 @@ async def publish(body: PublishDiaryRequest, db: AsyncSession = Depends(get_db))
             for i in items_db
         ],
     )
-

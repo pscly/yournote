@@ -25,13 +25,15 @@ async def get_stats_overview(db: AsyncSession = Depends(get_db)):
       对于每条 Diary，若其 user_id != 该账号绑定的主用户 id，则视为“配对日记”。
     """
 
-    total_accounts = await db.scalar(select(func.count()).select_from(Account).where(Account.is_active == True))
+    total_accounts = await db.scalar(
+        select(func.count()).select_from(Account).where(Account.is_active.is_(True))
+    )
     total_users = await db.scalar(select(func.count()).select_from(User))
 
     # 配对日记数量：为保证响应速度，这里使用“最新同步日志”中的 paired_diaries_count 进行汇总。
     # 注意：SyncLog 中的 diaries_count / paired_diaries_count 代表“当前总数”，不是“本次新增数”；
     # 这样二次/多次同步时也能稳定反映数据库规模，同时避免对 diaries 表做全表 join 计数导致超时。
-    active_account_ids = await db.scalars(select(Account.id).where(Account.is_active == True))
+    active_account_ids = await db.scalars(select(Account.id).where(Account.is_active.is_(True)))
     active_account_ids = list(active_account_ids.all())
 
     paired_diaries_count = 0
@@ -55,7 +57,7 @@ async def get_stats_overview(db: AsyncSession = Depends(get_db)):
         select(func.max(SyncLog.sync_time))
         .select_from(SyncLog)
         .join(Account, SyncLog.account_id == Account.id)
-        .where(Account.is_active == True)
+        .where(Account.is_active.is_(True))
     )
     if last_sync_time and last_sync_time.tzinfo is None:
         last_sync_time = last_sync_time.replace(tzinfo=timezone.utc)

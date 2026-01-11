@@ -42,6 +42,11 @@ export const diaryAPI = {
   refresh: (id) => api.post(`/diaries/${id}/refresh`),
 };
 
+// 日记修改历史
+export const diaryHistoryAPI = {
+  list: (diaryId) => api.get(`/diary-history/${diaryId}`),
+};
+
 // 用户信息
 export const userAPI = {
   list: (limit = 50) => api.get('/users', { params: { limit } }),

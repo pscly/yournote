@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import requests
+import httpx
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -61,7 +61,7 @@ async def _remote_validate_token(auth_token: str, *, db: AsyncSession) -> TokenS
             checked_at=checked_at,
             reason=None,
         )
-    except requests.HTTPError as e:
+    except httpx.HTTPStatusError as e:
         status_code = getattr(getattr(e, "response", None), "status_code", None)
         reason = "服务端校验失败（token 无效或已失效）"
         if isinstance(status_code, int):
@@ -72,6 +72,22 @@ async def _remote_validate_token(auth_token: str, *, db: AsyncSession) -> TokenS
             expires_at=base.get("expires_at"),
             checked_at=checked_at,
             reason=reason,
+        )
+    except httpx.TimeoutException:
+        return TokenStatus(
+            is_valid=False,
+            expired=bool(base.get("expired")),
+            expires_at=base.get("expires_at"),
+            checked_at=checked_at,
+            reason="校验超时（上游无响应）",
+        )
+    except httpx.RequestError as e:
+        return TokenStatus(
+            is_valid=False,
+            expired=bool(base.get("expired")),
+            expires_at=base.get("expires_at"),
+            checked_at=checked_at,
+            reason=f"网络异常: {e}",
         )
     except Exception as e:
         return TokenStatus(
@@ -125,12 +141,16 @@ async def create_account(
         use_password_login = True
         try:
             auth_token = await collector.login_nideriji(login_email, login_password)
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
             status_code = getattr(getattr(e, "response", None), "status_code", None)
             detail = "登录失败（账号或密码错误）"
             if isinstance(status_code, int):
                 detail = f"{detail} (HTTP {status_code})"
             raise HTTPException(status_code=400, detail=detail) from e
+        except httpx.TimeoutException as e:
+            raise HTTPException(status_code=504, detail="登录超时（上游无响应）") from e
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=502, detail=f"登录请求失败: {e}") from e
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"登录异常: {e}") from e
     else:
@@ -138,12 +158,16 @@ async def create_account(
 
     try:
         rdata = await collector.fetch_nideriji_data(auth_token)
-    except requests.HTTPError as e:
+    except httpx.HTTPStatusError as e:
         status_code = getattr(getattr(e, "response", None), "status_code", None)
         detail = "Token 无效或已失效"
         if isinstance(status_code, int):
             detail = f"{detail} (HTTP {status_code})"
         raise HTTPException(status_code=400, detail=detail) from e
+    except httpx.TimeoutException as e:
+        raise HTTPException(status_code=504, detail="获取账号信息超时（上游无响应）") from e
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"获取账号信息失败: {e}") from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取账号信息失败: {e}") from e
 
@@ -200,7 +224,7 @@ async def create_account(
 @router.get("", response_model=list[AccountResponse])
 async def list_accounts(db: AsyncSession = Depends(get_db)):
     """获取所有账号列表（只返回活跃账号）。"""
-    result = await db.execute(select(Account).where(Account.is_active == True))
+    result = await db.execute(select(Account).where(Account.is_active.is_(True)))
     accounts = result.scalars().all()
 
     nideriji_userids = [a.nideriji_userid for a in accounts]
@@ -268,7 +292,7 @@ async def validate_account_token(
             checked_at=checked_at,
             reason=None,
         )
-    except requests.HTTPError as e:
+    except httpx.HTTPStatusError as e:
         status_code = getattr(getattr(e, "response", None), "status_code", None)
         reason = "服务端校验失败（token 无效或已失效）"
         if isinstance(status_code, int):
@@ -280,6 +304,24 @@ async def validate_account_token(
             expires_at=base.get("expires_at"),
             checked_at=checked_at,
             reason=reason,
+        )
+    except httpx.TimeoutException:
+        base = get_token_status(account.auth_token)
+        return TokenStatus(
+            is_valid=False,
+            expired=bool(base.get("expired")),
+            expires_at=base.get("expires_at"),
+            checked_at=checked_at,
+            reason="校验超时（上游无响应）",
+        )
+    except httpx.RequestError as e:
+        base = get_token_status(account.auth_token)
+        return TokenStatus(
+            is_valid=False,
+            expired=bool(base.get("expired")),
+            expires_at=base.get("expires_at"),
+            checked_at=checked_at,
+            reason=f"网络异常: {e}",
         )
     except Exception as e:
         base = get_token_status(account.auth_token)
@@ -313,12 +355,16 @@ async def update_account_token(
     try:
         new_token = _normalize_auth_token(body.auth_token)
         rdata = await collector.fetch_nideriji_data(new_token)
-    except requests.HTTPError as e:
+    except httpx.HTTPStatusError as e:
         status_code = getattr(getattr(e, "response", None), "status_code", None)
         detail = "Token 无效或已失效"
         if isinstance(status_code, int):
             detail = f"{detail} (HTTP {status_code})"
         raise HTTPException(status_code=400, detail=detail) from e
+    except httpx.TimeoutException as e:
+        raise HTTPException(status_code=504, detail="获取账号信息超时（上游无响应）") from e
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"获取账号信息失败: {e}") from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取账号信息失败: {e}") from e
 

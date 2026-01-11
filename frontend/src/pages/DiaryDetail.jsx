@@ -29,9 +29,7 @@ import {
   MenuOutlined,
   SmileOutlined,
 } from '@ant-design/icons';
-import axios from 'axios';
-import { API_BASE_URL } from '../config';
-import { diaryAPI, userAPI } from '../services/api';
+import { diaryAPI, diaryHistoryAPI, userAPI } from '../services/api';
 import { downloadText, formatExportTimestamp, safeFilenamePart } from '../utils/download';
 import { formatBeijingDateTimeFromTs, parseServerDate } from '../utils/time';
 import { getDiaryWordStats } from '../utils/wordCount';
@@ -110,12 +108,16 @@ export default function DiaryDetail() {
   };
 
   const getDiaryTimestamp = (item) => {
-    // const raw = item?.created_time || item?.created_date;
-    // 排序没对，用这个排序似乎才对
+    // 说明：
+    // - 后端（尤其是 SQLite）可能返回不带时区的 datetime 字符串；
+    // - 直接 new Date(...) 会把它当作本地时间解析，导致排序/展示偏移；
+    // - 这里统一按 parseServerDate 的规则解析（无时区视为 UTC）。
     const raw = item?.created_date || item?.created_time;
-    const ts = new Date(raw).getTime();
-    if (Number.isNaN(ts)) return 0;
-    return ts;
+    const d = parseServerDate(raw);
+    if (d) return d.getTime();
+    const fallback = new Date(raw);
+    if (Number.isNaN(fallback.getTime())) return 0;
+    return fallback.getTime();
   };
 
   const getDiaryTimestampForExport = (item) => {
@@ -201,7 +203,7 @@ export default function DiaryDetail() {
 
   const loadHistory = async () => {
     try {
-      const historyRes = await axios.get(`${API_BASE_URL}/diary-history/${id}`);
+      const historyRes = await diaryHistoryAPI.list(id);
       setHistory(historyRes.data);
     } catch {
       console.log('暂无历史记录');

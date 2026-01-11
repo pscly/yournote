@@ -4,7 +4,7 @@ import { BookOutlined, SyncOutlined, TeamOutlined, UserOutlined } from '@ant-des
 import { accountAPI, diaryAPI, statsAPI, syncAPI, userAPI } from '../services/api';
 import { waitForLatestSyncLog } from '../utils/sync';
 import { useNavigate } from 'react-router-dom';
-import { parseServerDate } from '../utils/time';
+import { formatBeijingDateTimeFromTs, normalizeEpochMs, parseServerDate } from '../utils/time';
 import { getDiaryWordStats } from '../utils/wordCount';
 
 const { Title, Text } = Typography;
@@ -69,27 +69,11 @@ export default function Dashboard() {
     return d.getTime();
   };
 
-  const normalizeEpochMs = (value) => {
-    const n = Number(value);
-    if (!Number.isFinite(n) || n <= 0) return 0;
-    // 经验规则：Unix 秒级时间戳通常 < 1e12；毫秒级时间戳通常 >= 1e12（约 2001 年之后）
-    if (n < 1e12) return n * 1000;
-    return n;
-  };
-
   const getDiarySortKey = (item) => {
     // 优先使用同步接口带回来的 ts（更像“最后修改时间”）
     const tsMs = normalizeEpochMs(item?.ts);
     if (tsMs) return tsMs;
     return getDiaryTimestamp(item);
-  };
-
-  const formatBeijingDateTimeFromTs = (ts) => {
-    const ms = normalizeEpochMs(ts);
-    if (!ms) return null;
-    const d = new Date(ms);
-    if (Number.isNaN(d.getTime())) return null;
-    return d.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
   };
 
   const loadLatestPairedDiariesAll = async (accountList = accounts) => {

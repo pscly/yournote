@@ -1,4 +1,9 @@
+import os
 import requests
+
+auth = (os.environ.get("NIDERIJI_AUTH") or "").strip()
+if not auth:
+    raise RuntimeError("缺少认证信息：请设置环境变量 NIDERIJI_AUTH（例如：token eyJhbGci...）")
 
 url = "https://nideriji.cn/api/write/"
 
@@ -41,7 +46,7 @@ emmm 突然又感觉时间过得好快啊，一转眼又周五了，我周末还
 headers = {
   'User-Agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
   'accept-language': "zh,en;q=0.9,zh-CN;q=0.8,zh-TW;q=0.7",
-  'auth': "token eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJPaFNoZW5naHVvIiwiZXhwIjoxODMwMTQ5MzI5LjY0ODkyOTgsInVzYWdlIjoibG9naW4iLCJ1c2VyX2lkIjo0NzA3MjV9.Or8o5VkpJyOvdyBmbLZBl4YCSQ8k_k40Yylr60m7o50",
+  'auth': auth,
   'cache-control': "no-cache",
   'origin': "https://nideriji.cn",
   'pragma': "no-cache",

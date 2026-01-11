@@ -1,11 +1,17 @@
 import json
+import os
 import requests
 
 
 def get_all_note(auth=''):
     # 仅用于测试调试
     if not auth:
-        auth = "token eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJPaFNoZW5naHVvIiwiZXhwIjoxODI5ODA4NzY0LjYzODIwMiwidXNhZ2UiOiJsb2dpbiIsInVzZXJfaWQiOjQ2MDEwMH0.QPo7_h30nVre6sZ4KyziDC5mzjc446invEsE-hHCgbc"
+        # 不要把 Token 硬编码进仓库，避免泄露；需要时用环境变量注入
+        # 示例（PowerShell 7）：
+        #   $env:NIDERIJI_AUTH="token eyJhbGci..."; python a1.py
+        auth = (os.environ.get("NIDERIJI_AUTH") or "").strip()
+        if not auth:
+            raise RuntimeError("缺少认证信息：请传入 auth 参数，或设置环境变量 NIDERIJI_AUTH")
     url = "https://nideriji.cn/api/v2/sync/"
 
     headers = {

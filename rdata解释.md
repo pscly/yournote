@@ -486,7 +486,7 @@ headers = {
   'Accept-Encoding': "gzip, deflate, br, zstd",
   'sec-ch-ua-platform': "\"Windows\"",
   'sec-ch-ua': "\"Microsoft Edge\";v=\"143\", \"Chromium\";v=\"143\", \"Not A(Brand\";v=\"24\"",
-  'auth': "token eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJPaFNoZW5naHVvIiwiZXhwIjoxODI5ODA4NzY0LjYzODIwMiwidXNhZ2UiOiJsb2dpbiIsInVzZXJfaWQiOjQ2MDEwMH0.QPo7_h30nVre6sZ4KyziDC5mzjc446invEsE-hHCgbc",
+  'auth': "token <已脱敏>",
   'sec-ch-ua-mobile': "?0",
   'origin': "https://nideriji.cn",
   'sec-fetch-site': "same-origin",
@@ -544,7 +544,7 @@ emmm 突然又感觉时间过得好快啊，一转眼又周五了，我周末还
 headers = {
   'User-Agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0",
   'accept-language': "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
-  'auth': "token eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJPaFNoZW5naHVvIiwiZXhwIjoxODI5ODA4NzY0LjYzODIwMiwidXNhZ2UiOiJsb2dpbiIsInVzZXJfaWQiOjQ2MDEwMH0.QPo7_h30nVre6sZ4KyziDC5mzjc446invEsE-hHCgbc",
+  'auth': "token <已脱敏>",
   'origin': "https://nideriji.cn",
   'priority': "u=1, i",
   'referer': "https://nideriji.cn/w/write",
@@ -634,4 +634,3 @@ print(response.text)
   "version": "5c910068f2ddcfcf2ff88749bf92e042"
 }
 ```
-

@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Form, Grid, Input, message, Modal, Radio, Table, Tag, Tooltip, Typography } from 'antd';
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import { accountAPI } from '../services/api';
-import { NIDERIJI_TOKEN } from '../config';
 import { waitForLatestSyncLog } from '../utils/sync';
 
 const { Title } = Typography;
@@ -206,9 +205,6 @@ export default function AccountManage() {
   const handleQuickAdd = () => {
     form.resetFields();
     setAddMode('token');
-    form.setFieldsValue({
-      auth_token: NIDERIJI_TOKEN,
-    });
     setModalVisible(true);
   };
 
@@ -297,7 +293,7 @@ export default function AccountManage() {
           添加账号
         </Button>
         <Button onClick={handleQuickAdd}>
-          快速添加当前账号
+          快速添加（Token 模式）
         </Button>
         <Button onClick={() => validateAccounts(accounts)} disabled={accounts.length === 0}>
           刷新 Token 校验

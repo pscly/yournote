@@ -75,7 +75,7 @@ export const userAPI = {
   list: (limit = 50) => api.get('/users', { params: { limit } }),
   get: (id) => api.get(`/users/${id}`),
   lastLogin: (id) => api.get(`/users/${id}/last-login`),
-  paired: (accountId) => api.get(`/users/paired/${accountId}`),
+  paired: (accountId, params) => api.get(`/users/paired/${accountId}`, { params }),
 };
 
 // 访问日志（页面访问上报）

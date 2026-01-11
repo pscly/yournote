@@ -63,15 +63,19 @@ async def get_last_login_time(
 @router.get("/paired/{account_id}")
 async def get_paired_users(
     account_id: int,
+    include_inactive: bool = False,
     db: AsyncSession = Depends(get_db)
 ):
     """获取账号的配对关系"""
-    result = await db.execute(
+    query = (
         select(PairedRelationship)
         .where(PairedRelationship.account_id == account_id)
-        .where(PairedRelationship.is_active.is_(True))
         .order_by(PairedRelationship.id.asc())
     )
+    if not include_inactive:
+        query = query.where(PairedRelationship.is_active.is_(True))
+
+    result = await db.execute(query)
     relationships = result.scalars().all()
 
     if not relationships:
@@ -102,6 +106,9 @@ async def get_paired_users(
 
         paired_info.append(
             {
+                "id": rel.id,
+                "account_id": rel.account_id,
+                "is_active": bool(rel.is_active),
                 "user": UserResponse.from_orm(user),
                 "paired_user": UserResponse.from_orm(paired_user),
                 "paired_time": paired_time,

@@ -26,6 +26,24 @@ function yesterdayStr() {
   return formatDateYYYYMMDD(d);
 }
 
+function parseDateYYYYMMDD(value) {
+  const raw = String(value || '').trim();
+  const parts = raw.split('-').map(v => Number.parseInt(v, 10));
+  if (parts.length !== 3) return null;
+  const [y, m, d] = parts;
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return null;
+  // 使用本地时区构造，避免 new Date('YYYY-MM-DD') 的 UTC 解析差异
+  const dt = new Date(y, m - 1, d);
+  if (Number.isNaN(dt.getTime())) return null;
+  return dt;
+}
+
+function shiftDateStr(value, deltaDays) {
+  const base = parseDateYYYYMMDD(value) || new Date();
+  base.setDate(base.getDate() + (Number(deltaDays) || 0));
+  return formatDateYYYYMMDD(base);
+}
+
 export default function PublishDiary() {
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.md;
@@ -373,6 +391,8 @@ export default function PublishDiary() {
                       />
                       <Button onClick={() => setDate(todayStr())}>今天</Button>
                       <Button onClick={() => setDate(yesterdayStr())}>昨天</Button>
+                      <Button onClick={() => setDate((prev) => shiftDateStr(prev, -1))}>上一天</Button>
+                      <Button onClick={() => setDate((prev) => shiftDateStr(prev, 1))}>下一天</Button>
                       <Button icon={<ReloadOutlined />} onClick={() => loadDraft(date)} loading={draftLoading}>重新加载草稿</Button>
                       <Text type="secondary">
                         {draftUpdatedAt ? `草稿更新时间：${new Date(draftUpdatedAt).toLocaleString()}` : '草稿尚未保存'}

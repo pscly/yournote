@@ -13,10 +13,12 @@ from .api import (
     users_router,
     diary_history_router,
     stats_router,
+    access_router,
     access_logs_router,
     publish_diary_router,
 )
 from .scheduler import scheduler
+from .middleware.access_gate import AccessGateMiddleware
 from .utils.access_log import AccessLogTimer, log_http_request
 
 logger = logging.getLogger(__name__)
@@ -55,6 +57,9 @@ app.add_middleware(
     allow_headers=cors_headers,
 )
 
+# 访问密码门禁（后端强制拦截点）
+app.add_middleware(AccessGateMiddleware)
+
 # Access log middleware（按天写入本地 logs/）
 @app.middleware("http")
 async def access_log_middleware(request: Request, call_next):
@@ -88,6 +93,7 @@ app.include_router(diaries_router, prefix=settings.api_prefix)
 app.include_router(users_router, prefix=settings.api_prefix)
 app.include_router(diary_history_router, prefix=settings.api_prefix)
 app.include_router(stats_router, prefix=settings.api_prefix)
+app.include_router(access_router, prefix=settings.api_prefix)
 app.include_router(access_logs_router, prefix=settings.api_prefix)
 app.include_router(publish_diary_router, prefix=settings.api_prefix)
 

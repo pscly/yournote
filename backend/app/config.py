@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -10,6 +12,24 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _APP_DIR = Path(__file__).resolve().parent
 _BACKEND_DIR = _APP_DIR.parent
 _REPO_ROOT = _BACKEND_DIR.parent
+
+
+def _derive_access_session_secret_from_pwd(pwd: str) -> str:
+    """从 PWD 派生 ACCESS_SESSION_SECRET（避免必须额外配置一个随机 secret）。
+
+    说明：
+    - 这是一个“便利默认值”，更适合本地工具；如果要部署到公网，建议显式配置一个高
+      强度的 ACCESS_SESSION_SECRET。
+    - 使用 PBKDF2 做一次派生，提升离线爆破成本（仍建议使用强密码）。
+    """
+    dk = hashlib.pbkdf2_hmac(
+        "sha256",
+        pwd.encode("utf-8"),
+        b"yournote_access_session_secret_v1",
+        210_000,
+        dklen=32,
+    )
+    return base64.urlsafe_b64encode(dk).decode("utf-8").rstrip("=")
 
 
 def _load_root_dotenv() -> None:
@@ -54,6 +74,37 @@ class Settings(BaseSettings):
     cors_allow_credentials: bool = False
     cors_allow_methods: str = "*"
     cors_allow_headers: str = "*"
+
+    # Access Gate（访问密码门禁）
+    # - 默认：如果 .env 配置了 PWD，则自动启用（更贴合本地工具使用习惯）
+    # - 也可显式用 ACCESS_ENABLED=true/false 控制
+    access_enabled: bool | None = None
+
+    # 访问密码（二选一）：
+    # 1) 推荐：ACCESS_PASSWORD_HASH=pbkdf2_sha256$...
+    # 2) 兼容：PWD / ACCESS_PASSWORD_PLAINTEXT=明文密码
+    #
+    # 重要约定：前端登录时会先把用户输入做 sha256，再把 hex 字符串传给后端。
+    # - 如果你使用 ACCESS_PASSWORD_HASH（PBKDF2），它对应的是“sha256(hex) 后再 PBKDF2”
+    # - 如果你使用明文密码（PWD），后端会对明文做 sha256 后比对
+    access_password_hash: str | None = None
+    access_password_plaintext: str | None = None
+    pwd: str | None = None  # 兼容旧配置：PWD=131
+
+    # 会话 Cookie
+    access_session_secret: str | None = None
+    access_password_version: int = 1
+    access_session_days: int = 90
+    access_cookie_name: str = "yournote_access"
+    access_cookie_samesite: str = "lax"  # lax | strict | none
+    access_cookie_secure: str = "auto"  # auto | true | false
+
+    # 逗号分隔：完全匹配 path（不含 query）时放行（默认会包含 /api/access/*）
+    access_whitelist_paths: str | None = None
+
+    # 防暴力破解：对 /api/access/login 做 IP 维度限流
+    access_rate_limit_window_seconds: int = 300
+    access_rate_limit_max_attempts: int = 20
 
     # Access Log（本地访问日志，按天落盘）
     # - 文件：<repo>/logs/YYYY-MM-DD.logs
@@ -101,6 +152,63 @@ class Settings(BaseSettings):
             minutes = 20
 
         self.sync_interval_minutes = minutes
+        return self
+
+    @model_validator(mode="after")
+    def _normalize_access_gate(self) -> "Settings":
+        plain = (self.access_password_plaintext or self.pwd or "").strip() or None
+        configured_hash = (self.access_password_hash or "").strip() or None
+
+        if self.access_enabled is None:
+            self.access_enabled = bool(configured_hash or plain)
+
+        if not self.access_enabled:
+            return self
+
+        if not (configured_hash or plain):
+            raise ValueError(
+                "已启用访问门禁，但未配置访问密码（PWD / ACCESS_PASSWORD_PLAINTEXT / ACCESS_PASSWORD_HASH）"
+            )
+
+        secret = (self.access_session_secret or "").strip()
+        if not secret:
+            if plain:
+                self.access_session_secret = _derive_access_session_secret_from_pwd(plain)
+            else:
+                raise ValueError("已启用访问门禁，但未配置 ACCESS_SESSION_SECRET，且无法从 PWD 派生")
+
+        if int(self.access_session_days or 0) <= 0:
+            self.access_session_days = 90
+
+        if int(self.access_password_version or 0) <= 0:
+            self.access_password_version = 1
+
+        if not (self.access_cookie_name or "").strip():
+            self.access_cookie_name = "yournote_access"
+
+        samesite = (self.access_cookie_samesite or "lax").strip().lower()
+        if samesite not in {"lax", "strict", "none"}:
+            samesite = "lax"
+        self.access_cookie_samesite = samesite
+
+        secure = (self.access_cookie_secure or "auto").strip().lower()
+        if secure not in {"auto", "true", "false"}:
+            secure = "auto"
+        self.access_cookie_secure = secure
+
+        raw_whitelist = (self.access_whitelist_paths or "").strip()
+        if not raw_whitelist:
+            api_prefix = (self.api_prefix or "/api").rstrip("/") or "/api"
+            self.access_whitelist_paths = ",".join(
+                [
+                    f"{api_prefix}/access/login",
+                    f"{api_prefix}/access/logout",
+                    f"{api_prefix}/access/status",
+                    # 避免未授权状态下前端 pageview 上报触发跳转循环
+                    f"{api_prefix}/access-logs/pageview",
+                ]
+            )
+
         return self
 
     model_config = SettingsConfigDict(

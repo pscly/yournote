@@ -6,8 +6,9 @@ import { MenuOutlined } from '@ant-design/icons';
 import Dashboard from './pages/Dashboard';
 import AccountManage from './pages/AccountManage';   
 import DiaryList from './pages/DiaryList';    
-import DiaryDetail from './pages/DiaryDetail';       
+import DiaryDetail from './pages/DiaryDetail';
 import PublishDiary from './pages/PublishDiary';
+import AccessGate from './pages/AccessGate';
 import AllUsers from './pages/AllUsers';
 import UserDetail from './pages/UserDetail';
 import SyncLogs from './pages/SyncLogs';
@@ -83,6 +84,7 @@ function AppShell() {
   const isMobile = !screens.md;
   const headerPadding = isMobile ? 12 : 24;
   const location = useLocation();
+  const isAccessPage = (location.pathname || '').startsWith('/access');
 
   useEffect(() => {
     const path = `${location.pathname || '/'}${location.search || ''}`;
@@ -111,47 +113,50 @@ function AppShell() {
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      <Header
-        style={{
-          position: 'fixed',
-          top: 0,
-          zIndex: 1000,
-          width: '100%',
-          height: APP_HEADER_HEIGHT,
-          display: 'flex',
-          alignItems: 'center',
-          paddingInline: headerPadding,
-          gap: 12,
-        }}
-      >
-        <Space align="center" style={{ flex: 1, minWidth: 0 }} size={12}>
-          <Typography.Title
-            level={4}
-            style={{
-              color: 'white',
-              margin: 0,
-              whiteSpace: 'nowrap',
-            }}
-          >
-            <Link
-              to="/"
+      {!isAccessPage && (
+        <Header
+          style={{
+            position: 'fixed',
+            top: 0,
+            zIndex: 1000,
+            width: '100%',
+            height: APP_HEADER_HEIGHT,
+            display: 'flex',
+            alignItems: 'center',
+            paddingInline: headerPadding,
+            gap: 12,
+          }}
+        >
+          <Space align="center" style={{ flex: 1, minWidth: 0 }} size={12}>
+            <Typography.Title
+              level={4}
               style={{
                 color: 'white',
-                textDecoration: 'none',
+                margin: 0,
+                whiteSpace: 'nowrap',
               }}
             >
-              YourNote
-            </Link>
-          </Typography.Title>
-          <AppHeaderMenu />
-        </Space>
-        <div>
-          <SyncMonitor />
-        </div>
-      </Header>
+              <Link
+                to="/"
+                style={{
+                  color: 'white',
+                  textDecoration: 'none',
+                }}
+              >
+                YourNote
+              </Link>
+            </Typography.Title>
+            <AppHeaderMenu />
+          </Space>
+          <div>
+            <SyncMonitor />
+          </div>
+        </Header>
+      )}
 
-      <Content className="app-content" style={{ marginTop: APP_HEADER_HEIGHT }}>
+      <Content className="app-content" style={{ marginTop: isAccessPage ? 0 : APP_HEADER_HEIGHT }}>
         <Routes>
+          <Route path="/access" element={<AccessGate />} />
           <Route path="/" element={<Dashboard />} />
           <Route path="/accounts" element={<AccountManage />} />
           <Route path="/diaries" element={<DiaryList />} />

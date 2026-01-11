@@ -67,8 +67,9 @@ logs/             本地访问日志（按天落盘，默认开启）
 - 端口：`BACKEND_PORT` / `FRONTEND_PORT`
 - 数据库：`SQLITE_DB_PATH`（推荐）或 `DATABASE_URL`（高级）
 - API 前缀：`API_PREFIX`（前后端需一致）
-- 同步：`SYNC_ON_STARTUP` / `SYNC_INTERVAL_MINUTES`
-- 跨域：`CORS_ALLOW_ORIGINS` / `CORS_ALLOW_CREDENTIALS`
+- 访问密码：`PWD` / `ACCESS_*`（站点级门禁，未登录时所有 `/api/**` 返回 401）
+- 同步：`SYNC_ON_STARTUP` / `SYNC_INTERVAL_MINUTES`        
+- 跨域：`CORS_ALLOW_ORIGINS` / `CORS_ALLOW_CREDENTIALS`    
 - 访问日志：`ACCESS_LOG_*`
 
 ## 工程规范（重要）

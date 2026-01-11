@@ -6,9 +6,32 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  // 访问密码使用 Cookie 会话；跨域部署时需要携带凭证
+  withCredentials: true,
   // 避免后端不可达/卡住导致前端一直转圈（尤其是仪表盘/用户页的初始加载）。
   timeout: 10000,
 });
+
+// 统一拦截未授权：后端返回 401 + ACCESS_REQUIRED 时跳转到访问密码页
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const status = error?.response?.status;
+    const detail = error?.response?.data?.detail;
+    if (status === 401 && detail === 'ACCESS_REQUIRED') {
+      const pathname = globalThis.location?.pathname || '/';
+      if (!pathname.startsWith('/access')) {
+        const search = globalThis.location?.search || '';
+        const hash = globalThis.location?.hash || '';
+        const redirect = `${pathname}${search}${hash}`;
+        const target = `/access?redirect=${encodeURIComponent(redirect)}`;
+        globalThis.location?.replace?.(target);
+      }
+    }
+
+    return Promise.reject(error);
+  },
+);
 
 // 账号管理
 export const accountAPI = {
@@ -59,6 +82,13 @@ export const userAPI = {
 export const accessLogAPI = {
   pageview: (data) => api.post('/access-logs/pageview', data),
   file: (params) => api.get('/access-logs/file', { params }),
+};
+
+// 访问密码（站点级门禁）
+export const accessAPI = {
+  login: (data) => api.post('/access/login', data),
+  logout: () => api.post('/access/logout'),
+  status: () => api.get('/access/status'),
 };
 
 // 发布日记（草稿/历史/一键发布）

@@ -1,10 +1,39 @@
-import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { Layout, Card, List, Button, Switch, Timeline, Spin, message, Tag, Drawer, Space, Divider, Typography, Modal, Descriptions, BackTop } from 'antd';
-import { ArrowLeftOutlined, ClockCircleOutlined, MenuOutlined, CalendarOutlined, CloudOutlined, SmileOutlined } from '@ant-design/icons';
-import { diaryAPI, userAPI } from '../services/api';
+import { useEffect, useMemo, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import {
+  BackTop,
+  Button,
+  Card,
+  Checkbox,
+  Descriptions,
+  Divider,
+  Drawer,
+  Input,
+  Layout,
+  List,
+  Modal,
+  Radio,
+  Space,
+  Spin,
+  Switch,
+  Tag,
+  Timeline,
+  Typography,
+  message,
+} from 'antd';
+import {
+  ArrowLeftOutlined,
+  CalendarOutlined,
+  ClockCircleOutlined,
+  CloudOutlined,
+  MenuOutlined,
+  SmileOutlined,
+} from '@ant-design/icons';
 import axios from 'axios';
 import { API_BASE_URL } from '../config';
+import { diaryAPI, userAPI } from '../services/api';
+import { downloadText, formatExportTimestamp, safeFilenamePart } from '../utils/download';
+import { parseServerDate } from '../utils/time';
 
 const { Sider, Content } = Layout;
 const { Title, Paragraph } = Typography;
@@ -23,6 +52,15 @@ export default function DiaryDetail() {
   const [pairUsers, setPairUsers] = useState({ main: null, matched: null });
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [exportIncludeMain, setExportIncludeMain] = useState(true);
+  const [exportIncludeMatched, setExportIncludeMatched] = useState(true);
+  const [exportSearch, setExportSearch] = useState('');
+  const [exportOrder, setExportOrder] = useState('asc'); // asc: 从旧到新（更符合“时间线阅读”）
+  const [exportFormats, setExportFormats] = useState(['txt', 'md']);
+  const [exportSelectedIds, setExportSelectedIds] = useState([]);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     const handleResize = () => {
@@ -71,10 +109,19 @@ export default function DiaryDetail() {
   };
 
   const getDiaryTimestamp = (item) => {
-    const raw = item?.created_time || item?.created_date;
+    // const raw = item?.created_time || item?.created_date;
+    // 排序没对，用这个排序似乎才对
+    const raw = item?.created_date || item?.created_time;
     const ts = new Date(raw).getTime();
     if (Number.isNaN(ts)) return 0;
     return ts;
+  };
+
+  const getDiaryTimestampForExport = (item) => {
+    const raw = item?.created_time || item?.created_date;
+    const d = parseServerDate(raw);
+    if (!d) return 0;
+    return d.getTime();
   };
 
   const loadMyDiaries = async (userId = null) => {
@@ -223,6 +270,245 @@ export default function DiaryDetail() {
     return getDiaryOwner(item) === 'matched' ? '#fff0f6' : '#e6f7ff';
   };
 
+  const canExportMatched = !!(showMatched && pairUsers?.main?.id && pairUsers?.matched?.id);
+
+  const exportCandidateDiaries = useMemo(() => {
+    const list = (diaryList || []).filter(Boolean);
+    const resolveOwner = (item) => {
+      // 未开启“显示匹配日记”时，当前列表就是“你正在看的这位用户”的日记：
+      // 这时候导出不应因为识别为 matched 而被过滤为空。
+      if (!canExportMatched) return 'main';
+      if (pairUsers?.matched?.id && item?.user_id === pairUsers.matched.id) return 'matched';
+      if (pairUsers?.main?.id && item?.user_id === pairUsers.main.id) return 'main';
+      if (diary?.user_id && item?.user_id === diary.user_id) return 'main';
+      return 'main';
+    };
+
+    const filteredByOwner = list.filter((d) => {
+      const owner = resolveOwner(d);
+      if (owner === 'matched') return exportIncludeMatched && canExportMatched;
+      return exportIncludeMain;
+    });
+
+    const kw = exportSearch.trim().toLowerCase();
+    if (!kw) return filteredByOwner;
+
+    return filteredByOwner.filter((d) => {
+      const title = String(d?.title ?? '').toLowerCase();
+      const content = String(d?.content ?? '').toLowerCase();
+      const date = String(d?.created_date ?? '').toLowerCase();
+      return title.includes(kw) || content.includes(kw) || date.includes(kw);
+    });
+  }, [diaryList, exportIncludeMain, exportIncludeMatched, exportSearch, canExportMatched, pairUsers, diary]);
+
+  useEffect(() => {
+    if (!exportModalOpen) return;
+    if (canExportMatched) return;
+    setExportIncludeMatched(false);
+  }, [exportModalOpen, canExportMatched]);
+
+  useEffect(() => {
+    if (!exportModalOpen) return;
+    const candidateIds = new Set(exportCandidateDiaries.map(d => d?.id).filter(Boolean));
+    setExportSelectedIds((prev) => (prev || []).filter((diaryId) => candidateIds.has(diaryId)));
+  }, [exportModalOpen, exportCandidateDiaries]);
+
+  const getOwnerTextForExport = (item) => {
+    if (!canExportMatched) return '我的日记';
+    const owner = getDiaryOwner(item);
+    if (owner === 'matched') {
+      const name = pairUsers?.matched?.name ? `：${pairUsers.matched.name}` : '';
+      return `被匹配用户${name}`;
+    }
+    const name = pairUsers?.main?.name ? `：${pairUsers.main.name}` : '';
+    return `主用户${name}`;
+  };
+
+  const getUsernameForExport = (item) => {
+    const uid = item?.user_id;
+    if (!uid) return '未知用户';
+    if (pairUsers?.matched?.id && uid === pairUsers.matched.id) return pairUsers.matched?.name || `用户 ${uid}`;
+    if (pairUsers?.main?.id && uid === pairUsers.main.id) return pairUsers.main?.name || `用户 ${uid}`;
+    if (diary?.user_id && uid === diary.user_id) return pairUsers.main?.name || `用户 ${uid}`;
+    return `用户 ${uid}`;
+  };
+
+  const openExportModal = () => {
+    const currentId = Number.parseInt(id, 10);
+
+    setExportModalOpen(true);
+    setExportSearch('');
+    setExportOrder('asc');
+    setExportFormats([]);
+
+    if (canExportMatched) {
+      setExportIncludeMain(true);
+      setExportIncludeMatched(true);
+    } else {
+      setExportIncludeMain(true);
+      setExportIncludeMatched(false);
+    }
+
+    if (Number.isFinite(currentId) && currentId > 0) {
+      setExportSelectedIds([currentId]);
+    } else {
+      setExportSelectedIds([]);
+    }
+  };
+
+  const buildExportText = (items) => {
+    const body = items.map((d) => {
+      const date = d?.created_date || '-';
+      const title = d?.title || '无标题';
+      const username = getUsernameForExport(d);
+
+      const content = (d?.content ?? '').trim();
+      return [
+        date,
+        username,
+        title,
+        content || '（空）',
+        '',
+        '----------------------------------------',
+        '',
+      ].join('\n');
+    }).join('');
+
+    return body;
+  };
+
+  const buildExportMarkdown = (items) => {
+    const quoteBlock = (value) => {
+      const s = String(value ?? '').replace(/\r\n/g, '\n');
+      return s.split('\n').map((line) => (line ? `> ${line}` : '>')).join('\n');
+    };
+
+    return items.map((d) => {
+      const date = d?.created_date || '-';
+      const username = getUsernameForExport(d);
+      const title = d?.title || '无标题';
+      const content = (d?.content ?? '').trim() || '（空）';
+
+      // 目标：视觉上规整，且标题/内容都在引用块里
+      // - 用 `---` 作为硬分隔符（前后留空行）
+      // - 头部用二级标题：日期 · 用户名
+      // - 引用块里先放标题，再放内容
+      return [
+        `## ${date} · ${username}`,
+        '',
+        quoteBlock(title),
+        '>',
+        quoteBlock(content),
+        '',
+        '---',
+        '',
+      ].join('\n');
+    }).join('\n');
+  };
+
+  const buildExportJson = (items, { order, includeMain, includeMatched, keyword }) => {
+    const exportedAt = new Date();
+    const payload = {
+      meta: {
+        exported_at: exportedAt.toISOString(),
+        exported_at_local: exportedAt.toLocaleString('zh-CN'),
+        count: items.length,
+        order,
+        can_export_matched: canExportMatched,
+        include_main: includeMain,
+        include_matched: includeMatched,
+        keyword: keyword?.trim() || null,
+      },
+      diaries: items.map((d) => ({
+        id: d?.id ?? null,
+        user_id: d?.user_id ?? null,
+        account_id: d?.account_id ?? null,
+        nideriji_diary_id: d?.nideriji_diary_id ?? null,
+        title: d?.title ?? null,
+        content: d?.content ?? null,
+        created_date: d?.created_date ?? null,
+        created_time: d?.created_time ?? null,
+        weather: d?.weather ?? null,
+        mood: d?.mood ?? null,
+        space: d?.space ?? null,
+        ts: d?.ts ?? null,
+        owner: canExportMatched ? getDiaryOwner(d) : 'main',
+        owner_text: getOwnerTextForExport(d),
+      })),
+    };
+    return JSON.stringify(payload, null, 2);
+  };
+
+  const handleExport = async () => {
+    if (exporting) return;
+
+    const formats = exportFormats || [];
+    if (formats.length === 0) {
+      message.warning('请至少选择一种导出格式');
+      return;
+    }
+
+    const selectedSet = new Set(exportSelectedIds || []);
+    const selected = exportCandidateDiaries.filter((d) => selectedSet.has(d?.id));
+
+    if (selected.length === 0) {
+      message.warning('请先选择要导出的日记');
+      return;
+    }
+
+    const sorted = selected.slice().sort((a, b) => {
+      const ta = getDiaryTimestampForExport(a);
+      const tb = getDiaryTimestampForExport(b);
+      return exportOrder === 'asc' ? (ta - tb) : (tb - ta);
+    });
+
+    setExporting(true);
+    try {
+      const ts = formatExportTimestamp(new Date());
+      const countPart = `${sorted.length}条`;
+      const orderPart = exportOrder === 'asc' ? '从旧到新' : '从新到旧';
+
+      const scopePart = canExportMatched
+        ? (exportIncludeMain && exportIncludeMatched
+          ? '主用户+被匹配用户'
+          : exportIncludeMain
+            ? '主用户'
+            : '被匹配用户')
+        : '我的日记';
+
+      const keywordPart = safeFilenamePart(exportSearch.trim());
+      const keywordSuffix = keywordPart ? `-${keywordPart}` : '';
+
+      const baseName = `日记导出-${scopePart}-${orderPart}-${countPart}${keywordSuffix}-${ts}`;
+      const buildOpts = {
+        order: exportOrder,
+        includeMain: exportIncludeMain,
+        includeMatched: exportIncludeMatched,
+        keyword: exportSearch,
+      };
+
+      if (formats.includes('txt')) {
+        const text = buildExportText(sorted);
+        downloadText(text, `${baseName}.txt`, 'text/plain;charset=utf-8');
+      }
+      if (formats.includes('md')) {
+        const md = buildExportMarkdown(sorted);
+        downloadText(md, `${baseName}.md`, 'text/markdown;charset=utf-8');
+      }
+      if (formats.includes('json')) {
+        const json = buildExportJson(sorted, buildOpts);
+        downloadText(json, `${baseName}.json`, 'application/json;charset=utf-8');
+      }
+
+      message.success(`已导出：${sorted.length} 条（${formats.join(' / ').toUpperCase()}）`);
+      setExportModalOpen(false);
+    } catch (e) {
+      message.error(`导出失败：${e?.message || String(e)}`);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   if (loading) {
     return (
       <div style={{
@@ -249,29 +535,32 @@ export default function DiaryDetail() {
         background: '#fafafa'
       }}>
         <Title level={4} style={{ margin: '0 0 16px 0' }}>日记列表</Title>
-          <Space direction="vertical" style={{ width: '100%' }}>
-            <div style={{ display: 'flex', alignItems: 'center' }}>
-              <Switch
-                checked={showMatched}
-                onChange={setShowMatched}
-                disabled={!(pairUsers?.main?.id && pairUsers?.matched?.id)}
-              />
-              <span style={{ marginLeft: 8, fontSize: '14px' }}>显示匹配日记</span>
-            </div>
-            {pairUsers?.main?.id && pairUsers?.matched?.id && (
-              <div style={{ fontSize: '12px', color: '#999' }}>
-                <div>
-                  <span style={{ display: 'inline-block', width: 12, height: 12, background: '#1890ff', marginRight: 6, borderRadius: 2 }}></span>
-                  主用户{pairUsers.main?.name ? `：${pairUsers.main.name}` : ''}
-                </div>
-                <div>
-                  <span style={{ display: 'inline-block', width: 12, height: 12, background: '#ff85c0', marginRight: 6, borderRadius: 2 }}></span>
-                  被匹配用户{pairUsers.matched?.name ? `：${pairUsers.matched.name}` : ''}
-                </div>
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <div style={{ display: 'flex', alignItems: 'center' }}>
+            <Switch
+              checked={showMatched}
+              onChange={setShowMatched}
+              disabled={!(pairUsers?.main?.id && pairUsers?.matched?.id)}
+            />
+            <span style={{ marginLeft: 8, fontSize: '14px' }}>显示匹配日记</span>
+          </div>
+          <Button onClick={openExportModal} block>
+            导出…
+          </Button>
+          {pairUsers?.main?.id && pairUsers?.matched?.id && (
+            <div style={{ fontSize: '12px', color: '#999' }}>
+              <div>
+                <span style={{ display: 'inline-block', width: 12, height: 12, background: '#1890ff', marginRight: 6, borderRadius: 2 }}></span>
+                主用户{pairUsers.main?.name ? `：${pairUsers.main.name}` : ''}
               </div>
-            )}
-          </Space>
-        </div>
+              <div>
+                <span style={{ display: 'inline-block', width: 12, height: 12, background: '#ff85c0', marginRight: 6, borderRadius: 2 }}></span>
+                被匹配用户{pairUsers.matched?.name ? `：${pairUsers.matched.name}` : ''}
+              </div>
+            </div>
+          )}
+        </Space>
+      </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
         <List
@@ -450,6 +739,166 @@ export default function DiaryDetail() {
           <DiaryListContent />
         </Drawer>
       )}
+
+      <Modal
+        title="导出日记"
+        open={exportModalOpen}
+        onCancel={() => setExportModalOpen(false)}
+        onOk={handleExport}
+        okText={exporting ? '导出中…' : '导出'}
+        cancelText="取消"
+        confirmLoading={exporting}
+        width={isMobile ? 360 : 760}
+      >
+        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+          <div>
+            <div style={{ fontWeight: 600, marginBottom: 8 }}>导出范围</div>
+            {canExportMatched ? (
+              <Space wrap>
+                <Checkbox checked={exportIncludeMain} onChange={(e) => setExportIncludeMain(e.target.checked)}>
+                  主用户（我的日记）{pairUsers?.main?.name ? `：${pairUsers.main.name}` : ''}
+                </Checkbox>
+                <Checkbox checked={exportIncludeMatched} onChange={(e) => setExportIncludeMatched(e.target.checked)}>
+                  被匹配用户{pairUsers?.matched?.name ? `：${pairUsers.matched.name}` : ''}
+                </Checkbox>
+              </Space>
+            ) : (
+              <div style={{ color: '#666' }}>当前仅可导出我的日记（未开启/不可用“显示匹配日记”）。</div>
+            )}
+          </div>
+
+          <div>
+            <div style={{ fontWeight: 600, marginBottom: 8 }}>排序</div>
+            <Radio.Group value={exportOrder} onChange={(e) => setExportOrder(e.target.value)}>
+              <Radio value="asc">从旧到新（时间线）</Radio>
+              <Radio value="desc">从新到旧</Radio>
+            </Radio.Group>
+          </div>
+
+          <div>
+            <div style={{ fontWeight: 600, marginBottom: 8 }}>格式（可多选）</div>
+            <Space wrap>
+              <Checkbox
+                checked={(exportFormats || []).includes('txt')}
+                onChange={(e) => {
+                  setExportFormats((prev) => {
+                    const base = new Set(prev || []);
+                    if (e.target.checked) base.add('txt');
+                    else base.delete('txt');
+                    return Array.from(base);
+                  });
+                }}
+              >
+                TXT
+              </Checkbox>
+              <Checkbox
+                checked={(exportFormats || []).includes('md')}
+                onChange={(e) => {
+                  setExportFormats((prev) => {
+                    const base = new Set(prev || []);
+                    if (e.target.checked) base.add('md');
+                    else base.delete('md');
+                    return Array.from(base);
+                  });
+                }}
+              >
+                Markdown
+              </Checkbox>
+              <Checkbox
+                checked={(exportFormats || []).includes('json')}
+                onChange={(e) => {
+                  setExportFormats((prev) => {
+                    const base = new Set(prev || []);
+                    if (e.target.checked) base.add('json');
+                    else base.delete('json');
+                    return Array.from(base);
+                  });
+                }}
+              >
+                JSON（结构化，包含完整字段）
+              </Checkbox>
+            </Space>
+          </div>
+
+          <div>
+            <div style={{ fontWeight: 600, marginBottom: 8 }}>选择要导出的日记</div>
+            <Space direction="vertical" style={{ width: '100%' }}>
+              <Input
+                placeholder="按标题 / 内容 / 日期 搜索（可选）"
+                value={exportSearch}
+                onChange={(e) => setExportSearch(e.target.value)}
+                allowClear
+              />
+              <Space wrap>
+                <Button
+                  size="small"
+                  onClick={() => setExportSelectedIds(exportCandidateDiaries.map(d => d?.id).filter(Boolean))}
+                  disabled={exportCandidateDiaries.length === 0}
+                >
+                  全选当前列表
+                </Button>
+                <Button size="small" onClick={() => setExportSelectedIds([])}>
+                  全不选
+                </Button>
+                <Button
+                  size="small"
+                  onClick={() => {
+                    const currentId = Number.parseInt(id, 10);
+                    if (!Number.isFinite(currentId) || currentId <= 0) return;
+                    setExportSelectedIds([currentId]);
+                  }}
+                >
+                  仅当前日记
+                </Button>
+                <span style={{ color: '#999' }}>
+                  已选 {exportSelectedIds.length} / {exportCandidateDiaries.length}
+                </span>
+              </Space>
+
+              <div style={{ maxHeight: isMobile ? 320 : 360, overflowY: 'auto', border: '1px solid #f0f0f0', borderRadius: 8, padding: 8 }}>
+                <List
+                  size="small"
+                  dataSource={exportCandidateDiaries}
+                  locale={{ emptyText: '暂无可导出的日记' }}
+                  renderItem={(item) => {
+                    const checked = (exportSelectedIds || []).includes(item?.id);
+                    const owner = getDiaryOwner(item);
+                    const color = owner === 'matched' ? 'magenta' : 'blue';
+                    return (
+                      <List.Item
+                        style={{ padding: '8px 6px' }}
+                        onClick={() => {
+                          const idNum = item?.id;
+                          if (!idNum) return;
+                          setExportSelectedIds((prev) => {
+                            const set = new Set(prev || []);
+                            if (set.has(idNum)) set.delete(idNum);
+                            else set.add(idNum);
+                            return Array.from(set);
+                          });
+                        }}
+                      >
+                        <Space align="start" style={{ width: '100%' }}>
+                          <Checkbox checked={checked} />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 500, marginBottom: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {item?.title || '无标题'}
+                            </div>
+                            <div style={{ fontSize: 12, color: '#999' }}>
+                              <Tag color={color} style={{ marginRight: 6 }}>{getUsernameForExport(item)}</Tag>
+                              <span>{item?.created_date || '-'}</span>
+                            </div>
+                          </div>
+                        </Space>
+                      </List.Item>
+                    );
+                  }}
+                />
+              </div>
+            </Space>
+          </div>
+        </Space>
+      </Modal>
 
       <BackTop />
     </Layout>

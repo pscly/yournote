@@ -60,3 +60,8 @@ class PublishDiaryRequest(BaseModel):
     account_ids: list[int] = Field(default_factory=list)
     save_draft: bool = True
 
+
+class PublishDiaryPublishOneRequest(BaseModel):
+    """单账号发布请求体（用于前端并行逐账号发布）。"""
+
+    account_id: int

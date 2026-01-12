@@ -99,7 +99,13 @@ export const publishDiaryAPI = {
   saveDraft: (date, data) => api.put(`/publish-diaries/draft/${encodeURIComponent(date)}`, data),
   listRuns: (params) => api.get('/publish-diaries/runs', { params }),
   getRun: (id) => api.get(`/publish-diaries/runs/${id}`),
-  publish: (data) => api.post('/publish-diaries/publish', data),
+  // 创建一次“发布 Run”（不执行发布），用于前端并行逐账号发布时先拿到 run_id
+  createRun: (data, config = {}) => api.post('/publish-diaries/runs', data, { timeout: 0, ...config }),
+  // 单账号发布（用于前端并行逐账号调用）；timeout=0 避免 axios 默认 10s 误判
+  publishOne: (runId, data, config = {}) =>
+    api.post(`/publish-diaries/runs/${runId}/publish-one`, data, { timeout: 0, ...config }),
+  // 兼容旧版“一次性批量发布”；timeout=0 避免请求时间较长时被前端中断
+  publish: (data, config = {}) => api.post('/publish-diaries/publish', data, { timeout: 0, ...config }),
 };
 
 export default api;

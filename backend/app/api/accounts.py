@@ -5,11 +5,11 @@ from __future__ import annotations
 import httpx
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession      
 
 from ..database import get_db
-from ..models import Account, User
+from ..models import Account, Diary, User
 from ..schemas import (
     AccountCreate,
     AccountMetaResponse,
@@ -110,6 +110,7 @@ def _build_account_response(
     *,
     user_name: str | None,
     token_status: TokenStatus | None = None,
+    last_diary_ts: int | None = None,
 ) -> AccountResponse:
     return AccountResponse(
         id=account.id,
@@ -118,6 +119,7 @@ def _build_account_response(
         email=account.email,
         is_active=account.is_active,
         token_status=token_status or TokenStatus(**get_token_status(account.auth_token)),
+        last_diary_ts=last_diary_ts,
         created_at=account.created_at,
         updated_at=account.updated_at,
     )
@@ -233,6 +235,18 @@ async def list_accounts(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Account).where(Account.is_active.is_(True)))
     accounts = result.scalars().all()
 
+    account_ids = [a.id for a in accounts if a and isinstance(a.id, int)]
+    last_diary_ts_map: dict[int, int] = {}
+    if account_ids:
+        ts_result = await db.execute(
+            select(Diary.account_id, func.max(Diary.ts))
+            .where(Diary.account_id.in_(account_ids))
+            .group_by(Diary.account_id)
+        )
+        last_diary_ts_map = {
+            int(account_id): int(max_ts) for account_id, max_ts in ts_result.all() if max_ts is not None
+        }
+
     nideriji_userids = [a.nideriji_userid for a in accounts]
     user_map: dict[int, User] = {}
     if nideriji_userids:
@@ -242,7 +256,13 @@ async def list_accounts(db: AsyncSession = Depends(get_db)):
     responses: list[AccountResponse] = []
     for a in accounts:
         user = user_map.get(a.nideriji_userid)
-        responses.append(_build_account_response(a, user_name=(user.name if user else None)))
+        responses.append(
+            _build_account_response(
+                a,
+                user_name=(user.name if user else None),
+                last_diary_ts=last_diary_ts_map.get(a.id),
+            )
+        )
     return responses
 
 
@@ -289,7 +309,13 @@ async def get_account(
 
     user_result = await db.execute(select(User).where(User.nideriji_userid == account.nideriji_userid))
     user = user_result.scalar_one_or_none()
-    return _build_account_response(account, user_name=(user.name if user else None))
+
+    last_diary_ts = await db.scalar(select(func.max(Diary.ts)).where(Diary.account_id == account.id))
+    return _build_account_response(
+        account,
+        user_name=(user.name if user else None),
+        last_diary_ts=(int(last_diary_ts) if last_diary_ts is not None else None),
+    )
 
 
 @router.post("/validate-token", response_model=TokenStatus)

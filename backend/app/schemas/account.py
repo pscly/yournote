@@ -41,6 +41,7 @@ class AccountResponse(BaseModel):
     email: str | None
     is_active: bool
     token_status: TokenStatus
+    last_diary_ts: int | None = None
     created_at: datetime
     updated_at: datetime
 

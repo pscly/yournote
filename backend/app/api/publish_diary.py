@@ -21,7 +21,9 @@ from ..models import Account, PublishDiaryDraft, PublishDiaryRun, PublishDiaryRu
 from ..schemas import (
     PublishDiaryDraftResponse,
     PublishDiaryDraftUpsertRequest,
+    PublishDiaryPublishOneRequest,
     PublishDiaryRequest,
+    PublishDiaryRunItemResponse,
     PublishDiaryRunListItemResponse,
     PublishDiaryRunResponse,
 )
@@ -148,8 +150,8 @@ async def list_runs(
     return response
 
 
-@router.get("/runs/{run_id}", response_model=PublishDiaryRunResponse)
-async def get_run(run_id: int, db: AsyncSession = Depends(get_db)):
+@router.get("/runs/{run_id}", response_model=PublishDiaryRunResponse)     
+async def get_run(run_id: int, db: AsyncSession = Depends(get_db)):       
     """查看一次发布的详情（含每个账号结果）。"""
     result = await db.execute(select(PublishDiaryRun).where(PublishDiaryRun.id == run_id))
     run = result.scalar_one_or_none()
@@ -181,6 +183,183 @@ async def get_run(run_id: int, db: AsyncSession = Depends(get_db)):
             }
             for i in items
         ],
+    )
+
+
+@router.post("/runs", response_model=PublishDiaryRunResponse)
+async def create_run(body: PublishDiaryRequest, db: AsyncSession = Depends(get_db)):
+    """创建一次发布 Run（不执行发布）。
+
+    设计目的：
+    - 解决前端“多账号批量发布”容易触发超时/中断的问题
+    - 前端先创建 run，再并行逐账号调用 `publish-one`，每个账号都有独立回包
+    """
+    date = _ensure_date_yyyy_mm_dd(body.date)
+    content = body.content if isinstance(body.content, str) else ""
+
+    # account_ids 为空时默认“全部活跃账号”
+    account_ids = [int(x) for x in (body.account_ids or []) if isinstance(x, int)]
+    if not account_ids:
+        result = await db.execute(select(Account).where(Account.is_active.is_(True)).order_by(Account.id.asc()))
+        accounts = result.scalars().all()
+    else:
+        result = await db.execute(
+            select(Account)
+            .where(Account.is_active.is_(True), Account.id.in_(account_ids))
+            .order_by(Account.id.asc())
+        )
+        accounts = result.scalars().all()
+
+    if not accounts:
+        raise HTTPException(status_code=400, detail="未找到可用账号（请先添加账号，或勾选需要发布的账号）")
+
+    # 保存草稿（可关闭）
+    if body.save_draft:
+        draft_result = await db.execute(select(PublishDiaryDraft).where(PublishDiaryDraft.date == date))
+        draft = draft_result.scalar_one_or_none()
+        if not draft:
+            draft = PublishDiaryDraft(date=date, content=content)
+            db.add(draft)
+        else:
+            draft.content = content
+
+    run = PublishDiaryRun(
+        date=date,
+        content=content,
+        target_account_ids_json=json.dumps([a.id for a in accounts], ensure_ascii=False),
+    )
+    db.add(run)
+    await db.flush()
+
+    for account in accounts:
+        db.add(
+            PublishDiaryRunItem(
+                run_id=run.id,
+                account_id=account.id,
+                nideriji_userid=account.nideriji_userid,
+                status="unknown",
+            )
+        )
+
+    await db.commit()
+    await db.refresh(run)
+
+    created_at = run.created_at
+    if created_at and created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+
+    items_result = await db.execute(
+        select(PublishDiaryRunItem)
+        .where(PublishDiaryRunItem.run_id == run.id)
+        .order_by(PublishDiaryRunItem.id.asc())
+    )
+    items_db = items_result.scalars().all()
+
+    return PublishDiaryRunResponse(
+        id=run.id,
+        date=run.date,
+        content=run.content or "",
+        target_account_ids=_parse_int_list_json(run.target_account_ids_json),
+        created_at=created_at,
+        items=[
+            {
+                "account_id": i.account_id,
+                "nideriji_userid": i.nideriji_userid,
+                "status": i.status or "unknown",
+                "nideriji_diary_id": i.nideriji_diary_id,
+                "error_message": i.error_message,
+            }
+            for i in items_db
+        ],
+    )
+
+
+@router.post("/runs/{run_id}/publish-one", response_model=PublishDiaryRunItemResponse)
+async def publish_one(
+    run_id: int,
+    body: PublishDiaryPublishOneRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """按 run_id + account_id 发布一次日记（单账号）。"""
+    result = await db.execute(select(PublishDiaryRun).where(PublishDiaryRun.id == run_id))
+    run = result.scalar_one_or_none()
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    account_id = int(body.account_id)
+    target_ids = _parse_int_list_json(run.target_account_ids_json)
+    if target_ids and account_id not in target_ids:
+        raise HTTPException(status_code=400, detail="该账号不在当前发布 Run 的目标列表中")
+
+    account_result = await db.execute(
+        select(Account).where(Account.is_active.is_(True), Account.id == account_id)
+    )
+    account = account_result.scalar_one_or_none()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    item_result = await db.execute(
+        select(PublishDiaryRunItem)
+        .where(PublishDiaryRunItem.run_id == run_id, PublishDiaryRunItem.account_id == account_id)
+        .order_by(PublishDiaryRunItem.id.desc())
+    )
+    item = item_result.scalars().first()
+    if not item:
+        item = PublishDiaryRunItem(
+            run_id=run_id,
+            account_id=account.id,
+            nideriji_userid=account.nideriji_userid,
+            status="unknown",
+        )
+        db.add(item)
+        await db.flush()
+
+    collector = CollectorService(db)
+    publisher = DiaryPublisherService(collector)
+    date = _ensure_date_yyyy_mm_dd(run.date)
+    content = run.content if isinstance(run.content, str) else ""
+
+    try:
+        resp_json: dict[str, Any] = await publisher.write_diary_for_account(
+            account=account,
+            date=date,
+            content=content,
+        )
+        diary_data = resp_json.get("diary") if isinstance(resp_json, dict) else None
+        nideriji_diary_id = None
+        if isinstance(diary_data, dict):
+            raw_id = diary_data.get("id")
+            if isinstance(raw_id, (int, str)):
+                nideriji_diary_id = str(raw_id)
+        item.status = "success"
+        item.nideriji_diary_id = nideriji_diary_id
+        item.error_message = None
+        item.response_json = json.dumps(resp_json, ensure_ascii=False)
+    except httpx.HTTPStatusError as e:
+        status_code = getattr(getattr(e, "response", None), "status_code", None)
+        item.status = "failed"
+        item.error_message = (
+            f"HTTPError: {e}" + (f" (HTTP {status_code})" if isinstance(status_code, int) else "")
+        )
+    except httpx.TimeoutException:
+        item.status = "failed"
+        item.error_message = "发布超时（上游无响应）"
+    except httpx.RequestError as e:
+        item.status = "failed"
+        item.error_message = f"网络异常: {e}"
+    except Exception as e:
+        item.status = "failed"
+        item.error_message = f"发布异常: {e}"
+
+    await db.commit()
+    await db.refresh(item)
+
+    return PublishDiaryRunItemResponse(
+        account_id=item.account_id,
+        nideriji_userid=item.nideriji_userid,
+        status=item.status or "unknown",
+        nideriji_diary_id=item.nideriji_diary_id,
+        error_message=item.error_message,
     )
 
 

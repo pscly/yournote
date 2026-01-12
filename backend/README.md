@@ -45,7 +45,8 @@ uv run python run.py
 
 ### 账号管理
 - `POST /api/accounts` - 添加新账号（Token 或 账号密码二选一）
-- `GET /api/accounts` - 获取账号列表
+- `GET /api/accounts` - 获取账号列表     
+- `GET /api/accounts/meta` - 获取账号元数据（轻量，适合高频轮询/展示）
 - `GET /api/accounts/{id}` - 获取账号详情
 - `DELETE /api/accounts/{id}` - 删除账号
 - `POST /api/accounts/{id}/validate` - 远程校验账号 Token 是否可用
@@ -55,6 +56,7 @@ uv run python run.py
 ### 数据同步
 - `POST /api/sync/trigger/{account_id}` - 触发同步
 - `GET /api/sync/logs` - 获取同步历史
+- `GET /api/sync/logs/latest` - 获取每个账号最新一条同步日志（轻量，适合轮询）
 
 补充说明：同步时主要使用 `https://nideriji.cn/api/v2/sync/` 获取日记列表；当发现日记内容少于 100 个字（通常是 paired 公开日记的“简略内容”）时，后端会自动再调用 `https://nideriji.cn/api/diary/all_by_ids/{userid}/` 取一次完整内容，并且不会用短内容覆盖数据库中已存在的完整内容。
 

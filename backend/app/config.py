@@ -66,6 +66,10 @@ class Settings(BaseSettings):
     # API
     api_prefix: str = "/api"
     debug: bool = True
+    # 是否输出 SQLAlchemy 的 SQL 日志（`INFO sqlalchemy.engine.Engine ...`）
+    # - 这是性能杀手之一：频繁输出会拖慢后端、并导致控制台刷屏
+    # - 建议默认关闭；需要排查 SQL/事务时再临时打开
+    sql_echo: bool = False
 
     # CORS
     # - 逗号分隔（例如：http://localhost:31011,http://127.0.0.1:31011）

@@ -23,6 +23,11 @@ from .utils.access_log import AccessLogTimer, log_http_request
 
 logger = logging.getLogger(__name__)
 
+# 默认降低 SQLAlchemy 的日志噪声：多数情况下是前端轮询导致的刷屏；排查 SQL 时再用 SQL_ECHO=true 打开
+if not settings.sql_echo:
+    logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+    logging.getLogger("sqlalchemy.pool").setLevel(logging.WARNING)
+
 app = FastAPI(
     title="YourNote API",
     description="Diary collection system with multi-account support",

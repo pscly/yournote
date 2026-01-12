@@ -13,7 +13,7 @@ _connect_args = {"timeout": 30} if _is_sqlite else {}
 # Create async engine (supports both SQLite and PostgreSQL)
 engine = create_async_engine(
     settings.database_url,
-    echo=settings.debug,
+    echo=settings.sql_echo,
     pool_pre_ping=True,
     future=True,
     connect_args=_connect_args,
@@ -82,3 +82,14 @@ async def _ensure_schema(conn) -> None:
             await conn.execute(text("ALTER TABLE accounts ADD COLUMN login_password TEXT"))
     elif dialect.startswith("postgresql"):
         await conn.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS login_password TEXT"))
+
+    # 索引：同步日志查询（按时间排序 / 按账号查最近一条）
+    # 说明：
+    # - 前端会轮询同步日志（同步指示器/刷新等待），没有索引时随着数据量增长会越来越慢
+    # - IF NOT EXISTS 同时兼容 SQLite / PostgreSQL
+    await conn.execute(
+        text("CREATE INDEX IF NOT EXISTS idx_sync_logs_sync_time_desc ON sync_logs (sync_time DESC)")
+    )
+    await conn.execute(
+        text("CREATE INDEX IF NOT EXISTS idx_sync_logs_account_time_desc ON sync_logs (account_id, sync_time DESC)")
+    )

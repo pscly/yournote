@@ -46,3 +46,16 @@ class AccountResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class AccountMetaResponse(BaseModel):
+    """账号元数据响应模型（用于轻量展示/轮询）。
+
+    设计目标：
+    - 给同步指示器等高频请求使用，避免返回 token_status/时间戳等大字段
+    - 降低后端序列化成本与网络传输体积
+    """
+
+    id: int
+    nideriji_userid: int
+    user_name: str | None = None

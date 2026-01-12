@@ -30,10 +30,25 @@ export default function SyncMonitor({ compact = false } = {}) {
   const lastSeenStatusRef = useRef(new Map()); // accountId -> status
   const accountMetaRef = useRef(new Map());
   const pollingRef = useRef(false);
+  const pollTimerRef = useRef(null);
+  const pollErrorStreakRef = useRef(0);
+  const unmountedRef = useRef(false);
+  const pollNowRef = useRef(null);
 
   const loadAccounts = async ({ silent = true } = {}) => {
     try {
-      const res = await accountAPI.list();
+      // 优先走轻量接口；老后端没有该接口时回退到完整列表
+      let res;
+      try {
+        res = await accountAPI.meta();
+      } catch (e) {
+        const status = e?.response?.status;
+        if (status === 404) {
+          res = await accountAPI.list();
+        } else {
+          throw e;
+        }
+      }
       const map = new Map();
       (res.data || []).forEach((a) => {
         map.set(a.id, {
@@ -51,10 +66,21 @@ export default function SyncMonitor({ compact = false } = {}) {
   };
 
   const pollLogs = async () => {
-    if (pollingRef.current) return;
+    if (pollingRef.current) return { ok: true, hasRunning: false, skipped: true };
     pollingRef.current = true;
     try {
-      const res = await syncAPI.logs({ limit: 50 });
+      // 优先走 “每个账号最新一条” 的轻量接口；老后端没有该接口时回退到历史接口
+      let res;
+      try {
+        res = await syncAPI.logsLatest({ limit: 50 });
+      } catch (e) {
+        const status = e?.response?.status;
+        if (status === 404) {
+          res = await syncAPI.logs({ limit: 50 });
+        } else {
+          throw e;
+        }
+      }
       const logs = res.data || [];
 
       // 取每个账号最新一条日志（按 sync_time desc 已排序，但这里做一次兜底）
@@ -67,6 +93,15 @@ export default function SyncMonitor({ compact = false } = {}) {
 
       const latest = Array.from(byAccount.values());
       setLatestLogs(latest);
+
+      // 如果日志里出现了未知账号，后台补拉一次账号元数据（不阻塞主流程）
+      try {
+        const meta = accountMetaRef.current;
+        const unknown = latest.some((l) => l?.account_id && !meta.has(l.account_id));
+        if (unknown) loadAccounts({ silent: true });
+      } catch {
+        // ignore
+      }
 
       if (!initializedRef.current) {
         latest.forEach((log) => {
@@ -135,28 +170,81 @@ export default function SyncMonitor({ compact = false } = {}) {
           }
         }
       });
+
+      return { ok: true, hasRunning: latest.some((l) => l?.status === 'running') };
     } catch {
       // 忽略网络波动
+      return { ok: false, hasRunning: false };
     } finally {
       pollingRef.current = false;
     }
   };
 
   useEffect(() => {
-    loadAccounts();
-    pollLogs();
+    unmountedRef.current = false;
 
-    const logTimer = setInterval(() => {
-      pollLogs();
-    }, 5000);
+    const clearPollTimer = () => {
+      if (pollTimerRef.current) {
+        clearTimeout(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+    };
 
-    const accountTimer = setInterval(() => {
+    const computeNextIntervalMs = ({ ok, hasRunning } = {}) => {
+      if (document.hidden) return null;
+
+      // 运行中：更快刷新；空闲：更慢刷新（降低对后端/数据库/磁盘日志的压力）
+      const baseMs = hasRunning ? 3000 : 20000;
+
+      // 连续失败：做指数退避，避免网络/后端异常时“打爆”
+      if (ok === false) {
+        pollErrorStreakRef.current = Math.min(pollErrorStreakRef.current + 1, 6);
+      } else {
+        pollErrorStreakRef.current = 0;
+      }
+      const factor = Math.pow(2, pollErrorStreakRef.current);
+      return Math.min(baseMs * factor, 60000);
+    };
+
+    const pollOnceAndScheduleNext = async () => {
+      if (unmountedRef.current) return;
+      if (document.hidden) return;
+
+      const result = await pollLogs();
+      const nextMs = computeNextIntervalMs(result);
+      if (typeof nextMs === 'number' && nextMs > 0) {
+        clearPollTimer();
+        pollTimerRef.current = setTimeout(() => {
+          pollOnceAndScheduleNext();
+        }, nextMs);
+      }
+    };
+
+    const pollNow = async () => {
+      clearPollTimer();
+      await pollOnceAndScheduleNext();
+    };
+
+    pollNowRef.current = pollNow;
+
+    const handleVisibility = () => {
+      if (document.hidden) {
+        clearPollTimer();
+        return;
+      }
       loadAccounts();
-    }, 30000);
+      pollNow();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    loadAccounts();
+    pollNow();
 
     return () => {
-      clearInterval(logTimer);
-      clearInterval(accountTimer);
+      unmountedRef.current = true;
+      clearPollTimer();
+      document.removeEventListener('visibilitychange', handleVisibility);
     };
   }, []);
 
@@ -169,7 +257,7 @@ export default function SyncMonitor({ compact = false } = {}) {
 
   const handleRefresh = async () => {
     await loadAccounts({ silent: false });
-    await pollLogs();
+    await (pollNowRef.current?.() || pollLogs());
   };
 
   const handleSyncAllNow = async () => {

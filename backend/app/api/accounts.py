@@ -10,7 +10,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
 from ..models import Account, User
-from ..schemas import AccountCreate, AccountResponse, TokenStatus, TokenValidateRequest
+from ..schemas import (
+    AccountCreate,
+    AccountMetaResponse,
+    AccountResponse,
+    TokenStatus,
+    TokenValidateRequest,
+)
 from ..services.collector import CollectorService
 from ..services.background import schedule_account_sync
 from ..utils.token import get_token_status
@@ -237,6 +243,36 @@ async def list_accounts(db: AsyncSession = Depends(get_db)):
     for a in accounts:
         user = user_map.get(a.nideriji_userid)
         responses.append(_build_account_response(a, user_name=(user.name if user else None)))
+    return responses
+
+
+@router.get("/meta", response_model=list[AccountMetaResponse])
+async def list_accounts_meta(db: AsyncSession = Depends(get_db)):
+    """获取账号元数据列表（只返回活跃账号）。
+
+    用途：
+    - 给前端同步指示器等高频轮询接口使用
+    - 避免返回 token_status/时间戳等大字段，减少序列化与传输成本
+    """
+    result = await db.execute(select(Account).where(Account.is_active.is_(True)))
+    accounts = result.scalars().all()
+
+    nideriji_userids = [a.nideriji_userid for a in accounts]
+    user_map: dict[int, User] = {}
+    if nideriji_userids:
+        users_result = await db.execute(select(User).where(User.nideriji_userid.in_(nideriji_userids)))
+        user_map = {u.nideriji_userid: u for u in users_result.scalars().all()}
+
+    responses: list[AccountMetaResponse] = []
+    for a in accounts:
+        user = user_map.get(a.nideriji_userid)
+        responses.append(
+            AccountMetaResponse(
+                id=a.id,
+                nideriji_userid=a.nideriji_userid,
+                user_name=(user.name if user else None),
+            )
+        )
     return responses
 
 

@@ -35,7 +35,8 @@ api.interceptors.response.use(
 
 // 账号管理
 export const accountAPI = {
-  list: () => api.get('/accounts'),      
+  list: () => api.get('/accounts'),
+  meta: () => api.get('/accounts/meta'),
   create: (data) => api.post('/accounts', data),
   get: (id) => api.get(`/accounts/${id}`),
   delete: (id) => api.delete(`/accounts/${id}`),
@@ -48,8 +49,9 @@ export const accountAPI = {
 export const syncAPI = {
   // 手动同步可能需要更长时间，单独放宽 timeout，避免被 axios 默认 10s 误判超时。
   trigger: (accountId, config = {}) =>
-    api.post(`/sync/trigger/${accountId}`, null, { timeout: 0, ...config }),
+    api.post(`/sync/trigger/${accountId}`, null, { timeout: 0, ...config }),   
   logs: (params) => api.get('/sync/logs', { params }),
+  logsLatest: (params) => api.get('/sync/logs/latest', { params }),
 };
 
 // 仪表盘统计

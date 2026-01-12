@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Card, Checkbox, Input, message, Modal, Space, Table, Tabs, Tag, Typography, Grid } from 'antd';
+import { Alert, Button, Card, Checkbox, Grid, Input, List, message, Modal, Space, Table, Tabs, Tag, Typography } from 'antd';
 import { ReloadOutlined, SaveOutlined, SendOutlined } from '@ant-design/icons';
 import { accountAPI, publishDiaryAPI } from '../services/api';
 import Page from '../components/Page';
@@ -378,6 +378,111 @@ export default function PublishDiary() {
     },
   ];
 
+  const runStatusTag = (status) => {
+    if (status === 'success') return <Tag color="green">成功</Tag>;
+    if (status === 'failed') return <Tag color="red">失败</Tag>;
+    return <Tag>未知</Tag>;
+  };
+
+  const runListNode = (
+    <List
+      dataSource={runs}
+      loading={runsLoading}
+      locale={{ emptyText: '暂无发布记录' }}
+      renderItem={(r) => (
+        <Card
+          hoverable
+          style={{ marginBottom: 12 }}
+          bodyStyle={{ padding: 14 }}
+          onClick={() => openRunDetail(r.id)}
+        >
+          <Space direction="vertical" size={8} style={{ width: '100%' }}>
+            <Space wrap size={8}>
+              <Tag color="blue">Run #{r?.id ?? '-'}</Tag>
+              <Tag color="purple">{r?.date || '-'}</Tag>
+              <Tag color="geekblue">{r?.target_account_ids?.length ?? 0} 个账号</Tag>
+              <Tag color="green">成功 {r?.success_count ?? 0}</Tag>
+              <Tag color="red">失败 {r?.failed_count ?? 0}</Tag>
+            </Space>
+            <Text type="secondary">时间：{formatBeijingDateTime(r?.created_at)}</Text>
+            <Space direction="vertical" size={8} style={{ width: '100%' }}>
+              <Button
+                size="small"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openRunDetail(r.id);
+                }}
+                block
+              >
+                查看
+              </Button>
+              <Button
+                size="small"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  loadRunContentIntoEditor(r.id);
+                }}
+                block
+              >
+                载入内容
+              </Button>
+            </Space>
+          </Space>
+        </Card>
+      )}
+    />
+  );
+
+  const runTableNode = (
+    <Table
+      rowKey="id"
+      size="small"
+      loading={runsLoading}
+      columns={runColumns}
+      dataSource={runs}
+      pagination={false}
+    />
+  );
+
+  const runDetailListNode = (
+    <List
+      dataSource={runDetail?.items || []}
+      locale={{ emptyText: '暂无发布明细' }}
+      renderItem={(r) => (
+        <Card style={{ marginBottom: 12 }} bodyStyle={{ padding: 14 }}>
+          <Space direction="vertical" size={8} style={{ width: '100%' }}>
+            <Space wrap size={8}>
+              <Tag color="blue">账号ID {r?.account_id ?? '-'}</Tag>
+              <Tag color="purple">用户ID {r?.nideriji_userid ?? '-'}</Tag>
+              {runStatusTag(r?.status)}
+              <Tag color="geekblue">日记ID {r?.nideriji_diary_id || '-'}</Tag>
+            </Space>
+            {r?.error_message ? (
+              <Text
+                type="danger"
+                style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere' }}
+              >
+                {r.error_message}
+              </Text>
+            ) : (
+              <Text type="secondary">无错误信息</Text>
+            )}
+          </Space>
+        </Card>
+      )}
+    />
+  );
+
+  const runDetailTableNode = (
+    <Table
+      rowKey={(r) => `${r.account_id}-${r.nideriji_userid}`}
+      size="small"
+      columns={runItemColumns}
+      dataSource={runDetail?.items || []}
+      pagination={false}
+    />
+  );
+
   return (
     <Page maxWidth={1200}>
       <Space direction="vertical" size={16} style={{ width: '100%' }}>     
@@ -405,22 +510,50 @@ export default function PublishDiary() {
               children: (
                 <Space direction="vertical" size={16} style={{ width: '100%' }}>
                   <Card size="small" title="选择日期">
-                    <Space wrap>
-                      <Input
-                        type="date"
-                        value={date}
-                        onChange={(e) => setDate(e.target.value)}
-                        style={{ width: 170 }}
-                      />
-                      <Button onClick={() => setDate(todayStr())}>今天</Button>
-                      <Button onClick={() => setDate(yesterdayStr())}>昨天</Button>
-                      <Button onClick={() => setDate((prev) => shiftDateStr(prev, -1))}>上一天</Button>
-                      <Button onClick={() => setDate((prev) => shiftDateStr(prev, 1))}>下一天</Button>
-                      <Button icon={<ReloadOutlined />} onClick={() => loadDraft(date)} loading={draftLoading}>重新加载草稿</Button>
-                      <Text type="secondary">
-                        {draftUpdatedAt ? `草稿更新时间：${formatBeijingDateTime(draftUpdatedAt)}` : '草稿尚未保存'}
-                      </Text>
-                    </Space>
+                    {isMobile ? (
+                      <Space direction="vertical" size={10} style={{ width: '100%' }}>
+                        <Input
+                          type="date"
+                          value={date}
+                          onChange={(e) => setDate(e.target.value)}
+                          style={{ width: '100%' }}
+                        />
+                        <Space wrap>
+                          <Button onClick={() => setDate(todayStr())}>今天</Button>
+                          <Button onClick={() => setDate(yesterdayStr())}>昨天</Button>
+                          <Button onClick={() => setDate((prev) => shiftDateStr(prev, -1))}>上一天</Button>
+                          <Button onClick={() => setDate((prev) => shiftDateStr(prev, 1))}>下一天</Button>
+                        </Space>
+                        <Button
+                          icon={<ReloadOutlined />}
+                          onClick={() => loadDraft(date)}
+                          loading={draftLoading}
+                          block
+                        >
+                          重新加载草稿
+                        </Button>
+                        <Text type="secondary">
+                          {draftUpdatedAt ? `草稿更新时间：${formatBeijingDateTime(draftUpdatedAt)}` : '草稿尚未保存'}
+                        </Text>
+                      </Space>
+                    ) : (
+                      <Space wrap>
+                        <Input
+                          type="date"
+                          value={date}
+                          onChange={(e) => setDate(e.target.value)}
+                          style={{ width: 170 }}
+                        />
+                        <Button onClick={() => setDate(todayStr())}>今天</Button>
+                        <Button onClick={() => setDate(yesterdayStr())}>昨天</Button>
+                        <Button onClick={() => setDate((prev) => shiftDateStr(prev, -1))}>上一天</Button>
+                        <Button onClick={() => setDate((prev) => shiftDateStr(prev, 1))}>下一天</Button>
+                        <Button icon={<ReloadOutlined />} onClick={() => loadDraft(date)} loading={draftLoading}>重新加载草稿</Button>
+                        <Text type="secondary">
+                          {draftUpdatedAt ? `草稿更新时间：${formatBeijingDateTime(draftUpdatedAt)}` : '草稿尚未保存'}
+                        </Text>
+                      </Space>
+                    )}
                   </Card>
 
                   <Card size="small" title="日记内容（发布/更新）">
@@ -431,12 +564,17 @@ export default function PublishDiary() {
                         placeholder={'例如：\n[15:53]\n今天发生了什么…'}
                         autoSize={{ minRows: 10, maxRows: 24 }}
                       />
-                      <Space wrap>
+                      <Space
+                        wrap
+                        direction={isMobile ? 'vertical' : 'horizontal'}
+                        style={{ width: isMobile ? '100%' : undefined }}
+                      >
                         <Button
                           icon={<SaveOutlined />}
                           onClick={saveDraft}
                           loading={savingDraft}
                           disabled={draftLoading || publishing}
+                          block={isMobile}
                         >
                           保存草稿
                         </Button>
@@ -446,10 +584,11 @@ export default function PublishDiary() {
                           onClick={publish}
                           loading={publishing}
                           disabled={draftLoading || savingDraft}
+                          block={isMobile}
                         >
                           发布到所选账号
                         </Button>
-                        <Button onClick={() => loadRuns(date)} loading={runsLoading}>刷新历史</Button>
+                        <Button onClick={() => loadRuns(date)} loading={runsLoading} block={isMobile}>刷新历史</Button>
                       </Space>
                     </Space>
                   </Card>
@@ -501,15 +640,7 @@ export default function PublishDiary() {
                   </Card>
 
                   <Card size="small" title="当天发布历史（快速查看）">
-                    <Table
-                      rowKey="id"
-                      size="small"
-                      loading={runsLoading}
-                      columns={runColumns}
-                      dataSource={runs}
-                      pagination={false}
-                      scroll={isMobile ? { x: 900 } : undefined}
-                    />
+                    {isMobile ? runListNode : runTableNode}
                   </Card>
                 </Space>
               ),
@@ -520,14 +651,23 @@ export default function PublishDiary() {
               children: (
                 <Space direction="vertical" size={16} style={{ width: '100%' }}>
                   <Card size="small" title="按日期筛选">
-                    <Space wrap>
+                    <Space
+                      wrap
+                      direction={isMobile ? 'vertical' : 'horizontal'}
+                      style={{ width: isMobile ? '100%' : undefined }}
+                    >
                       <Input
                         type="date"
                         value={date}
                         onChange={(e) => setDate(e.target.value)}
-                        style={{ width: 170 }}
+                        style={{ width: isMobile ? '100%' : 170 }}
                       />
-                      <Button onClick={() => loadRuns(date)} icon={<ReloadOutlined />} loading={runsLoading}>
+                      <Button
+                        onClick={() => loadRuns(date)}
+                        icon={<ReloadOutlined />}
+                        loading={runsLoading}
+                        block={isMobile}
+                      >
                         刷新
                       </Button>
                       <Text type="secondary">提示：点击“载入内容”可把历史发布内容带回编辑器继续更新。</Text>
@@ -535,14 +675,7 @@ export default function PublishDiary() {
                   </Card>
 
                   <Card size="small" title="发布记录">
-                    <Table
-                      rowKey="id"
-                      loading={runsLoading}
-                      columns={runColumns}
-                      dataSource={runs}
-                      pagination={false}
-                      scroll={isMobile ? { x: 900 } : undefined}
-                    />
+                    {isMobile ? runListNode : runTableNode}
                   </Card>
                 </Space>
               ),
@@ -563,7 +696,7 @@ export default function PublishDiary() {
             </Button>
           ) : null,
         ].filter(Boolean)}
-        width={isMobile ? 360 : 900}
+        width={isMobile ? 'calc(100vw - 24px)' : 900}
       >
         {runDetailLoading && <Text type="secondary">加载中...</Text>}
         {!runDetailLoading && !runDetail && <Text type="secondary">暂无数据</Text>}
@@ -575,14 +708,7 @@ export default function PublishDiary() {
               message={`日期：${runDetail.date}；目标账号：${runDetail?.target_account_ids?.length ?? 0} 个`}
               description="发布接口是“发布或更新”，同一天再次发布会更新该日记。"
             />
-            <Table
-              rowKey={(r) => `${r.account_id}-${r.nideriji_userid}`}
-              size="small"
-              columns={runItemColumns}
-              dataSource={runDetail.items || []}
-              pagination={false}
-              scroll={isMobile ? { x: 700 } : undefined}
-            />
+            {isMobile ? runDetailListNode : runDetailTableNode}
           </Space>
         )}
       </Modal>

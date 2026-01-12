@@ -158,14 +158,14 @@ export default function UserDetail() {
         </Title>
 
         <Card title="用户信息">
-          <Descriptions column={2} bordered size="middle">
+          <Descriptions column={isMobile ? 1 : 2} bordered size={isMobile ? 'small' : 'middle'}>
             <Descriptions.Item label="用户名">{user.name || '未命名'}</Descriptions.Item>
             <Descriptions.Item label="用户ID">{user.nideriji_userid}</Descriptions.Item>
             <Descriptions.Item label="角色">{user.role || '-'}</Descriptions.Item>
             <Descriptions.Item label="日记数">{user.diary_count ?? 0}</Descriptions.Item>
             <Descriptions.Item label="字数">{user.word_count ?? 0}</Descriptions.Item>
             <Descriptions.Item label="最后登录">{formatDateTime(user.last_login_time)}</Descriptions.Item>
-            <Descriptions.Item label="个性签名" span={2}>
+            <Descriptions.Item label="个性签名" span={isMobile ? 1 : 2}>
               {user.description || '无'}
             </Descriptions.Item>
           </Descriptions>
@@ -173,7 +173,7 @@ export default function UserDetail() {
 
         {pairedRecord?.mainUser?.id && (
           <Card title="被配对记录">
-            <Descriptions column={2} bordered size="middle">
+            <Descriptions column={isMobile ? 1 : 2} bordered size={isMobile ? 'small' : 'middle'}>
               <Descriptions.Item label="主账号">
                 <Tag color="geekblue">
                   {pairedRecord.mainUser?.name || '未命名'}

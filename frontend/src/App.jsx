@@ -252,11 +252,13 @@ function AppShell({ themeMode, setThemeMode }) {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
+              gap: 12,
+              overflow: 'hidden',
               background: token.colorBgContainer,
               borderBottom: `1px solid ${token.colorBorderSecondary}`,
             }}
           >
-            <Space align="center" size={10}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
               {isMobile && (
                 <Button
                   type="text"
@@ -265,21 +267,32 @@ function AppShell({ themeMode, setThemeMode }) {
                   aria-label="打开菜单"
                 />
               )}
-              <Typography.Title level={4} style={{ margin: 0 }}>
+              <Typography.Title
+                level={4}
+                style={{
+                  margin: 0,
+                  minWidth: 0,
+                  fontSize: isMobile ? 16 : undefined,
+                  lineHeight: 1.1,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
                 {titleText}
               </Typography.Title>
               {!isMobile && <BeijingClock />}
-            </Space>
+            </div>
 
-            <Space align="center" size={12} wrap>
-              {isMobile && <BeijingClock />}
+            <Space align="center" size={isMobile ? 8 : 12}>
               <Switch
                 checked={themeMode === 'dark'}
                 onChange={handleThemeChange}
                 checkedChildren={<MoonOutlined />}
                 unCheckedChildren={<SunOutlined />}
+                size={isMobile ? 'small' : 'default'}
               />
-              <SyncMonitor />
+              <SyncMonitor compact={isMobile} />
               <Button
                 type="text"
                 icon={<LogoutOutlined />}
@@ -297,7 +310,7 @@ function AppShell({ themeMode, setThemeMode }) {
             open={drawerOpen}
             onClose={() => setDrawerOpen(false)}
             width={280}
-            bodyStyle={{ padding: 8 }}
+            styles={{ body: { padding: 8 } }}
           >
             {menuNode}
           </Drawer>

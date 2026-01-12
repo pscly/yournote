@@ -20,7 +20,7 @@ function getStatusTag(status) {
   return <Tag>{status || '未知'}</Tag>;
 }
 
-export default function SyncMonitor() {
+export default function SyncMonitor({ compact = false } = {}) {
   const [latestLogs, setLatestLogs] = useState([]);
   const [accountMeta, setAccountMeta] = useState(new Map());
   const [triggeringAll, setTriggeringAll] = useState(false);
@@ -253,8 +253,12 @@ export default function SyncMonitor() {
     }
   };
 
+  const popoverWidth = compact
+    ? 'min(360px, calc(100vw - 24px))'
+    : 360;
+
   const popoverContent = (
-    <div style={{ width: 360 }}>
+    <div style={{ width: popoverWidth }}>
       <Space style={{ width: '100%', justifyContent: 'space-between' }}>
         <Text strong>同步状态</Text>
         <Space size={6} wrap>
@@ -351,8 +355,9 @@ export default function SyncMonitor() {
         <Button
           type="text"
           icon={runningCount > 0 ? <SyncOutlined spin /> : <SyncOutlined />}
+          aria-label="同步"
         >
-          同步
+          {!compact && '同步'}
         </Button>
       </Badge>
     </Popover>

@@ -760,7 +760,7 @@ export default function DiaryDetail() {
           placement="left"
           onClose={() => setDrawerVisible(false)}
           open={drawerVisible}
-          width={300}
+          width={280}
         >
           <DiaryListContent />
         </Drawer>
@@ -774,7 +774,7 @@ export default function DiaryDetail() {
         okText={exporting ? '导出中…' : '导出'}
         cancelText="取消"
         confirmLoading={exporting}
-        width={isMobile ? 360 : 760}
+        width={isMobile ? 'calc(100vw - 24px)' : 760}
       >
         <Space direction="vertical" size="middle" style={{ width: '100%' }}>
           <div>

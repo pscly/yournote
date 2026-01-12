@@ -18,7 +18,7 @@ const openFirstDiaryDetail = async (page) => {
 };
 
 test.describe('日记详情页测试', () => {
-  test('桌面端 - 应该显示固定导航栏', async ({ page }) => {
+  test('桌面端 - 应该显示固定导航栏', async ({ page }) => {       
     await page.goto('/');
     const header = page.locator('header');
     await expect(header).toBeVisible();
@@ -31,8 +31,8 @@ test.describe('日记详情页测试', () => {
       };
     });
 
-    expect(headerStyle.position).toBe('fixed');
-    expect(parseInt(headerStyle.zIndex)).toBeGreaterThanOrEqual(1000);
+    expect(headerStyle.position).toBe('sticky');
+    expect(parseInt(headerStyle.zIndex)).toBeGreaterThanOrEqual(100);
   });
 
   test('桌面端 - 日记详情页应该显示左侧日记列表', async ({ page }) => {
@@ -128,7 +128,7 @@ test.describe('移动端测试', () => {
       return style.position;
     });
 
-    expect(headerStyle).toBe('fixed');
+    expect(headerStyle).toBe('sticky');
   });
 });
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Form, Input, message, Modal, Radio, Table, Tag, Tooltip, Typography } from 'antd';
+import { Alert, Button, Card, Form, Grid, Input, List, Space, message, Modal, Radio, Table, Tag, Tooltip, Typography } from 'antd';
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import { accountAPI } from '../services/api';
 import { waitForLatestSyncLog } from '../utils/sync';
@@ -13,11 +13,14 @@ function formatDateTime(value) {
 }
 
 export default function AccountManage() {
+  const screens = Grid.useBreakpoint();
+  const isMobile = !screens.md;
+
   const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [addMode, setAddMode] = useState('password'); // 'password' | 'token'
-  const [tokenModalVisible, setTokenModalVisible] = useState(false);
+  const [tokenModalVisible, setTokenModalVisible] = useState(false);      
   const [tokenAccount, setTokenAccount] = useState(null);
   const [checkingIds, setCheckingIds] = useState(() => new Set());
   const [form] = Form.useForm();
@@ -269,6 +272,38 @@ export default function AccountManage() {
     },
   ];
 
+  const renderTokenStatus = (record) => {
+    if (checkingIds.has(record?.id)) {
+      return <Tag color="blue">校验中</Tag>;
+    }
+
+    const status = record?.token_status;
+    if (!status) return <Tag>未知</Tag>;
+
+    if (!status.checked_at && !status.expired) {
+      return (
+        <Tooltip title={status.reason || '未进行服务端校验'}>
+          <Tag color="blue">未校验</Tag>
+        </Tooltip>
+      );
+    }
+
+    const expiresText = status.expires_at ? `到期时间：${formatDateTime(status.expires_at)}` : '到期时间未知';
+    if (status.is_valid) {
+      return (
+        <Tooltip title={expiresText}>
+          <Tag color="green">有效</Tag>
+        </Tooltip>
+      );
+    }
+
+    return (
+      <Tooltip title={status.reason || expiresText}>
+        <Tag color="gold">已失效</Tag>
+      </Tooltip>
+    );
+  };
+
   return (
     <Page>
       <Title level={3} style={{ marginTop: 0 }}>
@@ -284,7 +319,12 @@ export default function AccountManage() {
         />
       )}
 
-      <div style={{ marginBottom: '16px', display: 'flex', gap: '8px' }}>
+      <div style={{
+        marginBottom: 16,
+        display: 'flex',
+        gap: 8,
+        flexWrap: 'wrap',
+      }}>
         <Button type="primary" icon={<PlusOutlined />} onClick={handleOpenAdd}>
           添加账号
         </Button>
@@ -296,13 +336,51 @@ export default function AccountManage() {
         </Button>
       </div>
 
-      <Table columns={columns} dataSource={accounts} rowKey="id" loading={loading} />
+      {isMobile ? (
+        <List
+          dataSource={accounts}
+          loading={loading}
+          locale={{ emptyText: '暂无账号' }}
+          renderItem={(record) => (
+            <Card
+              key={record?.id}
+              style={{ marginBottom: 12 }}
+              styles={{ body: { padding: 14 } }}
+            >
+              <Space orientation="vertical" size={10} style={{ width: '100%' }}>
+                <Space wrap size={8}>
+                  <Tag color="blue">{record?.nideriji_userid ?? '-'}</Tag>
+                  <Tag>{record?.user_name || '未命名'}</Tag>
+                  {renderTokenStatus(record)}
+                  {record?.is_active ? <Tag color="green">活跃</Tag> : <Tag>停用</Tag>}
+                </Space>
+
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  {record?.email || '-'}
+                </Typography.Text>
+
+                <Space size={8} style={{ width: '100%' }}>
+                  <Button style={{ flex: 1 }} onClick={() => openUpdateToken(record)}>
+                    更新Token
+                  </Button>
+                  <Button danger style={{ flex: 1 }} icon={<DeleteOutlined />} onClick={() => handleDelete(record.id)}>
+                    删除
+                  </Button>
+                </Space>
+              </Space>
+            </Card>
+          )}
+        />
+      ) : (
+        <Table columns={columns} dataSource={accounts} rowKey="id" loading={loading} scroll={{ x: 1000 }} />
+      )}
 
       <Modal
         title="添加账号"
         open={modalVisible}
         onCancel={() => setModalVisible(false)}
         onOk={() => form.submit()}
+        width={isMobile ? 'min(520px, calc(100vw - 24px))' : 520}
       >
         <Form form={form} onFinish={handleAdd} layout="vertical">
           <Alert
@@ -364,6 +442,7 @@ export default function AccountManage() {
           setTokenAccount(null);
         }}
         onOk={() => tokenForm.submit()}
+        width={isMobile ? 'min(520px, calc(100vw - 24px))' : 520}
       >
         <Alert
           style={{ marginBottom: 12 }}

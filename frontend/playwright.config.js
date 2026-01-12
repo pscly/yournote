@@ -16,6 +16,13 @@ const env = loadEnv('development', repoRoot, '')
 const frontendPort = toInt(env.FRONTEND_PORT, 31011)
 const baseURL = `http://localhost:${frontendPort}`
 
+// 可选：把门禁密码透传给测试用例（不写入代码/日志，测试里仅用于自动填写登录表单）
+// 注意：这里优先使用 ACCESS_PASSWORD_PLAINTEXT，避免与系统环境变量 PWD 冲突。
+if (!process.env.ACCESS_PASSWORD_PLAINTEXT) {
+  const pwd = String(env.ACCESS_PASSWORD_PLAINTEXT ?? '').trim()
+  if (pwd) process.env.ACCESS_PASSWORD_PLAINTEXT = pwd
+}
+
 export default defineConfig({
   testDir: './tests',
   use: {

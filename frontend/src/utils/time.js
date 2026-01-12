@@ -44,11 +44,25 @@ export function normalizeEpochMs(value) {
   return n;
 }
 
-export function formatBeijingDateTimeFromTs(ts) {
+export function formatBeijingDateTimeFromTs(ts, { showSeconds = false } = {}) {
   const ms = normalizeEpochMs(ts);
   if (!ms) return '-';
 
   const d = new Date(ms);
   if (Number.isNaN(d.getTime())) return '-';
-  return d.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+
+  // 默认不展示秒（UI 更清爽）；需要秒时可传 { showSeconds: true }
+  const options = {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  };
+
+  if (showSeconds) options.second = '2-digit';
+
+  return d.toLocaleString('zh-CN', options);
 }

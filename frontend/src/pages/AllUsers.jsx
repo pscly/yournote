@@ -189,9 +189,14 @@ export default function AllUsers() {
 
   if (loading) {
     return (
-      <div style={{ textAlign: 'center', padding: '50px' }}>
-        <Spin size="large" />
-      </div>
+      <Page>
+        <Title level={3} style={{ marginTop: 0 }}>
+          所有用户
+        </Title>
+        <div style={{ textAlign: 'center', padding: '50px' }}>
+          <Spin size="large" />
+        </div>
+      </Page>
     );
   }
 

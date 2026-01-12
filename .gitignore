@@ -56,3 +56,5 @@ credentials.json
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
+
+账号.txt

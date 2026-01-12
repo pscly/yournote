@@ -1,7 +1,26 @@
 import { test, expect } from '@playwright/test';
 
+const ensureAccess = async (page) => {
+  const accessHeading = page.getByRole('heading', { name: '请输入访问密码', level: 3 });
+
+  const shouldHandle = page.url().includes('/access');
+  if (!shouldHandle) {
+    try {
+      await expect(accessHeading).toBeVisible({ timeout: 1200 });
+    } catch {
+      return;
+    }
+  }
+
+  const password = process.env.ACCESS_PASSWORD_PLAINTEXT || '131';
+  await page.getByPlaceholder('请输入访问密码').fill(password);
+  await page.getByRole('button', { name: /进\s*入/ }).click();
+  await expect(accessHeading).toBeHidden({ timeout: 15000 });
+};
+
 const openFirstDiaryDetail = async (page) => {
   await page.goto('/diaries');
+  await ensureAccess(page);
   await page.waitForTimeout(1000);
 
   const firstRow = page.locator('.ant-table-tbody tr').first();
@@ -20,6 +39,7 @@ const openFirstDiaryDetail = async (page) => {
 test.describe('日记详情页测试', () => {
   test('桌面端 - 应该显示固定导航栏', async ({ page }) => {       
     await page.goto('/');
+    await ensureAccess(page);
     const header = page.locator('header');
     await expect(header).toBeVisible();
 
@@ -120,6 +140,7 @@ test.describe('移动端测试', () => {
   test('移动端 - 导航栏应该固定在顶部', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/');
+    await ensureAccess(page);
     const header = page.locator('header');
     await expect(header).toBeVisible();
 

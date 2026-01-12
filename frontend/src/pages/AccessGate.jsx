@@ -58,7 +58,7 @@ export default function AccessGate() {
               请输入访问密码
             </Title>
             <Text type="secondary">
-              这是站点级门禁，通过后 90 天内无需重复输入。
+              这是门禁
             </Text>
           </div>
 

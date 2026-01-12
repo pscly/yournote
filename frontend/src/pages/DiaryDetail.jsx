@@ -609,7 +609,7 @@ export default function DiaryDetail() {
                 </div>
                 <div style={{ fontSize: '12px', color: token.colorTextSecondary, marginTop: 4 }}>
                   <ClockCircleOutlined style={{ marginRight: 4 }} />
-                  更新 {modifiedText} · {wordCount} 字
+                  最后修改 {modifiedText} · {wordCount} 字
                 </div>
               </Card>
             );

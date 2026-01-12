@@ -192,17 +192,22 @@ function AppShell({ themeMode, setThemeMode }) {
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      {!isAccessPage && !isMobile && (
-        <Sider
-          collapsible
-          collapsed={siderCollapsed}
-          onCollapse={setSiderCollapsed}
-          width={240}
-          style={{
-            background: token.colorBgContainer,
-            borderRight: `1px solid ${token.colorBorderSecondary}`,
-          }}
-        >
+        {!isAccessPage && !isMobile && (
+          <Sider
+            collapsible
+            collapsed={siderCollapsed}
+            onCollapse={setSiderCollapsed}
+            width={240}
+            style={{
+              background: token.colorBgContainer,
+              borderRight: `1px solid ${token.colorBorderSecondary}`,
+              // PC 端：左侧导航栏固定在视窗内，避免页面滚动时一起“跑掉”
+              position: 'sticky',
+              top: 0,
+              height: '100vh',
+              overflowY: 'auto',
+            }}
+          >
           <div
             style={{
               height: 64,

@@ -79,6 +79,9 @@ class Settings(BaseSettings):
     # - 默认：如果 .env 配置了 PWD，则自动启用（更贴合本地工具使用习惯）
     # - 也可显式用 ACCESS_ENABLED=true/false 控制
     access_enabled: bool | None = None
+    # 兼容更直觉的开关名：ISPWD=true/false（是否需要访问密码）
+    # - 当 ACCESS_ENABLED 未设置时，ISPWD 将作为开关生效
+    ispwd: bool | None = None
 
     # 访问密码（二选一）：
     # 1) 推荐：ACCESS_PASSWORD_HASH=pbkdf2_sha256$...
@@ -160,7 +163,14 @@ class Settings(BaseSettings):
         configured_hash = (self.access_password_hash or "").strip() or None
 
         if self.access_enabled is None:
-            self.access_enabled = bool(configured_hash or plain)
+            # 开关优先级：
+            # 1) ACCESS_ENABLED（显式）
+            # 2) ISPWD（兼容：是否需要访问密码）
+            # 3) 自动判断：配置了密码即启用
+            if self.ispwd is not None:
+                self.access_enabled = bool(self.ispwd)
+            else:
+                self.access_enabled = bool(configured_hash or plain)
 
         if not self.access_enabled:
             return self

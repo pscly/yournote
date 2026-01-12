@@ -567,7 +567,7 @@ export default function DiaryDetail() {
             <div style={{ fontSize: '12px', color: token.colorTextSecondary }}>
               <div>
                 <span style={{ display: 'inline-block', width: 12, height: 12, background: token.colorPrimary, marginRight: 6, borderRadius: 2 }}></span>
-                主用户{pairUsers.main?.name ? `：${pairUsers.main.name}` : ''}  
+                主用户{pairUsers.main?.name ? `：${pairUsers.main.name}` : ''}
               </div>
               <div>
                 <span style={{ display: 'inline-block', width: 12, height: 12, background: token.magenta6, marginRight: 6, borderRadius: 2 }}></span>
@@ -581,30 +581,39 @@ export default function DiaryDetail() {
       <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
         <List
           dataSource={diaryList}
-          renderItem={item => (
-            <Card
-              hoverable
-              onClick={() => {
-                navigate(`/diary/${item.id}`);
-                if (isMobile) setDrawerVisible(false);
-              }}
-              style={{
-                marginBottom: 12,
-                borderLeft: `4px solid ${getBorderColor(item)}`,
-                background: item.id === parseInt(id) ? getActiveBgColor(item) : token.colorBgContainer,
-                cursor: 'pointer'
-              }}
-              bodyStyle={{ padding: '12px 16px' }}
-            >
-              <div style={{ fontWeight: 500, marginBottom: 4, fontSize: '14px' }}>
-                {item.title || '无标题'}
-              </div>
-              <div style={{ fontSize: '12px', color: token.colorTextSecondary }}>
-                <CalendarOutlined style={{ marginRight: 4 }} />
-                {item.created_date}
-              </div>
-            </Card>
-          )}
+          renderItem={(item) => {
+            const modifiedText = formatBeijingDateTimeFromTs(item?.ts);
+            const wordCount = getDiaryWordStats(item)?.content?.no_whitespace ?? 0;
+
+            return (
+              <Card
+                hoverable
+                onClick={() => {
+                  navigate(`/diary/${item.id}`);
+                  if (isMobile) setDrawerVisible(false);
+                }}
+                style={{
+                  marginBottom: 12,
+                  borderLeft: `4px solid ${getBorderColor(item)}`,
+                  background: item.id === parseInt(id) ? getActiveBgColor(item) : token.colorBgContainer,
+                  cursor: 'pointer',
+                }}
+                bodyStyle={{ padding: '12px 16px' }}
+              >
+                <div style={{ fontWeight: 500, marginBottom: 4, fontSize: '14px' }}>
+                  {item.title || '无标题'}
+                </div>
+                <div style={{ fontSize: '12px', color: token.colorTextSecondary }}>
+                  <CalendarOutlined style={{ marginRight: 4 }} />
+                  {item.created_date}
+                </div>
+                <div style={{ fontSize: '12px', color: token.colorTextSecondary, marginTop: 4 }}>
+                  <ClockCircleOutlined style={{ marginRight: 4 }} />
+                  更新 {modifiedText} · {wordCount} 字
+                </div>
+              </Card>
+            );
+          }}
         />
       </div>
     </div>

@@ -3,18 +3,9 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { Button, Card, Form, Input, Space, Typography, message } from 'antd';
 import { LockOutlined } from '@ant-design/icons';
 import { accessAPI } from '../services/api';
+import { sha256Hex } from '../utils/sha256';
 
 const { Title, Text } = Typography;
-
-async function sha256Hex(text) {
-  if (!globalThis.crypto?.subtle) {
-    throw new Error('当前环境不支持 Web Crypto（crypto.subtle）');
-  }
-  const data = new TextEncoder().encode(text);
-  const digest = await globalThis.crypto.subtle.digest('SHA-256', data);
-  const bytes = new Uint8Array(digest);
-  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
-}
 
 export default function AccessGate() {
   const [form] = Form.useForm();
@@ -103,4 +94,3 @@ export default function AccessGate() {
     </div>
   );
 }
-

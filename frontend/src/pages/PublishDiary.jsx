@@ -309,147 +309,170 @@ export default function PublishDiary() {
       return;
     }
 
-    const accountCount = selectedAccountIds.length;
-    Modal.confirm({
-      title: '确认发布',
-      content: `将把 ${date} 的日记发布/更新到 ${accountCount} 个账号。是否继续？`,
-      okText: '发布',
-      cancelText: '取消',
-      onOk: async () => {
-        setPublishing(true);
-        try {
-          // 1) 先创建 run（仅落库，不执行发布），确保后续逐账号请求都能归并到同一次 run
-          const runRes = await publishDiaryAPI.createRun({
-            date,
-            content,
-            account_ids: selectedAccountIds,
-            save_draft: true,
-          });
-          const run = runRes?.data;
-          if (!run?.id) {
-            throw new Error('后端未返回 run_id，无法继续发布');
-          }
+    if (publishing) {
+      message.warning('正在发布中，请稍候…');
+      return;
+    }
 
-          const targetAccountIds =
-            Array.isArray(run?.target_account_ids) && run.target_account_ids.length > 0
-              ? run.target_account_ids
-              : selectedAccountIds;
-
-          // 2) 打开结果弹窗：优先展示 run，再逐个更新每个账号的状态
-          setRunModalOpen(true);
-          setRunDetail(run || null);
-          setDraftUpdatedAt(null);
-          writeLocalLastSelection(targetAccountIds);
-
-          // 兜底：若后端未返回 items，则用本地 accounts 生成一份“待发布”占位列表
-          setRunDetail((prev) => {
-            const base = prev || run;
-            const existingItems = Array.isArray(base?.items) ? base.items : [];
-            if (existingItems.length > 0) return base;
-
-            const byId = new Map((accounts || []).map((acc) => [acc.id, acc]));
-            const placeholders = targetAccountIds.map((accountId) => {
-              const acc = byId.get(accountId);
-              return {
-                account_id: accountId,
-                nideriji_userid: acc?.nideriji_userid ?? 0,
-                status: 'unknown',
-                nideriji_diary_id: null,
-                error_message: null,
-              };
-            });
-            return { ...base, items: placeholders };
-          });
-
-          const upsertItem = (patch) => {
-            if (!patch || !patch.account_id) return;
-            setRunDetail((prev) => {
-              if (!prev) return prev;
-              const prevItems = Array.isArray(prev.items) ? prev.items : [];
-              const nextItems = [...prevItems];
-              const index = nextItems.findIndex((i) => i.account_id === patch.account_id);
-              if (index >= 0) {
-                nextItems[index] = { ...nextItems[index], ...patch };
-              } else {
-                nextItems.push(patch);
-              }
-              return { ...prev, items: nextItems };
-            });
-          };
-
-          // 3) 并行逐账号发布（带并发上限，避免一次性请求太多导致不稳定）
-          const concurrency = Math.min(DEFAULT_PUBLISH_CONCURRENCY, targetAccountIds.length || 1);
-          const results = await runInPool(targetAccountIds, concurrency, async (accountId) => {
-            upsertItem({ account_id: accountId, status: 'running', error_message: null });
-            const itemRes = await publishDiaryAPI.publishOne(run.id, { account_id: accountId });
-            const item = itemRes?.data;
-            if (item?.account_id) {
-              upsertItem(item);
-              return item;
-            }
-            const fallback = { account_id: accountId, status: 'failed', error_message: '后端返回为空' };
-            upsertItem(fallback);
-            return fallback;
-          });
-
-          // 4) 处理“请求级失败”（例如网络中断/被浏览器取消）
-          results.forEach((r, index) => {
-            if (!r || r.status !== 'rejected') return;
-            const accountId = targetAccountIds[index];
-            const detail =
-              r.reason?.response?.data?.detail || r.reason?.message || String(r.reason || '请求失败');
-            upsertItem({ account_id: accountId, status: 'failed', error_message: `请求失败: ${detail}` });
-          });
-
-          // 5) 兜底：再拉一次 run，确保结果与后端落库一致（同时尽量保留本地“请求失败”信息）
-          try {
-            const finalRes = await publishDiaryAPI.getRun(run.id);
-            const finalRun = finalRes?.data;
-            if (finalRun?.id) {
-              setRunDetail((prev) => {
-                if (!prev) return finalRun;
-
-                const prevByAccountId = new Map(
-                  (Array.isArray(prev.items) ? prev.items : []).map((i) => [i.account_id, i]),
-                );
-                const serverItems = Array.isArray(finalRun.items) ? finalRun.items : [];
-                const mergedItems = serverItems.map((serverItem) => {
-                  const localItem = prevByAccountId.get(serverItem.account_id);
-                  if (!localItem) return serverItem;
-                  // 仅当服务端还没给出结果时，保留本地“请求失败”提示
-                  if (
-                    (serverItem.status === 'unknown' || serverItem.status === 'running') &&
-                    localItem.status === 'failed' &&
-                    localItem.error_message
-                  ) {
-                    return { ...serverItem, status: 'failed', error_message: localItem.error_message };
-                  }
-                  return serverItem;
-                });
-                return { ...finalRun, items: mergedItems };
-              });
-            }
-          } catch {
-            // 拉取最终结果失败不影响已展示的逐账号状态
-          }
-
-          // 6) 刷新历史列表 + 结果提示
-          loadRuns(date);
-          const okCount = results.filter((r) => r?.status === 'fulfilled' && r?.value?.status === 'success').length;
-          const failedCount = targetAccountIds.length - okCount;
-          if (failedCount > 0) {
-            message.warning(`发布完成：成功 ${okCount}，失败 ${failedCount}（可在“发布结果”里查看明细）`);
-          } else {
-            message.success(`发布完成：成功 ${okCount}`);
-          }
-        } catch (error) {
-          const detail = error?.response?.data?.detail;
-          message.error('发布失败: ' + (detail || error?.message || String(error)));
-        } finally {
-          setPublishing(false);
-        }
-      },
+    setPublishing(true);
+    const msgKey = `publish-${Date.now()}`;
+    message.open({
+      key: msgKey,
+      type: 'loading',
+      content: '已开始后台发布…你可以继续操作（可在“发布历史”查看进度）',
+      duration: 0,
     });
+
+    try {
+      // 1) 先创建 run（仅落库，不执行发布），确保后续逐账号请求都能归并到同一次 run
+      const runRes = await publishDiaryAPI.createRun({
+        date,
+        content,
+        account_ids: selectedAccountIds,
+        save_draft: true,
+      });
+      const run = runRes?.data;
+      if (!run?.id) {
+        throw new Error('后端未返回 run_id，无法继续发布');
+      }
+
+      const targetAccountIds =
+        Array.isArray(run?.target_account_ids) && run.target_account_ids.length > 0
+          ? run.target_account_ids
+          : selectedAccountIds;
+
+      // 2) 记录本次 run（不再自动弹窗阻塞 UI；需要查看时从“发布历史”点“查看”）
+      setRunDetail(run || null);
+      setDraftUpdatedAt(null);
+      writeLocalLastSelection(targetAccountIds);
+      loadRuns(date);
+
+      message.open({
+        key: msgKey,
+        type: 'loading',
+        content: `后台发布中（Run #${run.id}）：${targetAccountIds.length} 个账号…（可在“发布历史”点“查看”看明细）`,
+        duration: 0,
+      });
+
+      // 兜底：若后端未返回 items，则用本地 accounts 生成一份“待发布”占位列表
+      setRunDetail((prev) => {
+        const base = prev || run;
+        const existingItems = Array.isArray(base?.items) ? base.items : [];
+        if (existingItems.length > 0) return base;
+
+        const byId = new Map((accounts || []).map((acc) => [acc.id, acc]));
+        const placeholders = targetAccountIds.map((accountId) => {
+          const acc = byId.get(accountId);
+          return {
+            account_id: accountId,
+            nideriji_userid: acc?.nideriji_userid ?? 0,
+            status: 'unknown',
+            nideriji_diary_id: null,
+            error_message: null,
+          };
+        });
+        return { ...base, items: placeholders };
+      });
+
+      const upsertItem = (patch) => {
+        if (!patch || !patch.account_id) return;
+        setRunDetail((prev) => {
+          if (!prev) return prev;
+          const prevItems = Array.isArray(prev.items) ? prev.items : [];
+          const nextItems = [...prevItems];
+          const index = nextItems.findIndex((i) => i.account_id === patch.account_id);
+          if (index >= 0) {
+            nextItems[index] = { ...nextItems[index], ...patch };
+          } else {
+            nextItems.push(patch);
+          }
+          return { ...prev, items: nextItems };
+        });
+      };
+
+      // 3) 并行逐账号发布（带并发上限，避免一次性请求太多导致不稳定）
+      const concurrency = Math.min(DEFAULT_PUBLISH_CONCURRENCY, targetAccountIds.length || 1);
+      const results = await runInPool(targetAccountIds, concurrency, async (accountId) => {
+        upsertItem({ account_id: accountId, status: 'running', error_message: null });
+        const itemRes = await publishDiaryAPI.publishOne(run.id, { account_id: accountId });
+        const item = itemRes?.data;
+        if (item?.account_id) {
+          upsertItem(item);
+          return item;
+        }
+        const fallback = { account_id: accountId, status: 'failed', error_message: '后端返回为空' };
+        upsertItem(fallback);
+        return fallback;
+      });
+
+      // 4) 处理“请求级失败”（例如网络中断/被浏览器取消）
+      results.forEach((r, index) => {
+        if (!r || r.status !== 'rejected') return;
+        const accountId = targetAccountIds[index];
+        const detail = r.reason?.response?.data?.detail || r.reason?.message || String(r.reason || '请求失败');
+        upsertItem({ account_id: accountId, status: 'failed', error_message: `请求失败: ${detail}` });
+      });
+
+      // 5) 兜底：再拉一次 run，确保结果与后端落库一致（同时尽量保留本地“请求失败”信息）
+      try {
+        const finalRes = await publishDiaryAPI.getRun(run.id);
+        const finalRun = finalRes?.data;
+        if (finalRun?.id) {
+          setRunDetail((prev) => {
+            if (!prev) return finalRun;
+
+            const prevByAccountId = new Map((Array.isArray(prev.items) ? prev.items : []).map((i) => [i.account_id, i]));
+            const serverItems = Array.isArray(finalRun.items) ? finalRun.items : [];
+            const mergedItems = serverItems.map((serverItem) => {
+              const localItem = prevByAccountId.get(serverItem.account_id);
+              if (!localItem) return serverItem;
+              // 仅当服务端还没给出结果时，保留本地“请求失败”提示
+              if (
+                (serverItem.status === 'unknown' || serverItem.status === 'running') &&
+                localItem.status === 'failed' &&
+                localItem.error_message
+              ) {
+                return { ...serverItem, status: 'failed', error_message: localItem.error_message };
+              }
+              return serverItem;
+            });
+            return { ...finalRun, items: mergedItems };
+          });
+        }
+      } catch {
+        // 拉取最终结果失败不影响已展示的逐账号状态
+      }
+
+      // 6) 刷新历史列表 + 结果提示
+      loadRuns(date);
+      const okCount = results.filter((r) => r?.status === 'fulfilled' && r?.value?.status === 'success').length;
+      const failedCount = targetAccountIds.length - okCount;
+      if (failedCount > 0) {
+        message.open({
+          key: msgKey,
+          type: 'warning',
+          content: `后台发布完成：成功 ${okCount}，失败 ${failedCount}（可在“发布历史”点“查看”看明细）`,
+          duration: 6,
+        });
+      } else {
+        message.open({
+          key: msgKey,
+          type: 'success',
+          content: `后台发布完成：成功 ${okCount}（可在“发布历史”点“查看”看明细）`,
+          duration: 4,
+        });
+      }
+    } catch (error) {
+      const detail = error?.response?.data?.detail;
+      message.open({
+        key: msgKey,
+        type: 'error',
+        content: '发布失败: ' + (detail || error?.message || String(error)),
+        duration: 6,
+      });
+    } finally {
+      setPublishing(false);
+    }
   };
 
   useEffect(() => {
@@ -720,7 +743,7 @@ export default function PublishDiary() {
                           icon={<SendOutlined />}
                           onClick={publish}
                           loading={publishing}
-                          disabled={draftLoading || savingDraft}
+                          disabled={draftLoading || savingDraft || publishing}
                           block={isMobile}
                         >
                           发布到所选账号

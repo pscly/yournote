@@ -172,6 +172,11 @@ export default function PublishDiary() {
   const [runDetailLoading, setRunDetailLoading] = useState(false);
   const [runDetail, setRunDetail] = useState(null);
 
+  // 当前“后台发布”的 run（进度状态）。
+  // 注意：必须与 runDetail（弹窗里查看的某次 run 详情）解耦，避免用户查看其它 run 时被后台更新覆盖。
+  const [activePublishRun, setActivePublishRun] = useState(null);
+  const [publishPanelOpen, setPublishPanelOpen] = useState(true);
+
   const accountOptions = useMemo(() => {
     return (accounts || []).map(a => {
       const name = a?.user_name || a?.nideriji_userid || a?.email || `账号${a?.id}`;
@@ -186,6 +191,31 @@ export default function PublishDiary() {
   const selectedSet = useMemo(() => new Set(selectedAccountIds || []), [selectedAccountIds]);
   const checkAll = selectedAccountIds.length > 0 && selectedAccountIds.length === allAccountIds.length;
   const indeterminate = selectedAccountIds.length > 0 && selectedAccountIds.length < allAccountIds.length;
+
+  const publishProgress = useMemo(() => {
+    const run = activePublishRun;
+    const items = Array.isArray(run?.items) ? run.items : [];
+    const targetTotal = Array.isArray(run?.target_account_ids) ? run.target_account_ids.length : 0;
+    const total = Math.max(items.length, targetTotal);
+
+    let success = 0;
+    let failed = 0;
+    let running = 0;
+    let unknown = 0;
+
+    items.forEach((i) => {
+      const s = i?.status;
+      if (s === 'success') success += 1;
+      else if (s === 'failed') failed += 1;
+      else if (s === 'running') running += 1;
+      else unknown += 1;
+    });
+
+    if (items.length === 0 && total > 0) unknown = total;
+    const done = success + failed;
+
+    return { total, success, failed, running, unknown, done };
+  }, [activePublishRun]);
 
   const loadAccounts = useCallback(async () => {
     setAccountsLoading(true);
@@ -274,6 +304,19 @@ export default function PublishDiary() {
     }
   };
 
+  const refreshRunDetail = async (runId) => {
+    if (!runId) return;
+    setRunDetailLoading(true);
+    try {
+      const res = await publishDiaryAPI.getRun(runId);
+      setRunDetail(res?.data || null);
+    } catch (error) {
+      message.error('刷新发布详情失败: ' + (error?.response?.data?.detail || error?.message || String(error)));
+    } finally {
+      setRunDetailLoading(false);
+    }
+  };
+
   const loadRunContentIntoEditor = async (runId) => {
     setRunDetailLoading(true);
     try {
@@ -314,21 +357,25 @@ export default function PublishDiary() {
       return;
     }
 
+    const publishDate = date;
+    const publishContent = content;
+    const publishAccountIds = [...selectedAccountIds];
+
     setPublishing(true);
     const msgKey = `publish-${Date.now()}`;
     message.open({
       key: msgKey,
       type: 'loading',
-      content: '已开始后台发布…你可以继续操作（可在“发布历史”查看进度）',
+      content: '已开始后台发布…你可以继续操作（页面内会显示发布进度）',
       duration: 0,
     });
 
     try {
       // 1) 先创建 run（仅落库，不执行发布），确保后续逐账号请求都能归并到同一次 run
       const runRes = await publishDiaryAPI.createRun({
-        date,
-        content,
-        account_ids: selectedAccountIds,
+        date: publishDate,
+        content: publishContent,
+        account_ids: publishAccountIds,
         save_draft: true,
       });
       const run = runRes?.data;
@@ -339,24 +386,26 @@ export default function PublishDiary() {
       const targetAccountIds =
         Array.isArray(run?.target_account_ids) && run.target_account_ids.length > 0
           ? run.target_account_ids
-          : selectedAccountIds;
+          : publishAccountIds;
 
       // 2) 记录本次 run（不再自动弹窗阻塞 UI；需要查看时从“发布历史”点“查看”）
-      setRunDetail(run || null);
+      setActivePublishRun(run || null);
+      setPublishPanelOpen(true);
       setDraftUpdatedAt(null);
       writeLocalLastSelection(targetAccountIds);
-      loadRuns(date);
+      loadRuns(publishDate);
 
       message.open({
         key: msgKey,
         type: 'loading',
-        content: `后台发布中（Run #${run.id}）：${targetAccountIds.length} 个账号…（可在“发布历史”点“查看”看明细）`,
+        content: `后台发布中（Run #${run.id}）：${targetAccountIds.length} 个账号…（可在页面“后台发布进度”里点“查看明细”）`,
         duration: 0,
       });
 
       // 兜底：若后端未返回 items，则用本地 accounts 生成一份“待发布”占位列表
-      setRunDetail((prev) => {
+      setActivePublishRun((prev) => {
         const base = prev || run;
+        if (!base || base?.id !== run.id) return prev;
         const existingItems = Array.isArray(base?.items) ? base.items : [];
         if (existingItems.length > 0) return base;
 
@@ -376,8 +425,8 @@ export default function PublishDiary() {
 
       const upsertItem = (patch) => {
         if (!patch || !patch.account_id) return;
-        setRunDetail((prev) => {
-          if (!prev) return prev;
+        setActivePublishRun((prev) => {
+          if (!prev || prev?.id !== run.id) return prev;
           const prevItems = Array.isArray(prev.items) ? prev.items : [];
           const nextItems = [...prevItems];
           const index = nextItems.findIndex((i) => i.account_id === patch.account_id);
@@ -418,8 +467,8 @@ export default function PublishDiary() {
         const finalRes = await publishDiaryAPI.getRun(run.id);
         const finalRun = finalRes?.data;
         if (finalRun?.id) {
-          setRunDetail((prev) => {
-            if (!prev) return finalRun;
+          setActivePublishRun((prev) => {
+            if (!prev || prev?.id !== run.id) return prev ?? finalRun;
 
             const prevByAccountId = new Map((Array.isArray(prev.items) ? prev.items : []).map((i) => [i.account_id, i]));
             const serverItems = Array.isArray(finalRun.items) ? finalRun.items : [];
@@ -444,7 +493,7 @@ export default function PublishDiary() {
       }
 
       // 6) 刷新历史列表 + 结果提示
-      loadRuns(date);
+      loadRuns(publishDate);
       const okCount = results.filter((r) => r?.status === 'fulfilled' && r?.value?.status === 'success').length;
       const failedCount = targetAccountIds.length - okCount;
       if (failedCount > 0) {
@@ -753,6 +802,36 @@ export default function PublishDiary() {
                     </Space>
                   </Card>
 
+                  {publishPanelOpen && activePublishRun?.id && (
+                    <Card
+                      size="small"
+                      title={publishing ? `后台发布进度（Run #${activePublishRun.id}）` : `最近一次发布（Run #${activePublishRun.id}）`}
+                      extra={(
+                        <Space wrap>
+                          <Button size="small" onClick={() => openRunDetail(activePublishRun.id)}>
+                            查看明细
+                          </Button>
+                          <Button size="small" onClick={() => setPublishPanelOpen(false)}>
+                            关闭提示
+                          </Button>
+                        </Space>
+                      )}
+                    >
+                      <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                        <Space wrap size={8}>
+                          <Tag color="blue">已完成 {publishProgress.done}/{publishProgress.total}</Tag>
+                          <Tag color="green">成功 {publishProgress.success}</Tag>
+                          <Tag color="red">失败 {publishProgress.failed}</Tag>
+                          <Tag color="geekblue">进行中 {publishProgress.running}</Tag>
+                          <Tag>待发布 {publishProgress.unknown}</Tag>
+                        </Space>
+                        <Text type="secondary">
+                          {publishing ? '发布正在后台进行，你可以继续操作或切换页面。' : '发布已结束，可在“发布历史”查看记录。'}
+                        </Text>
+                      </Space>
+                    </Card>
+                  )}
+
                   <Card
                     size="small"
                     title="选择发布账号"
@@ -847,9 +926,15 @@ export default function PublishDiary() {
       <Modal
         title={runDetail?.id ? `发布结果（Run #${runDetail.id}）` : '发布结果'}
         open={runModalOpen}
+        mask={false}
         onCancel={() => setRunModalOpen(false)}
         footer={[
           <Button key="close" onClick={() => setRunModalOpen(false)}>关闭</Button>,
+          runDetail?.id ? (
+            <Button key="refresh" onClick={() => refreshRunDetail(runDetail.id)} loading={runDetailLoading}>
+              刷新
+            </Button>
+          ) : null,
           runDetail?.id ? (
             <Button key="load" onClick={() => loadRunContentIntoEditor(runDetail.id)} loading={runDetailLoading}>
               载入内容到编辑器

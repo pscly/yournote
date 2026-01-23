@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Card, Checkbox, Grid, Input, List, message, Modal, Space, Table, Tabs, Tag, Typography } from 'antd';
 import { ReloadOutlined, SaveOutlined, SendOutlined } from '@ant-design/icons';
 import { accountAPI, publishDiaryAPI } from '../services/api';
@@ -30,31 +30,6 @@ function writeLocalLastSelection(ids) {
   } catch {
     // localStorage 失败不影响业务
   }
-}
-
-async function runInPool(items, poolSize, worker) {
-  const list = Array.isArray(items) ? items : [];
-  const size = Math.max(1, Number(poolSize) || 1);
-  const results = new Array(list.length);
-
-  let nextIndex = 0;
-  const runners = Array.from({ length: Math.min(size, list.length) }, async () => {
-    while (true) {
-      const currentIndex = nextIndex;
-      if (currentIndex >= list.length) return;
-      nextIndex += 1;
-
-      try {
-        const value = await worker(list[currentIndex], currentIndex);
-        results[currentIndex] = { status: 'fulfilled', value };
-      } catch (reason) {
-        results[currentIndex] = { status: 'rejected', reason };
-      }
-    }
-  });
-
-  await Promise.all(runners);
-  return results;
 }
 
 async function getDefaultSelectionFromLastRun(accountList) {
@@ -176,6 +151,8 @@ export default function PublishDiary() {
   // 注意：必须与 runDetail（弹窗里查看的某次 run 详情）解耦，避免用户查看其它 run 时被后台更新覆盖。
   const [activePublishRun, setActivePublishRun] = useState(null);
   const [publishPanelOpen, setPublishPanelOpen] = useState(true);
+  const publishMsgKeyRef = useRef(null);
+  const publishPollTimerRef = useRef(null);
 
   const accountOptions = useMemo(() => {
     return (accounts || []).map(a => {
@@ -361,17 +338,24 @@ export default function PublishDiary() {
     const publishContent = content;
     const publishAccountIds = [...selectedAccountIds];
 
+    // 清理上一轮轮询计时器（避免并发轮询）
+    if (publishPollTimerRef.current) {
+      clearTimeout(publishPollTimerRef.current);
+      publishPollTimerRef.current = null;
+    }
+
     setPublishing(true);
     const msgKey = `publish-${Date.now()}`;
+    publishMsgKeyRef.current = msgKey;
     message.open({
       key: msgKey,
       type: 'loading',
-      content: '已开始后台发布…你可以继续操作（页面内会显示发布进度）',
+      content: '已开始后台发布…你可以刷新/关闭页面，后端仍会继续发布',
       duration: 0,
     });
 
     try {
-      // 1) 先创建 run（仅落库，不执行发布），确保后续逐账号请求都能归并到同一次 run
+      // 1) 创建 run（落库 + 创建 items），不做实际发布
       const runRes = await publishDiaryAPI.createRun({
         date: publishDate,
         content: publishContent,
@@ -388,19 +372,11 @@ export default function PublishDiary() {
           ? run.target_account_ids
           : publishAccountIds;
 
-      // 2) 记录本次 run（不再自动弹窗阻塞 UI；需要查看时从“发布历史”点“查看”）
       setActivePublishRun(run || null);
       setPublishPanelOpen(true);
       setDraftUpdatedAt(null);
       writeLocalLastSelection(targetAccountIds);
       loadRuns(publishDate);
-
-      message.open({
-        key: msgKey,
-        type: 'loading',
-        content: `后台发布中（Run #${run.id}）：${targetAccountIds.length} 个账号…（可在页面“后台发布进度”里点“查看明细”）`,
-        duration: 0,
-      });
 
       // 兜底：若后端未返回 items，则用本地 accounts 生成一份“待发布”占位列表
       setActivePublishRun((prev) => {
@@ -423,94 +399,19 @@ export default function PublishDiary() {
         return { ...base, items: placeholders };
       });
 
-      const upsertItem = (patch) => {
-        if (!patch || !patch.account_id) return;
-        setActivePublishRun((prev) => {
-          if (!prev || prev?.id !== run.id) return prev;
-          const prevItems = Array.isArray(prev.items) ? prev.items : [];
-          const nextItems = [...prevItems];
-          const index = nextItems.findIndex((i) => i.account_id === patch.account_id);
-          if (index >= 0) {
-            nextItems[index] = { ...nextItems[index], ...patch };
-          } else {
-            nextItems.push(patch);
-          }
-          return { ...prev, items: nextItems };
-        });
-      };
-
-      // 3) 并行逐账号发布（带并发上限，避免一次性请求太多导致不稳定）
+      // 2) 启动后端后台任务：前端不再逐账号请求 publish-one
       const concurrency = Math.min(DEFAULT_PUBLISH_CONCURRENCY, targetAccountIds.length || 1);
-      const results = await runInPool(targetAccountIds, concurrency, async (accountId) => {
-        upsertItem({ account_id: accountId, status: 'running', error_message: null });
-        const itemRes = await publishDiaryAPI.publishOne(run.id, { account_id: accountId });
-        const item = itemRes?.data;
-        if (item?.account_id) {
-          upsertItem(item);
-          return item;
-        }
-        const fallback = { account_id: accountId, status: 'failed', error_message: '后端返回为空' };
-        upsertItem(fallback);
-        return fallback;
+      const startRes = await publishDiaryAPI.startRun(run.id, { concurrency });
+      const alreadyRunning = Boolean(startRes?.data?.already_running);
+
+      message.open({
+        key: msgKey,
+        type: 'loading',
+        content: alreadyRunning
+          ? `后台发布已在运行（Run #${run.id}）…（页面内会显示进度）`
+          : `后台发布已启动（Run #${run.id}）…（页面内会显示进度）`,
+        duration: 0,
       });
-
-      // 4) 处理“请求级失败”（例如网络中断/被浏览器取消）
-      results.forEach((r, index) => {
-        if (!r || r.status !== 'rejected') return;
-        const accountId = targetAccountIds[index];
-        const detail = r.reason?.response?.data?.detail || r.reason?.message || String(r.reason || '请求失败');
-        upsertItem({ account_id: accountId, status: 'failed', error_message: `请求失败: ${detail}` });
-      });
-
-      // 5) 兜底：再拉一次 run，确保结果与后端落库一致（同时尽量保留本地“请求失败”信息）
-      try {
-        const finalRes = await publishDiaryAPI.getRun(run.id);
-        const finalRun = finalRes?.data;
-        if (finalRun?.id) {
-          setActivePublishRun((prev) => {
-            if (!prev || prev?.id !== run.id) return prev ?? finalRun;
-
-            const prevByAccountId = new Map((Array.isArray(prev.items) ? prev.items : []).map((i) => [i.account_id, i]));
-            const serverItems = Array.isArray(finalRun.items) ? finalRun.items : [];
-            const mergedItems = serverItems.map((serverItem) => {
-              const localItem = prevByAccountId.get(serverItem.account_id);
-              if (!localItem) return serverItem;
-              // 仅当服务端还没给出结果时，保留本地“请求失败”提示
-              if (
-                (serverItem.status === 'unknown' || serverItem.status === 'running') &&
-                localItem.status === 'failed' &&
-                localItem.error_message
-              ) {
-                return { ...serverItem, status: 'failed', error_message: localItem.error_message };
-              }
-              return serverItem;
-            });
-            return { ...finalRun, items: mergedItems };
-          });
-        }
-      } catch {
-        // 拉取最终结果失败不影响已展示的逐账号状态
-      }
-
-      // 6) 刷新历史列表 + 结果提示
-      loadRuns(publishDate);
-      const okCount = results.filter((r) => r?.status === 'fulfilled' && r?.value?.status === 'success').length;
-      const failedCount = targetAccountIds.length - okCount;
-      if (failedCount > 0) {
-        message.open({
-          key: msgKey,
-          type: 'warning',
-          content: `后台发布完成：成功 ${okCount}，失败 ${failedCount}（可在“发布历史”点“查看”看明细）`,
-          duration: 6,
-        });
-      } else {
-        message.open({
-          key: msgKey,
-          type: 'success',
-          content: `后台发布完成：成功 ${okCount}（可在“发布历史”点“查看”看明细）`,
-          duration: 4,
-        });
-      }
     } catch (error) {
       const detail = error?.response?.data?.detail;
       message.open({
@@ -519,7 +420,7 @@ export default function PublishDiary() {
         content: '发布失败: ' + (detail || error?.message || String(error)),
         duration: 6,
       });
-    } finally {
+      publishMsgKeyRef.current = null;
       setPublishing(false);
     }
   };
@@ -533,6 +434,82 @@ export default function PublishDiary() {
     loadDraft(date);
     loadRuns(date);
   }, [date]);
+
+  useEffect(() => {
+    if (!publishing) return;
+    if (!activePublishRun?.id) return;
+
+    let cancelled = false;
+    const runId = activePublishRun.id;
+    let failStreak = 0;
+
+    const poll = async () => {
+      if (cancelled) return;
+
+      try {
+        const res = await publishDiaryAPI.getRun(runId);
+        const run = res?.data;
+        if (cancelled) return;
+
+        if (run?.id) {
+          setActivePublishRun(run);
+
+          const items = Array.isArray(run.items) ? run.items : [];
+          const targetTotal = Array.isArray(run.target_account_ids) ? run.target_account_ids.length : items.length;
+          const success = items.filter((i) => i?.status === 'success').length;
+          const failed = items.filter((i) => i?.status === 'failed').length;
+          const done = success + failed;
+
+          if (targetTotal > 0 && done >= targetTotal) {
+            setPublishing(false);
+            loadRuns(run?.date);
+
+            const key = publishMsgKeyRef.current;
+            if (key) {
+              if (failed > 0) {
+                message.open({
+                  key,
+                  type: 'warning',
+                  content: `后台发布完成：成功 ${success}，失败 ${failed}（可在“发布历史”查看明细）`,
+                  duration: 6,
+                });
+              } else {
+                message.open({
+                  key,
+                  type: 'success',
+                  content: `后台发布完成：成功 ${success}（可在“发布历史”查看明细）`,
+                  duration: 4,
+                });
+              }
+              publishMsgKeyRef.current = null;
+            } else if (failed > 0) {
+              message.warning(`后台发布完成：成功 ${success}，失败 ${failed}`);
+            } else {
+              message.success(`后台发布完成：成功 ${success}`);
+            }
+            return;
+          }
+        }
+
+        failStreak = 0;
+      } catch {
+        failStreak += 1;
+      }
+
+      const delayMs = failStreak >= 3 ? 5000 : 2000;
+      publishPollTimerRef.current = setTimeout(poll, delayMs);
+    };
+
+    poll();
+
+    return () => {
+      cancelled = true;
+      if (publishPollTimerRef.current) {
+        clearTimeout(publishPollTimerRef.current);
+        publishPollTimerRef.current = null;
+      }
+    };
+  }, [publishing, activePublishRun?.id]);
 
   const runItemColumns = [
     { title: '账号ID', dataIndex: 'account_id', key: 'account_id', width: 90 },
@@ -590,6 +567,8 @@ export default function PublishDiary() {
   const runStatusTag = (status) => {
     if (status === 'success') return <Tag color="green">成功</Tag>;
     if (status === 'failed') return <Tag color="red">失败</Tag>;
+    if (status === 'running') return <Tag color="blue">发布中</Tag>;
+    if (status === 'unknown') return <Tag>待发布</Tag>;
     return <Tag>未知</Tag>;
   };
 

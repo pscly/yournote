@@ -26,8 +26,10 @@ from ..schemas import (
     PublishDiaryRunItemResponse,
     PublishDiaryRunListItemResponse,
     PublishDiaryRunResponse,
+    PublishDiaryStartRunRequest,
 )
 from ..services import CollectorService, DiaryPublisherService
+from ..services.background import schedule_publish_run
 
 router = APIRouter(prefix="/publish-diaries", tags=["publish-diaries"])
 
@@ -271,6 +273,26 @@ async def create_run(body: PublishDiaryRequest, db: AsyncSession = Depends(get_d
             }
             for i in items_db
         ],
+    )
+
+
+@router.post("/runs/{run_id}/start")
+async def start_run(
+    run_id: int,
+    body: PublishDiaryStartRunRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """启动后台发布任务（前端可关闭/刷新页面，后端仍会继续执行）。"""
+    result = await db.execute(select(PublishDiaryRun).where(PublishDiaryRun.id == run_id))
+    run = result.scalar_one_or_none()
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    req = body or PublishDiaryStartRunRequest()
+    return await schedule_publish_run(
+        run_id=run_id,
+        concurrency=int(req.concurrency or 3),
+        force=bool(req.force),
     )
 
 

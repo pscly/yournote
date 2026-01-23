@@ -25,7 +25,7 @@ class PublishDiaryRunItemResponse(BaseModel):
 
     account_id: int
     nideriji_userid: int
-    status: Literal["success", "failed", "unknown"] = "unknown"
+    status: Literal["success", "failed", "unknown", "running"] = "unknown"
     nideriji_diary_id: str | None = None
     error_message: str | None = None
 
@@ -65,3 +65,10 @@ class PublishDiaryPublishOneRequest(BaseModel):
     """单账号发布请求体（用于前端并行逐账号发布）。"""
 
     account_id: int
+
+
+class PublishDiaryStartRunRequest(BaseModel):
+    """启动一次发布 Run（后端后台异步执行）。"""
+
+    concurrency: int = Field(default=3, ge=1, le=10)
+    force: bool = False

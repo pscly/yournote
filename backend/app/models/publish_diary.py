@@ -42,9 +42,8 @@ class PublishDiaryRunItem(Base):
     run_id = Column(Integer, ForeignKey("publish_diary_runs.id"), nullable=False, index=True)
     account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False, index=True)
     nideriji_userid = Column(Integer, nullable=False, index=True)
-    status = Column(String(20), nullable=False, default="unknown")  # success | failed | unknown
+    status = Column(String(20), nullable=False, default="unknown")  # success | failed | running | unknown
     nideriji_diary_id = Column(String(32), nullable=True)
     error_message = Column(Text, nullable=True)
     response_json = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-

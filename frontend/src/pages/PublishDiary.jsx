@@ -429,6 +429,86 @@ export default function PublishDiary() {
     loadAccounts();
   }, [loadAccounts]);
 
+  // 刷新/重进页面后：自动恢复仍在进行中的后台发布（避免用户必须手动翻历史）。
+  useEffect(() => {
+    let cancelled = false;
+
+    const tryResume = async () => {
+      try {
+        // 仅做 best-effort：不阻塞页面渲染
+        const res = await publishDiaryAPI.listRuns({ limit: 10 });
+        const list = Array.isArray(res?.data) ? res.data : [];
+        const nowMs = Date.now();
+
+        const candidate = list.find((r) => {
+          const total = r?.target_account_ids?.length ?? 0;
+          const done = (r?.success_count ?? 0) + (r?.failed_count ?? 0);
+          if (!total || done >= total) return false;
+
+          const createdAt = r?.created_at;
+          if (createdAt) {
+            const createdMs = new Date(createdAt).getTime();
+            // 只恢复“近期”的未完成 run，避免误把很久以前的残留记录当成进行中
+            if (Number.isFinite(createdMs) && nowMs - createdMs > 6 * 60 * 60 * 1000) return false;
+          }
+
+          return true;
+        });
+
+        if (!candidate?.id) return;
+
+        const runRes = await publishDiaryAPI.getRun(candidate.id);
+        const run = runRes?.data;
+        if (cancelled) return;
+        if (!run?.id) return;
+
+        setActivePublishRun(run);
+        setPublishPanelOpen(true);
+
+        const items = Array.isArray(run.items) ? run.items : [];
+        const targetTotal = Array.isArray(run.target_account_ids) ? run.target_account_ids.length : items.length;
+        const success = items.filter((i) => i?.status === 'success').length;
+        const failed = items.filter((i) => i?.status === 'failed').length;
+        const running = items.filter((i) => i?.status === 'running').length;
+        const done = success + failed;
+
+        const createdAt = run?.created_at || candidate?.created_at;
+        const createdMs = createdAt ? new Date(createdAt).getTime() : Number.NaN;
+        const ageMs = Number.isFinite(createdMs) ? nowMs - createdMs : 0;
+        const shouldPoll = (targetTotal > 0 && done < targetTotal) && (running > 0 || ageMs < 60 * 1000);
+
+        const key = `publish-resume-${run.id}`;
+        publishMsgKeyRef.current = key;
+        if (shouldPoll) {
+          setPublishing(true);
+          message.open({
+            key,
+            type: 'loading',
+            content: `检测到后台发布仍在进行（Run #${run.id}），已自动恢复进度显示…`,
+            duration: 0,
+          });
+        } else {
+          setPublishing(false);
+          message.open({
+            key,
+            type: 'warning',
+            content: `发现未完成的发布（Run #${run.id}），但未检测到正在发布；可能后端已重启/任务中断（可在“发布历史”查看或重新发布）`,
+            duration: 6,
+          });
+          publishMsgKeyRef.current = null;
+        }
+      } catch {
+        // 自动恢复失败不影响正常使用
+      }
+    };
+
+    tryResume();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   useEffect(() => {
     if (!date) return;
     loadDraft(date);

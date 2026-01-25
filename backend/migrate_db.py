@@ -39,6 +39,7 @@ from typing import Any
 from dotenv import load_dotenv
 from sqlalchemy import Boolean, Date, DateTime, Integer, Select, select, text
 from sqlalchemy.engine.url import make_url
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
 
@@ -336,13 +337,20 @@ async def main() -> int:
     if target_is_sqlite:
         connect_args_target = {"timeout": 30}
 
-    source_engine = create_async_engine(source_url, echo=False, future=True, pool_pre_ping=True)
+    source_engine = create_async_engine(
+        source_url,
+        echo=False,
+        future=True,
+        pool_pre_ping=True,
+        hide_parameters=True,
+    )
     target_engine = create_async_engine(
         target_url,
         echo=False,
         future=True,
         pool_pre_ping=True,
         connect_args=connect_args_target,
+        hide_parameters=True,
     )
 
     try:
@@ -397,7 +405,11 @@ async def main() -> int:
         print("[INFO] Migration completed.")
         return 0
     except Exception as e:
-        print(f"[ERROR] Migration failed: {_redact_error_message(str(e))}")
+        # 避免将 SQLAlchemy 的报错参数（可能包含 token/密码等敏感字段）直接打印到控制台
+        message = str(e)
+        if isinstance(e, SQLAlchemyError) and getattr(e, "orig", None) is not None:
+            message = str(e.orig)
+        print(f"[ERROR] Migration failed: {_redact_error_message(message)}")
         return 1
     finally:
         await source_engine.dispose()
@@ -406,4 +418,3 @@ async def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(asyncio.run(main()))
-

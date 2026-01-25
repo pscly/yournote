@@ -1,0 +1,34 @@
+.git
+.gitignore
+.gitattributes
+
+# 本地环境
+.venv
+__pycache__/
+*.py[oc]
+
+# 密钥与配置（避免误打进镜像或传入构建上下文）
+.env
+.env.*
+
+# 运行产物
+logs/
+data/
+*.log
+
+# SQLite / 本地数据
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+
+# 前端依赖与产物（构建时会重新安装/编译）
+frontend/node_modules/
+frontend/dist/
+frontend/test-results/
+frontend/tests/
+frontend/playwright-report/
+
+# 后端缓存
+backend/__pycache__/
+

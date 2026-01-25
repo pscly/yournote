@@ -1,0 +1,32 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # 容器内必须监听 0.0.0.0 才能被其它容器访问
+      BACKEND_HOST: 0.0.0.0
+      BACKEND_PORT: 31012
+      # 生产部署默认关闭热重载
+      BACKEND_RELOAD: "false"
+      # 数据落在宿主机 ./data（避免更新镜像丢数据）
+      SQLITE_DB_PATH: ./data/yournote.db
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    expose:
+      - "31012"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PORT:-31011}:80"
+

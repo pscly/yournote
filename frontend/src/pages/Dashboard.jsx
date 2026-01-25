@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Button, Card, Col, Grid, List, Row, Space, Spin, Statistic, Table, Tag, Typography, message } from 'antd';
-import { BookOutlined, SyncOutlined, TeamOutlined, UserOutlined } from '@ant-design/icons';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Button, Card, Col, Drawer, Grid, List, Row, Space, Spin, Statistic, Table, Tag, Typography, message } from 'antd';
+import { BookOutlined, DownOutlined, SyncOutlined, TeamOutlined, UpOutlined, UserOutlined } from '@ant-design/icons';
 import { accountAPI, diaryAPI, statsAPI, syncAPI, userAPI } from '../services/api';
 import { waitForLatestSyncLog } from '../utils/sync';
 import { useNavigate } from 'react-router-dom';
@@ -9,6 +9,27 @@ import { getDiaryWordStats } from '../utils/wordCount';
 import Page from '../components/Page';
 
 const { Title, Text } = Typography;
+
+const DASHBOARD_ACCOUNTS_COLLAPSED_KEY = 'yournote.dashboard.accountsCollapsed';
+
+function readBoolStorage(key) {
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (raw === '1') return true;
+    if (raw === '0') return false;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function writeBoolStorage(key, value) {
+  try {
+    window.localStorage.setItem(key, value ? '1' : '0');
+  } catch {
+    // ignore
+  }
+}
 
 function getDiaryTimestamp(item) {
   const raw = item?.created_date || item?.created_time;
@@ -23,6 +44,20 @@ function getDiarySortKey(item) {
   return getDiaryTimestamp(item);
 }
 
+function getDiaryCreatedAtMs(item) {
+  const created = parseServerDate(item?.created_time);
+  if (created) return created.getTime();
+
+  // 兜底：created_time 缺失时，尽量用 ts（最后修改）或 created_date 推断
+  const tsMs = normalizeEpochMs(item?.ts);
+  if (tsMs) return tsMs;
+
+  const dateOnly = parseServerDate(item?.created_date);
+  if (dateOnly) return dateOnly.getTime();
+
+  return 0;
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const screens = Grid.useBreakpoint();
@@ -30,6 +65,17 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [syncingId, setSyncingId] = useState(null);
   const [accounts, setAccounts] = useState([]);
+  const [accountsCollapsed, setAccountsCollapsed] = useState(() => {
+    const stored = readBoolStorage(DASHBOARD_ACCOUNTS_COLLAPSED_KEY);
+    if (stored !== null) return stored;
+    try {
+      // 默认移动端收起，避免账号表格占屏（可手动展开并记住）
+      return window.matchMedia?.('(max-width: 767.98px)')?.matches ?? false;
+    } catch {
+      return false;
+    }
+  });
+  const [deltaDrawerOpen, setDeltaDrawerOpen] = useState(false);
   const [stats, setStats] = useState({
     totalAccounts: 0,
     totalUsers: 0,
@@ -44,6 +90,31 @@ export default function Dashboard() {
     month: '2-digit',
     day: '2-digit',
   }).format(new Date()).replace(/\//g, '-');
+
+  const sinceYesterday20Ms = useMemo(() => {
+    // 今日 20:00（北京时间）= 今日 12:00（UTC）；取 -24h 得到“昨日 20:00（北京时间）”
+    const [yy, mm, dd] = String(todayText).split('-').map(Number);
+    if (!yy || !mm || !dd) return 0;
+    const today20UtcMs = Date.UTC(yy, mm - 1, dd, 12, 0, 0);
+    return today20UtcMs - 24 * 60 * 60 * 1000;
+  }, [todayText]);
+
+  const sinceYesterday20Label = useMemo(() => {
+    if (!sinceYesterday20Ms) return '昨日 20:00';
+    return formatBeijingDateTimeFromTs(sinceYesterday20Ms);
+  }, [sinceYesterday20Ms]);
+
+  const pairedIncreaseDiaries = useMemo(() => {
+    if (!sinceYesterday20Ms) return [];
+    const list = (latestDiaries || []).filter((d) => getDiaryCreatedAtMs(d) >= sinceYesterday20Ms);
+    list.sort((a, b) => getDiaryCreatedAtMs(b) - getDiaryCreatedAtMs(a));
+    return list;
+  }, [latestDiaries, sinceYesterday20Ms]);
+
+  const pairedIncreaseCount = pairedIncreaseDiaries.length;
+  const increaseDiaryLimit = isMobile ? 20 : 50;
+  const increaseDiariesToShow = pairedIncreaseDiaries.slice(0, increaseDiaryLimit);
+  const increaseHidden = Math.max(0, pairedIncreaseCount - increaseDiariesToShow.length);
 
   const loadLatestPairedDiariesAll = useCallback(async (accountList) => {        
     const list = accountList || [];
@@ -140,6 +211,14 @@ export default function Dashboard() {
     loadData();
   }, [loadData]);
 
+  const toggleAccountsCollapsed = useCallback(() => {
+    setAccountsCollapsed((prev) => {
+      const next = !prev;
+      writeBoolStorage(DASHBOARD_ACCOUNTS_COLLAPSED_KEY, next);
+      return next;
+    });
+  }, []);
+
   const handleSync = async (accountId) => {
     const msgKey = `sync-${accountId}`;
     try {
@@ -202,6 +281,30 @@ export default function Dashboard() {
         <Col xs={12} md={8}>
           <Card hoverable onClick={() => navigate('/diaries')} style={{ cursor: 'pointer' }}>
             <Statistic title="配对日记数" value={stats.pairedDiaries} prefix={<BookOutlined />} />
+            <Space size={8} style={{ marginTop: 8 }} onClick={(e) => e.stopPropagation()}>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                较 {sinceYesterday20Label}
+              </Text>
+              {latestLoading ? (
+                <Spin size="small" />
+              ) : pairedIncreaseCount > 0 ? (
+                <Button
+                  type="link"
+                  size="small"
+                  style={{ padding: 0, height: 'auto' }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDeltaDrawerOpen(true);
+                  }}
+                >
+                  +{pairedIncreaseCount}
+                </Button>
+              ) : (
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  +0
+                </Text>
+              )}
+            </Space>
           </Card>
         </Col>
       </Row>
@@ -209,97 +312,116 @@ export default function Dashboard() {
       <Card
         title="账号列表"
         extra={
-          <Button onClick={loadData} disabled={loading}>
-            刷新
-          </Button>
+          <Space size={8}>
+            <Button onClick={loadData} disabled={loading}>
+              刷新
+            </Button>
+            <Button
+              type="text"
+              icon={accountsCollapsed ? <DownOutlined /> : <UpOutlined />}
+              onClick={toggleAccountsCollapsed}
+            >
+              {accountsCollapsed ? '展开' : '收起'}
+            </Button>
+          </Space>
         }
       >
-        {isMobile ? (
-          <List
-            dataSource={accounts}
-            locale={{ emptyText: '暂无账号，请先去“账号管理”添加。' }}
-            renderItem={(r) => {
-              const s = r?.token_status;
-              const tokenTag = (() => {
-                if (!s) return <Tag>未知</Tag>;
-                if (s.checked_at && !s.is_valid) return <Tag color="gold">已失效</Tag>;
-                if (s.expired) return <Tag color="gold">已过期</Tag>;
-                if (!s.checked_at) return <Tag color="blue">未校验</Tag>;
-                return <Tag color="green">有效</Tag>;
-              })();
-
-              return (
-                <Card style={{ marginBottom: 12 }} bodyStyle={{ padding: 14 }}>
-                  <Space direction="vertical" size={10} style={{ width: '100%' }}>
-                    <Space wrap>
-                      <Tag color="blue">{r?.nideriji_userid ?? '-'}</Tag>
-                      <Tag>{r?.user_name || '未命名'}</Tag>
-                      {tokenTag}
-                    </Space>
-                    <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
-                      {r?.email || '无邮箱'}
-                    </Text>
-                    <Button
-                      type="primary"
-                      icon={<SyncOutlined />}
-                      loading={syncingId === r.id}
-                      onClick={() => handleSync(r.id)}
-                      block
-                    >
-                      立即更新
-                    </Button>
-                  </Space>
-                </Card>
-              );
-            }}
-          />
-        ) : (
-          <Table
-            rowKey="id"
-            dataSource={accounts}
-            pagination={false}
-            scroll={{ x: 900 }}
-            columns={[
-              { title: '用户ID', dataIndex: 'nideriji_userid', key: 'nideriji_userid', width: 120 },
-              { title: '用户名', dataIndex: 'user_name', key: 'user_name', width: 140, render: v => v || '-' },
-              { title: '邮箱', dataIndex: 'email', key: 'email', width: 220, render: v => v || '-' },
-              {
-                title: 'Token',
-                key: 'token_status',
-                width: 120,
-                render: (_, r) => {
-                  const s = r?.token_status;
-                  if (!s) return <Tag>未知</Tag>;
-                  if (s.checked_at && !s.is_valid) return <Tag color="gold">已失效</Tag>;
-                  if (s.expired) return <Tag color="gold">已过期</Tag>;
-                  if (!s.checked_at) return <Tag color="blue">未校验</Tag>;
-                  return <Tag color="green">有效</Tag>;
-                },
-              },
-              {
-                title: '操作',
-                key: 'action',
-                width: 160,
-                render: (_, r) => (
-                  <Space>
-                    <Button
-                      type="primary"
-                      icon={<SyncOutlined />}
-                      loading={syncingId === r.id}
-                      onClick={() => handleSync(r.id)}
-                    >
-                      立即更新
-                    </Button>
-                  </Space>
-                ),
-              },
-            ]}
-          />
-        )}
-        {accounts.length === 0 && (
+        {accountsCollapsed ? (
           <Text type="secondary" style={{ padding: 12, display: 'block' }}>
-            暂无账号，请先去“账号管理”添加。
+            {accounts.length === 0
+              ? '暂无账号，请先去“账号管理”添加。'
+              : '账号列表已收起，点击右上角“展开”查看。'}
           </Text>
+        ) : (
+          <>
+            {isMobile ? (
+              <List
+                dataSource={accounts}
+                locale={{ emptyText: '暂无账号，请先去“账号管理”添加。' }}
+                renderItem={(r) => {
+                  const s = r?.token_status;
+                  const tokenTag = (() => {
+                    if (!s) return <Tag>未知</Tag>;
+                    if (s.checked_at && !s.is_valid) return <Tag color="gold">已失效</Tag>;
+                    if (s.expired) return <Tag color="gold">已过期</Tag>;
+                    if (!s.checked_at) return <Tag color="blue">未校验</Tag>;
+                    return <Tag color="green">有效</Tag>;
+                  })();
+
+                  return (
+                    <Card style={{ marginBottom: 12 }} bodyStyle={{ padding: 14 }}>
+                      <Space direction="vertical" size={10} style={{ width: '100%' }}>
+                        <Space wrap>
+                          <Tag color="blue">{r?.nideriji_userid ?? '-'}</Tag>
+                          <Tag>{r?.user_name || '未命名'}</Tag>
+                          {tokenTag}
+                        </Space>
+                        <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
+                          {r?.email || '无邮箱'}
+                        </Text>
+                        <Button
+                          type="primary"
+                          icon={<SyncOutlined />}
+                          loading={syncingId === r.id}
+                          onClick={() => handleSync(r.id)}
+                          block
+                        >
+                          立即更新
+                        </Button>
+                      </Space>
+                    </Card>
+                  );
+                }}
+              />
+            ) : (
+              <Table
+                rowKey="id"
+                dataSource={accounts}
+                pagination={false}
+                scroll={{ x: 900 }}
+                columns={[
+                  { title: '用户ID', dataIndex: 'nideriji_userid', key: 'nideriji_userid', width: 120 },
+                  { title: '用户名', dataIndex: 'user_name', key: 'user_name', width: 140, render: v => v || '-' },
+                  { title: '邮箱', dataIndex: 'email', key: 'email', width: 220, render: v => v || '-' },
+                  {
+                    title: 'Token',
+                    key: 'token_status',
+                    width: 120,
+                    render: (_, r) => {
+                      const s = r?.token_status;
+                      if (!s) return <Tag>未知</Tag>;
+                      if (s.checked_at && !s.is_valid) return <Tag color="gold">已失效</Tag>;
+                      if (s.expired) return <Tag color="gold">已过期</Tag>;
+                      if (!s.checked_at) return <Tag color="blue">未校验</Tag>;
+                      return <Tag color="green">有效</Tag>;
+                    },
+                  },
+                  {
+                    title: '操作',
+                    key: 'action',
+                    width: 160,
+                    render: (_, r) => (
+                      <Space>
+                        <Button
+                          type="primary"
+                          icon={<SyncOutlined />}
+                          loading={syncingId === r.id}
+                          onClick={() => handleSync(r.id)}
+                        >
+                          立即更新
+                        </Button>
+                      </Space>
+                    ),
+                  },
+                ]}
+              />
+            )}
+            {accounts.length === 0 && (
+              <Text type="secondary" style={{ padding: 12, display: 'block' }}>
+                暂无账号，请先去“账号管理”添加。
+              </Text>
+            )}
+          </>
         )}
       </Card>
 
@@ -382,6 +504,93 @@ export default function Dashboard() {
           </Button>
         </div>
       </Card>
+
+      <Drawer
+        title={(
+          <Space size={8} align="baseline">
+            <span>新增配对日记</span>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              （较 {sinceYesterday20Label} +{pairedIncreaseCount}）
+            </Text>
+          </Space>
+        )}
+        open={deltaDrawerOpen}
+        onClose={() => setDeltaDrawerOpen(false)}
+        width={isMobile ? '100%' : 560}
+      >
+        <Space wrap style={{ width: '100%', marginBottom: 12 }}>
+          <Tag color="green">统计起点：{sinceYesterday20Label}</Tag>
+          <Tag color="magenta">仅配对用户日记</Tag>
+        </Space>
+
+        {increaseHidden > 0 && (
+          <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
+            仅展示最近 {increaseDiariesToShow.length} 条（还有 {increaseHidden} 条未展示）
+          </Text>
+        )}
+
+        <List
+          dataSource={increaseDiariesToShow}
+          locale={{ emptyText: '暂无新增配对日记' }}
+          renderItem={(item) => {
+            const stats = getDiaryWordStats(item);
+            const wordCount = stats?.content?.no_whitespace ?? 0;
+
+            const author = latestAuthorByUserId?.[item?.user_id];
+            const authorName = author?.name || (item?.user_id ? `用户 ${item.user_id}` : '未知作者');
+            const authorText = author?.nideriji_userid ? `${authorName}（${author.nideriji_userid}）` : authorName;
+
+            const createdAtMs = getDiaryCreatedAtMs(item);
+            const createdAtText = createdAtMs ? formatBeijingDateTimeFromTs(createdAtMs) : '';
+
+            const updatedAtText = formatBeijingDateTimeFromTs(item?.ts);
+
+            const content = String(item?.content ?? '');
+            const snippetLimit = isMobile ? 60 : 120;
+            const snippet = content
+              ? (content.length > snippetLimit ? `${content.slice(0, snippetLimit)}…` : content)
+              : '（空）';
+
+            return (
+              <List.Item
+                key={item?.id}
+                style={{ cursor: 'pointer', paddingLeft: 4, paddingRight: 4 }}
+                onClick={() => {
+                  setDeltaDrawerOpen(false);
+                  navigate(`/diary/${item.id}`);
+                }}
+              >
+                <List.Item.Meta
+                  title={
+                    <Space wrap size={8}>
+                      <Tag color="magenta">{authorText}</Tag>
+                      <Tag color="blue">{item?.created_date || '-'}</Tag>
+                      {createdAtText && <Tag color="cyan">创建 {createdAtText}</Tag>}
+                      {updatedAtText && <Tag color="purple">更新 {updatedAtText}</Tag>}
+                      <Tag color="geekblue">{wordCount} 字</Tag>
+                      <span style={{ fontWeight: 500 }}>{item?.title || '无标题'}</span>
+                    </Space>
+                  }
+                  description={<Text type="secondary">{snippet}</Text>}
+                />
+              </List.Item>
+            );
+          }}
+        />
+
+        <div style={{ textAlign: 'center', marginTop: 4 }}>
+          <Button
+            type="link"
+            onClick={() => {
+              setDeltaDrawerOpen(false);
+              navigate('/diaries');
+            }}
+            disabled={accounts.length === 0}
+          >
+            去日记列表
+          </Button>
+        </div>
+      </Drawer>
     </Page>
   );
 }

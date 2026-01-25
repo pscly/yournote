@@ -32,7 +32,6 @@ data/
 output/
 downloads/
 *.csv
-*.json
 *.xml
 
 # SQLite databases (local dev)

@@ -129,6 +129,20 @@ curl "http://localhost:31012/api/diaries?account_id=1&limit=10"
 DATABASE_URL=postgresql+asyncpg://username:password@localhost:5432/yournote
 ```
 
+### 从 PostgreSQL 迁移到本地 SQLite（开发用）
+
+如果你当前在用远程 PostgreSQL，但想先切回本地 SQLite 开发，可以把数据迁移一份到本地：
+
+```bash
+cd backend
+uv run python migrate_postgres_to_sqlite.py --overwrite
+```
+
+迁移完成后，编辑根目录 `.env`：
+
+- 注释/删除 `DATABASE_URL`（避免后端继续连 PostgreSQL）
+- 保留/设置 `SQLITE_DB_PATH=./yournote.db`
+
 ## 项目结构
 
 ```

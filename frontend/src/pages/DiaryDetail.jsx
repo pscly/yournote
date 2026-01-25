@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   BackTop,
@@ -43,6 +43,14 @@ export default function DiaryDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { token } = theme.useToken();
+  const currentDiaryId = useMemo(() => {
+    const n = Number.parseInt(id, 10);
+    return Number.isFinite(n) ? n : null;
+  }, [id]);
+
+  const diaryListScrollRef = useRef(null);
+  const activeDiaryItemRef = useRef(null);
+
   const [diary, setDiary] = useState(null);
   const [diaryList, setDiaryList] = useState([]);
   const [history, setHistory] = useState([]);
@@ -90,6 +98,28 @@ export default function DiaryDetail() {
     loadMyDiaries();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showMatched, diary, pairedUserId, pairUsers]);
+
+  // 日记详情切换时，让左侧/抽屉列表自动定位到“当前日记”位置，避免每次从顶部开始翻。
+  useEffect(() => {
+    if (!currentDiaryId) return;
+
+    const t = setTimeout(() => {
+      const el = activeDiaryItemRef.current;
+      if (!el) return;
+
+      const container = diaryListScrollRef.current;
+      if (container) {
+        const c = container.getBoundingClientRect();
+        const e = el.getBoundingClientRect();
+        const inView = e.top >= c.top && e.bottom <= c.bottom;
+        if (inView) return;
+      }
+
+      el.scrollIntoView({ block: 'center', inline: 'nearest' });
+    }, 0);
+
+    return () => clearTimeout(t);
+  }, [currentDiaryId, diaryList, showMatched, drawerVisible]);
 
   const loadData = async () => {
     try {
@@ -578,40 +608,47 @@ export default function DiaryDetail() {
         </Space>
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
+      <div ref={diaryListScrollRef} style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
         <List
           dataSource={diaryList}
           renderItem={(item) => {
             const modifiedText = formatBeijingDateTimeFromTs(item?.ts);
             const wordCount = getDiaryWordStats(item)?.content?.no_whitespace ?? 0;
+            const isActive = !!(currentDiaryId && item?.id === currentDiaryId);
 
             return (
-              <Card
-                hoverable
-                onClick={() => {
-                  navigate(`/diary/${item.id}`);
-                  if (isMobile) setDrawerVisible(false);
+              <div
+                ref={(el) => {
+                  if (isActive) activeDiaryItemRef.current = el;
                 }}
-                style={{
-                  marginBottom: 12,
-                  borderLeft: `4px solid ${getBorderColor(item)}`,
-                  background: item.id === parseInt(id) ? getActiveBgColor(item) : token.colorBgContainer,
-                  cursor: 'pointer',
-                }}
-                bodyStyle={{ padding: '12px 16px' }}
               >
-                <div style={{ fontWeight: 500, marginBottom: 4, fontSize: '14px' }}>
-                  {item.title || '无标题'}
-                </div>
-                <div style={{ fontSize: '12px', color: token.colorTextSecondary }}>
-                  <CalendarOutlined style={{ marginRight: 4 }} />
-                  {item.created_date}
-                </div>
-                <div style={{ fontSize: '12px', color: token.colorTextSecondary, marginTop: 4 }}>
-                  <ClockCircleOutlined style={{ marginRight: 4 }} />
-                  最后修改 {modifiedText} · {wordCount} 字
-                </div>
-              </Card>
+                <Card
+                  hoverable
+                  onClick={() => {
+                    navigate(`/diary/${item.id}`);
+                    if (isMobile) setDrawerVisible(false);
+                  }}
+                  style={{
+                    marginBottom: 12,
+                    borderLeft: `4px solid ${getBorderColor(item)}`,
+                    background: isActive ? getActiveBgColor(item) : token.colorBgContainer,
+                    cursor: 'pointer',
+                  }}
+                  bodyStyle={{ padding: '12px 16px' }}
+                >
+                  <div style={{ fontWeight: 500, marginBottom: 4, fontSize: '14px' }}>
+                    {item.title || '无标题'}
+                  </div>
+                  <div style={{ fontSize: '12px', color: token.colorTextSecondary }}>
+                    <CalendarOutlined style={{ marginRight: 4 }} />
+                    {item.created_date}
+                  </div>
+                  <div style={{ fontSize: '12px', color: token.colorTextSecondary, marginTop: 4 }}>
+                    <ClockCircleOutlined style={{ marginRight: 4 }} />
+                    最后修改 {modifiedText} · {wordCount} 字
+                  </div>
+                </Card>
+              </div>
             );
           }}
         />

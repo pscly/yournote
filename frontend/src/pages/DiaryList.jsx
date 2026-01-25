@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Card, Grid, List, Select, Space, Spin, Table, Tag, Typography, message, theme as antdTheme } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -28,6 +28,16 @@ function sortDiariesByLatest(list) {
   return (list || []).slice().sort((a, b) => getDiarySortKey(b) - getDiarySortKey(a));
 }
 
+async function mapAllSettledInBatches(items, batchSize, fn) {
+  const settled = [];
+  for (let i = 0; i < (items || []).length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+    const r = await Promise.allSettled(batch.map(fn));
+    settled.push(...r);
+  }
+  return settled;
+}
+
 export default function DiaryList() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -41,27 +51,36 @@ export default function DiaryList() {
   const [userIdByNiderijiUserid, setUserIdByNiderijiUserid] = useState({});
   const [loading, setLoading] = useState(false);
   const [selectedAccount, setSelectedAccount] = useState(ALL_ACCOUNTS);
+  const pairedMatchedUserIdsCacheRef = useRef(new Map());
+  const loadSeqRef = useRef(0);
 
   const loadInit = useCallback(async () => {
     try {
-      const [accountsRes, usersRes] = await Promise.all([accountAPI.list(), userAPI.list(5000)]);
-      const accountList = accountsRes.data || [];
+      const [accountsRes, usersRes] = await Promise.allSettled([accountAPI.list(), userAPI.list(5000)]);
+      if (accountsRes.status !== 'fulfilled') throw accountsRes.reason;
+
+      const accountList = accountsRes.value.data || [];
       setAccounts(accountList);
 
       const nameByNiderijiUserid = {};
       const byId = {};
       const idByNiderijiUserid = {};
-      (usersRes.data || []).forEach((u) => {
-        if (!u) return;
-        if (u.id) byId[u.id] = u;
-        if (u.nideriji_userid) {
-          nameByNiderijiUserid[u.nideriji_userid] = u.name;
-          idByNiderijiUserid[u.nideriji_userid] = u.id;
-        }
-      });
+      if (usersRes.status === 'fulfilled') {
+        (usersRes.value.data || []).forEach((u) => {
+          if (!u) return;
+          if (u.id) byId[u.id] = u;
+          if (u.nideriji_userid) {
+            nameByNiderijiUserid[u.nideriji_userid] = u.name;
+            idByNiderijiUserid[u.nideriji_userid] = u.id;
+          }
+        });
+      } else {
+        message.warning('用户信息加载失败：将以“用户 ID”展示作者（可稍后刷新重试）');
+      }
       setUserNameByNiderijiUserid(nameByNiderijiUserid);
       setUserById(byId);
       setUserIdByNiderijiUserid(idByNiderijiUserid);
+      pairedMatchedUserIdsCacheRef.current = new Map();
 
       const presetIdRaw = searchParams.get('accountId') || searchParams.get('account_id');
       const presetId = presetIdRaw ? Number.parseInt(presetIdRaw, 10) : null;
@@ -75,17 +94,23 @@ export default function DiaryList() {
       if (presetExists) setSelectedAccount(presetId);
       else setSelectedAccount(ALL_ACCOUNTS);
     } catch (error) {
-      message.error('初始化失败: ' + error.message);
+      message.error('初始化失败: ' + (error?.message || '未知错误'));
     }
   }, [searchParams]);
 
   const filterMatchedDiaries = useCallback(async (accountId, list) => {
     // 优先使用配对关系，确保“仅被匹配用户”的口径准确；失败时再退回“排除主用户”口径。
     try {
+      const cache = pairedMatchedUserIdsCacheRef.current;
+      const cached = cache.get(accountId);
+      if (cached) {
+        if (cached.size === 0) return [];
+        return (list || []).filter(d => cached.has(d?.user_id));
+      }
+
       const pairedRes = await userAPI.paired(accountId);
-      const matchedUserIds = new Set(
-        (pairedRes?.data || []).map(r => r?.paired_user?.id).filter(Boolean),
-      );
+      const matchedUserIds = new Set((pairedRes?.data || []).map(r => r?.paired_user?.id).filter(Boolean));
+      cache.set(accountId, matchedUserIds);
       if (matchedUserIds.size === 0) return [];
       return (list || []).filter(d => matchedUserIds.has(d?.user_id));
     } catch {
@@ -101,11 +126,13 @@ export default function DiaryList() {
     if (!selectedAccount) return;
     if (selectedAccount === ALL_ACCOUNTS && accounts.length === 0) return;
 
+    const seq = loadSeqRef.current + 1;
+    loadSeqRef.current = seq;
     setLoading(true);
     try {
       if (selectedAccount === ALL_ACCOUNTS) {
         const accountList = accounts || [];
-        const tasks = accountList.map(async (a) => {
+        const settled = await mapAllSettledInBatches(accountList, 3, async (a) => {
           const accountId = a?.id;
           if (!accountId) return [];
 
@@ -114,7 +141,6 @@ export default function DiaryList() {
           return await filterMatchedDiaries(accountId, list);
         });
 
-        const settled = await Promise.allSettled(tasks);
         const mergedById = new Map();
         let failed = 0;
         settled.forEach((r) => {
@@ -129,6 +155,7 @@ export default function DiaryList() {
         });
 
         const merged = Array.from(mergedById.values());
+        if (loadSeqRef.current !== seq) return;
         setDiaries(sortDiariesByLatest(merged));
         if (failed > 0 && merged.length > 0) {
           message.warning(`部分账号加载失败（${failed} 个），已显示可用数据`);
@@ -140,11 +167,13 @@ export default function DiaryList() {
       const res = await diaryAPI.byAccount(accountId, FETCH_LIMIT_PER_ACCOUNT);
       const list = res.data || [];
       const matched = await filterMatchedDiaries(accountId, list);
+      if (loadSeqRef.current !== seq) return;
       setDiaries(sortDiariesByLatest(matched));
     } catch (error) {
-      message.error('加载日记失败: ' + error.message);
+      if (loadSeqRef.current !== seq) return;
+      message.error('加载日记失败: ' + (error?.message || '未知错误'));
     } finally {
-      setLoading(false);
+      if (loadSeqRef.current === seq) setLoading(false);
     }
   }, [selectedAccount, accounts, filterMatchedDiaries]);
 

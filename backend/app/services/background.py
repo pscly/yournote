@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 from sqlalchemy import select
 
-from ..database import AsyncSessionLocal
+from .. import database
 from ..models import Account, PublishDiaryRun, PublishDiaryRunItem
 from .collector import CollectorService
 from .publisher import DiaryPublisherService
@@ -38,18 +38,18 @@ def _parse_int_list_json(value: str | None) -> list[int]:
 
 
 async def _publish_one_account_in_background(*, run_id: int, account_id: int, force: bool) -> None:
-    async with AsyncSessionLocal() as db:
-        run_result = await db.execute(select(PublishDiaryRun).where(PublishDiaryRun.id == run_id))
+    async with database.AsyncSessionLocal() as session:
+        run_result = await session.execute(select(PublishDiaryRun).where(PublishDiaryRun.id == run_id))
         run = run_result.scalar_one_or_none()
         if not run:
             return
 
-        account_result = await db.execute(
+        account_result = await session.execute(
             select(Account).where(Account.is_active.is_(True), Account.id == account_id)
         )
         account = account_result.scalar_one_or_none()
 
-        item_result = await db.execute(
+        item_result = await session.execute(
             select(PublishDiaryRunItem)
             .where(PublishDiaryRunItem.run_id == run_id, PublishDiaryRunItem.account_id == account_id)
             .order_by(PublishDiaryRunItem.id.desc())
@@ -63,8 +63,8 @@ async def _publish_one_account_in_background(*, run_id: int, account_id: int, fo
                 nideriji_userid=getattr(account, "nideriji_userid", 0) or 0,
                 status="unknown",
             )
-            db.add(item)
-            await db.flush()
+            session.add(item)
+            await session.flush()
 
         # 已成功的不重复发布（除非 force=true）
         if not force and (item.status or "") == "success":
@@ -73,15 +73,19 @@ async def _publish_one_account_in_background(*, run_id: int, account_id: int, fo
         if not account:
             item.status = "failed"
             item.error_message = "账号不可用或已被禁用"
-            await db.commit()
+            item.nideriji_diary_id = None
+            item.response_json = None
+            await session.commit()
             return
 
         # 先标记为 running 并提交，让前端能实时看到进度
         item.status = "running"
         item.error_message = None
-        await db.commit()
+        item.nideriji_diary_id = None
+        item.response_json = None
+        await session.commit()
 
-        collector = CollectorService(db)
+        collector = CollectorService(session)
         publisher = DiaryPublisherService(collector)
         date = (run.date or "").strip()
         content = run.content if isinstance(run.content, str) else ""
@@ -118,13 +122,17 @@ async def _publish_one_account_in_background(*, run_id: int, account_id: int, fo
             item.status = "failed"
             item.error_message = f"发布异常: {e}"
 
-        await db.commit()
+        # 失败时保持 nideriji_diary_id/response_json 为 None，避免复用旧成功数据造成误读
+        if (item.status or "") != "success":
+            item.nideriji_diary_id = None
+            item.response_json = None
+        await session.commit()
 
 
 async def _run_publish_run(*, run_id: int, concurrency: int, force: bool) -> None:
     # 先读取目标账号列表（避免在并发任务里重复查 run）
-    async with AsyncSessionLocal() as db:
-        run_result = await db.execute(select(PublishDiaryRun).where(PublishDiaryRun.id == run_id))
+    async with database.AsyncSessionLocal() as session:
+        run_result = await session.execute(select(PublishDiaryRun).where(PublishDiaryRun.id == run_id))
         run = run_result.scalar_one_or_none()
         if not run:
             return
@@ -170,7 +178,7 @@ async def schedule_publish_run(*, run_id: int, concurrency: int = 3, force: bool
 
 
 async def _run_account_sync(account_id: int) -> None:
-    async with AsyncSessionLocal() as session:
+    async with database.AsyncSessionLocal() as session:
         collector = CollectorService(session)
         try:
             await collector.sync_account(account_id)

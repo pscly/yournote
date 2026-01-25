@@ -35,6 +35,13 @@ downloads/
 *.json
 *.xml
 
+# SQLite databases (local dev)
+yournote.db
+.yournote.db
+*.db-journal
+*.db-wal
+*.db-shm
+
 # Browser automation
 chromedriver
 geckodriver
@@ -58,3 +65,4 @@ credentials.json
 *.ipynb
 
 账号.txt
+.ace-tool/

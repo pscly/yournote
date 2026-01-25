@@ -1,0 +1,67 @@
+stages:
+  - deploy
+
+variables:
+  # 目标服务器上的部署目录（包含 docker-compose.yml 与 .env）
+  DEPLOY_DIR: "/root/mnt2/mydocker2/auto_gitlab/younote"
+
+deploy_u3:
+  stage: deploy
+  image: docker:27.3.1
+  tags:
+    # 需要与你在 GitLab Runner 页面给 u3 配置的 tag 一致
+    - u3
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  resource_group: "deploy-${CI_PROJECT_PATH_SLUG}"
+  environment:
+    name: production
+  before_script:
+    - apk add --no-cache bash curl rsync docker-cli-compose
+  script:
+    - |
+      set -euo pipefail
+      if [ ! -f "${DEPLOY_DIR}/.env" ]; then
+        echo "ERROR: ${DEPLOY_DIR}/.env 不存在（已按要求不自动创建/不覆盖）。"
+        exit 1
+      fi
+    - |
+      echo "同步代码到部署目录（保留 .env / data / logs）：${DEPLOY_DIR}"
+      rsync -a \
+        --exclude '.git/' \
+        --exclude '.env' \
+        --exclude 'data/' \
+        --exclude 'logs/' \
+        "${CI_PROJECT_DIR}/" "${DEPLOY_DIR}/"
+    - |
+      echo "构建并启动（docker-compose.yml）"
+      docker compose \
+        --project-directory "${DEPLOY_DIR}" \
+        -f "${DEPLOY_DIR}/docker-compose.yml" \
+        up -d --build --remove-orphans
+    - |
+      echo "健康检查：检测 frontend 端口并访问首页"
+      port="$(docker compose --project-directory "${DEPLOY_DIR}" -f "${DEPLOY_DIR}/docker-compose.yml" port frontend 80 | awk -F: 'NR==1{print $NF}' | tail -n 1 || true)"
+      if [ -n "${port}" ]; then
+        curl -fsS "http://127.0.0.1:${port}/" >/dev/null
+      else
+        echo "WARNING: 未检测到 frontend 端口映射，跳过 curl 检查。"
+      fi
+
+redeploy_u3:
+  stage: deploy
+  image: docker:27.3.1
+  tags:
+    - u3
+  when: manual
+  allow_failure: true
+  resource_group: "deploy-${CI_PROJECT_PATH_SLUG}"
+  before_script:
+    - apk add --no-cache bash docker-cli-compose
+  script:
+    - |
+      set -euo pipefail
+      cd "${DEPLOY_DIR}"
+      cp -a .env ".env.bak-$(date +%Y%m%d-%H%M%S)"
+      docker compose -f docker-compose.yml down --remove-orphans
+      docker compose -f docker-compose.yml up -d --build --remove-orphans

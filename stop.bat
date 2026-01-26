@@ -11,6 +11,6 @@ echo stop2...
 taskkill /FI "WINDOWTITLE eq YourNote-Frontend*" /F >nul 2>&1
 
 echo.
-echo stopok
+echo stopokw
 echo.
 pause

@@ -10,7 +10,8 @@ import Page from '../components/Page';
 
 const { Title, Text } = Typography;
 
-const DASHBOARD_ACCOUNTS_COLLAPSED_KEY = 'yournote.dashboard.accountsCollapsed';
+// 账号列表收起状态：默认收起；同时用 v2 避免旧版本“默认展开”的历史偏好影响新默认值。
+const DASHBOARD_ACCOUNTS_COLLAPSED_KEY = 'yournote.dashboard.accountsCollapsed.v2';
 
 function readBoolStorage(key) {
   try {
@@ -68,12 +69,8 @@ export default function Dashboard() {
   const [accountsCollapsed, setAccountsCollapsed] = useState(() => {
     const stored = readBoolStorage(DASHBOARD_ACCOUNTS_COLLAPSED_KEY);
     if (stored !== null) return stored;
-    try {
-      // 默认移动端收起，避免账号表格占屏（可手动展开并记住）
-      return window.matchMedia?.('(max-width: 767.98px)')?.matches ?? false;
-    } catch {
-      return false;
-    }
+    // 默认收起（可手动展开并记住）
+    return true;
   });
   const [deltaDrawerOpen, setDeltaDrawerOpen] = useState(false);
   const [stats, setStats] = useState({

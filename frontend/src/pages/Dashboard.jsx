@@ -144,7 +144,7 @@ export default function Dashboard() {
           const matchedUserIds = new Set(matchedUsers.map(u => u.id));
           if (matchedUserIds.size === 0) return { diaries: [], authors };
 
-          // 再取该账号的日记列表，并仅保留“被匹配用户”的日记
+          // 再取该账号的记录列表，并仅保留“被匹配用户”的记录
           const diariesRes = await diaryAPI.byAccount(accountId, 100);
           const filtered = (diariesRes?.data || []).filter(d => matchedUserIds.has(d?.user_id));
           return { diaries: filtered, authors };
@@ -172,7 +172,7 @@ export default function Dashboard() {
     } catch (error) {
       setLatestDiaries([]);
       setLatestAuthorByUserId({});
-      message.error('加载最近日记失败: ' + error.message);
+      message.error('加载最近记录失败: ' + error.message);
     } finally {
       setLatestLoading(false);
     }
@@ -195,7 +195,7 @@ export default function Dashboard() {
         pairedDiaries: overview.paired_diaries_count ?? 0,
       });
 
-      // 最近日记（被匹配用户）默认聚合所有账号；这里做 best-effort 的异步刷新  
+      // 最近记录（被匹配用户）默认聚合所有账号；这里做 best-effort 的异步刷新  
       loadLatestPairedDiariesAll(accountList);
     } catch (error) {
       message.error('加载数据失败: ' + error.message);
@@ -230,7 +230,7 @@ export default function Dashboard() {
         message.open({
           key: msgKey,
           type: 'success',
-          content: `更新完成：我的日记 ${log.diaries_count ?? '-'} 条，配对日记 ${log.paired_diaries_count ?? '-'} 条`,
+          content: `更新完成：我的记录 ${log.diaries_count ?? '-'} 条，配对记录 ${log.paired_diaries_count ?? '-'} 条`,
         });
       } else if (log?.status === 'failed') {
         message.open({
@@ -277,7 +277,7 @@ export default function Dashboard() {
         </Col>
         <Col xs={12} md={8}>
           <Card hoverable onClick={() => navigate('/diaries')} style={{ cursor: 'pointer' }}>
-            <Statistic title="配对日记数" value={stats.pairedDiaries} prefix={<BookOutlined />} />
+            <Statistic title="配对记录数" value={stats.pairedDiaries} prefix={<BookOutlined />} />
             <Space size={8} style={{ marginTop: 8 }} onClick={(e) => e.stopPropagation()}>
               <Text type="secondary" style={{ fontSize: 12 }}>
                 较 {sinceYesterday20Label}
@@ -425,7 +425,7 @@ export default function Dashboard() {
       <Card
         title={(
           <Space size={8} align="baseline">
-            <span>最近日记</span>
+            <span>最近记录</span>
             <Text type="secondary" style={{ fontSize: 12 }}>
               （今天是 {todayText}）
             </Text>
@@ -444,7 +444,7 @@ export default function Dashboard() {
       >
         <Space wrap style={{ width: '100%', marginBottom: 12 }}>
           <Tag color="blue">全部账号</Tag>
-          <Tag color="magenta">仅显示被匹配用户日记</Tag>
+          <Tag color="magenta">仅显示被匹配用户记录</Tag>
           <Tag color="purple">按 ts（最后修改）优先排序</Tag>
         </Space>
 
@@ -454,7 +454,7 @@ export default function Dashboard() {
           locale={{
             emptyText: accounts.length === 0
               ? '暂无账号，请先去“账号管理”添加。'
-              : '暂无配对日记',
+              : '暂无配对记录',
           }}
           renderItem={(item) => {
             const stats = getDiaryWordStats(item);
@@ -505,7 +505,7 @@ export default function Dashboard() {
       <Drawer
         title={(
           <Space size={8} align="baseline">
-            <span>新增配对日记</span>
+            <span>新增配对记录</span>
             <Text type="secondary" style={{ fontSize: 12 }}>
               （较 {sinceYesterday20Label} +{pairedIncreaseCount}）
             </Text>
@@ -517,7 +517,7 @@ export default function Dashboard() {
       >
         <Space wrap style={{ width: '100%', marginBottom: 12 }}>
           <Tag color="green">统计起点：{sinceYesterday20Label}</Tag>
-          <Tag color="magenta">仅配对用户日记</Tag>
+          <Tag color="magenta">仅配对用户记录</Tag>
         </Space>
 
         {increaseHidden > 0 && (
@@ -528,7 +528,7 @@ export default function Dashboard() {
 
         <List
           dataSource={increaseDiariesToShow}
-          locale={{ emptyText: '暂无新增配对日记' }}
+          locale={{ emptyText: '暂无新增配对记录' }}
           renderItem={(item) => {
             const stats = getDiaryWordStats(item);
             const wordCount = stats?.content?.no_whitespace ?? 0;
@@ -584,7 +584,7 @@ export default function Dashboard() {
             }}
             disabled={accounts.length === 0}
           >
-            去日记列表
+            去记录列表
           </Button>
         </div>
       </Drawer>

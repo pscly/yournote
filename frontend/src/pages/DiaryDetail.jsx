@@ -99,7 +99,7 @@ export default function DiaryDetail() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showMatched, diary, pairedUserId, pairUsers]);
 
-  // 日记详情切换时，让左侧/抽屉列表自动定位到“当前日记”位置，避免每次从顶部开始翻。
+  // 记录详情切换时，让左侧/抽屉列表自动定位到“当前记录”位置，避免每次从顶部开始翻。
   useEffect(() => {
     if (!currentDiaryId) return;
 
@@ -172,7 +172,7 @@ export default function DiaryDetail() {
       ));
       setDiaryList(sorted);
     } catch {
-      console.error('加载日记列表失败');
+      console.error('加载记录列表失败');
     }
   };
 
@@ -233,7 +233,7 @@ export default function DiaryDetail() {
 
       setDiaryList(merged);
     } catch {
-      message.error('加载匹配日记失败');
+      message.error('加载匹配记录失败');
     }
   };
 
@@ -259,7 +259,7 @@ export default function DiaryDetail() {
       const updated = refreshInfo?.updated === true;
 
       if (updated) {
-        message.success(usedDetail ? '已刷新（日记详情已更新，使用 all_by_ids）' : '已刷新（日记内容已更新）');
+        message.success(usedDetail ? '已刷新（记录详情已更新，使用 all_by_ids）' : '已刷新（记录内容已更新）');
       } else {
         message.warning(refreshInfo?.skipped_reason || '已刷新（内容未发生变化）');
       }
@@ -274,11 +274,11 @@ export default function DiaryDetail() {
               <Descriptions.Item label="是否更新">{updated ? <Tag color="green">是</Tag> : <Tag>否</Tag>}</Descriptions.Item>
               <Descriptions.Item label="更新来源">{refreshInfo.update_source ? <Tag color="blue">{refreshInfo.update_source}</Tag> : '-'}</Descriptions.Item>
               <Descriptions.Item label="是否调用 sync">{refreshInfo.used_sync ? <Tag color="geekblue">是</Tag> : <Tag>否</Tag>}</Descriptions.Item>
-              <Descriptions.Item label="sync 是否命中该日记">{refreshInfo.sync_found ? <Tag color="green">命中</Tag> : <Tag>未命中</Tag>}</Descriptions.Item>
+              <Descriptions.Item label="sync 是否命中该记录">{refreshInfo.sync_found ? <Tag color="green">命中</Tag> : <Tag>未命中</Tag>}</Descriptions.Item>
               <Descriptions.Item label="sync 内容长度">{refreshInfo.sync_content_len ?? '-'}</Descriptions.Item>
               <Descriptions.Item label="sync is_simple">{typeof refreshInfo.sync_is_simple === 'boolean' ? String(refreshInfo.sync_is_simple) : '-'}</Descriptions.Item>
               <Descriptions.Item label="是否调用 all_by_ids">{usedDetail ? <Tag color="purple">是</Tag> : <Tag>否</Tag>}</Descriptions.Item>
-              <Descriptions.Item label="all_by_ids 是否返回该日记">{usedDetail ? (detailReturned ? <Tag color="green">返回</Tag> : <Tag color="red">未返回</Tag>) : '-'}</Descriptions.Item>
+              <Descriptions.Item label="all_by_ids 是否返回该记录">{usedDetail ? (detailReturned ? <Tag color="green">返回</Tag> : <Tag color="red">未返回</Tag>) : '-'}</Descriptions.Item>
               <Descriptions.Item label="详情内容长度">{refreshInfo.detail_content_len ?? '-'}</Descriptions.Item>
               <Descriptions.Item label="详情仍然过短">{typeof refreshInfo.detail_is_short === 'boolean' ? (refreshInfo.detail_is_short ? <Tag color="orange">是</Tag> : <Tag color="green">否</Tag>) : '-'}</Descriptions.Item>
               <Descriptions.Item label="详情尝试次数">{refreshInfo.detail_attempts ?? '-'}</Descriptions.Item>
@@ -321,7 +321,7 @@ export default function DiaryDetail() {
   const exportCandidateDiaries = useMemo(() => {
     const list = (diaryList || []).filter(Boolean);
     const resolveOwner = (item) => {
-      // 未开启“显示匹配日记”时，当前列表就是“你正在看的这位用户”的日记：
+      // 未开启“显示匹配记录”时，当前列表就是“你正在看的这位用户”的记录：
       // 这时候导出不应因为识别为 matched 而被过滤为空。
       if (!canExportMatched) return 'main';
       if (pairUsers?.matched?.id && item?.user_id === pairUsers.matched.id) return 'matched';
@@ -360,7 +360,7 @@ export default function DiaryDetail() {
   }, [exportModalOpen, exportCandidateDiaries]);
 
   const getOwnerTextForExport = (item) => {
-    if (!canExportMatched) return '我的日记';
+    if (!canExportMatched) return '我的记录';
     const owner = getDiaryOwner(item);
     if (owner === 'matched') {
       const name = pairUsers?.matched?.name ? `：${pairUsers.matched.name}` : '';
@@ -498,7 +498,7 @@ export default function DiaryDetail() {
     const selected = exportCandidateDiaries.filter((d) => selectedSet.has(d?.id));
 
     if (selected.length === 0) {
-      message.warning('请先选择要导出的日记');
+      message.warning('请先选择要导出的记录');
       return;
     }
 
@@ -520,12 +520,12 @@ export default function DiaryDetail() {
           : exportIncludeMain
             ? '主用户'
             : '被匹配用户')
-        : '我的日记';
+        : '我的记录';
 
       const keywordPart = safeFilenamePart(exportSearch.trim());
       const keywordSuffix = keywordPart ? `-${keywordPart}` : '';
 
-      const baseName = `日记导出-${scopePart}-${orderPart}-${countPart}${keywordSuffix}-${ts}`;
+      const baseName = `记录导出-${scopePart}-${orderPart}-${countPart}${keywordSuffix}-${ts}`;
       const buildOpts = {
         order: exportOrder,
         includeMain: exportIncludeMain,
@@ -580,7 +580,7 @@ export default function DiaryDetail() {
         borderBottom: `1px solid ${token.colorBorderSecondary}`,
         background: token.colorBgLayout,
       }}>
-        <Title level={4} style={{ margin: '0 0 16px 0' }}>日记列表</Title>
+        <Title level={4} style={{ margin: '0 0 16px 0' }}>记录列表</Title>
         <Space direction="vertical" style={{ width: '100%' }}>
           <div style={{ display: 'flex', alignItems: 'center' }}>
             <Switch
@@ -588,7 +588,7 @@ export default function DiaryDetail() {
               onChange={setShowMatched}
               disabled={!(pairUsers?.main?.id && pairUsers?.matched?.id)}
             />
-            <span style={{ marginLeft: 8, fontSize: '14px' }}>显示匹配日记</span>
+            <span style={{ marginLeft: 8, fontSize: '14px' }}>显示匹配记录</span>
           </div>
           <Button onClick={openExportModal} block>
             导出…
@@ -700,11 +700,11 @@ export default function DiaryDetail() {
                 返回
               </Button>
               <Button onClick={refreshDiary} loading={refreshing} size={isMobile ? 'middle' : 'large'}>
-                {isMobile ? '刷新详情' : '重新访问此日记详情（强制更新）'}
+                {isMobile ? '刷新详情' : '重新访问此记录详情（强制更新）'}
               </Button>
               {isMobile && (
                 <Button icon={<MenuOutlined />} onClick={() => setDrawerVisible(true)} size={isMobile ? 'middle' : 'large'}>
-                  日记列表
+                  记录列表
                 </Button>
               )}
             </Space>
@@ -802,7 +802,7 @@ export default function DiaryDetail() {
 
       {isMobile && (
         <Drawer
-          title="日记列表"
+          title="记录列表"
           placement="left"
           onClose={() => setDrawerVisible(false)}
           open={drawerVisible}
@@ -813,7 +813,7 @@ export default function DiaryDetail() {
       )}
 
       <Modal
-        title="导出日记"
+        title="导出记录"
         open={exportModalOpen}
         onCancel={() => setExportModalOpen(false)}
         onOk={handleExport}
@@ -828,14 +828,14 @@ export default function DiaryDetail() {
             {canExportMatched ? (
               <Space wrap>
                 <Checkbox checked={exportIncludeMain} onChange={(e) => setExportIncludeMain(e.target.checked)}>
-                  主用户（我的日记）{pairUsers?.main?.name ? `：${pairUsers.main.name}` : ''}
+                  主用户（我的记录）{pairUsers?.main?.name ? `：${pairUsers.main.name}` : ''}
                 </Checkbox>
                 <Checkbox checked={exportIncludeMatched} onChange={(e) => setExportIncludeMatched(e.target.checked)}>
                   被匹配用户{pairUsers?.matched?.name ? `：${pairUsers.matched.name}` : ''}
                 </Checkbox>
               </Space>
             ) : (
-              <div style={{ color: token.colorTextSecondary }}>当前仅可导出我的日记（未开启/不可用“显示匹配日记”）。</div>
+              <div style={{ color: token.colorTextSecondary }}>当前仅可导出我的记录（未开启/不可用“显示匹配记录”）。</div>
             )}
           </div>
 
@@ -893,7 +893,7 @@ export default function DiaryDetail() {
           </div>
 
           <div>
-            <div style={{ fontWeight: 600, marginBottom: 8 }}>选择要导出的日记</div>
+            <div style={{ fontWeight: 600, marginBottom: 8 }}>选择要导出的记录</div>
             <Space direction="vertical" style={{ width: '100%' }}>
               <Input
                 placeholder="按标题 / 内容 / 日期 搜索（可选）"
@@ -920,7 +920,7 @@ export default function DiaryDetail() {
                     setExportSelectedIds([currentId]);
                   }}
                 >
-                  仅当前日记
+                  仅当前记录
                 </Button>
                 <span style={{ color: token.colorTextSecondary }}>
                   已选 {exportSelectedIds.length} / {exportCandidateDiaries.length}
@@ -931,7 +931,7 @@ export default function DiaryDetail() {
                 <List
                   size="small"
                   dataSource={exportCandidateDiaries}
-                  locale={{ emptyText: '暂无可导出的日记' }}
+                  locale={{ emptyText: '暂无可导出的记录' }}
                   renderItem={(item) => {
                     const checked = (exportSelectedIds || []).includes(item?.id);
                     const owner = getDiaryOwner(item);

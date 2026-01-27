@@ -337,7 +337,7 @@ export default function AllUsers() {
                         Nideriji ID: {user.nideriji_userid}
                       </Text>
                       <Text type="secondary" style={{ marginTop: 8, display: 'block' }}>
-                        日记数：{user.diary_count ?? 0}
+                        记录数：{user.diary_count ?? 0}
                       </Text>
                       {isPaired && pairedSource && (
                         <div style={{ marginTop: 10 }}>

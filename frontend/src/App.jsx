@@ -123,8 +123,8 @@ function AppShell({ themeMode, setThemeMode }) {
   const navItems = useMemo(() => ([
     { key: '/', icon: <AppstoreOutlined />, label: '仪表盘' },
     { key: '/accounts', icon: <UserOutlined />, label: '账号管理' },
-    { key: '/diaries', icon: <BookOutlined />, label: '日记列表' },
-    { key: '/publish', icon: <SendOutlined />, label: '发布日记' },
+    { key: '/diaries', icon: <BookOutlined />, label: '记录列表' },
+    { key: '/publish', icon: <SendOutlined />, label: '发布记录' },
     { key: '/users', icon: <TeamOutlined />, label: '所有用户' },
     { key: '/sync-logs', icon: <HistoryOutlined />, label: '同步记录' },
   ]), []);
@@ -229,7 +229,7 @@ function AppShell({ themeMode, setThemeMode }) {
             {!siderCollapsed && (
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontWeight: 700, lineHeight: 1.1 }}>YourNote</div>
-                <div style={{ fontSize: 12, color: token.colorTextSecondary }}>本地日记采集与发布</div>
+                <div style={{ fontSize: 12, color: token.colorTextSecondary }}>本地记录采集与发布</div>
               </div>
             )}
           </div>

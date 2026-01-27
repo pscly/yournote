@@ -36,7 +36,7 @@ const openFirstDiaryDetail = async (page) => {
   return true;
 };
 
-test.describe('日记详情页测试', () => {
+test.describe('记录详情页测试', () => {
   test('桌面端 - 应该显示固定导航栏', async ({ page }) => {       
     await page.goto('/');
     await ensureAccess(page);
@@ -55,21 +55,21 @@ test.describe('日记详情页测试', () => {
     expect(parseInt(headerStyle.zIndex)).toBeGreaterThanOrEqual(100);
   });
 
-  test('桌面端 - 日记详情页应该显示左侧日记列表', async ({ page }) => {
+  test('桌面端 - 记录详情页应该显示左侧记录列表', async ({ page }) => {
     if (await openFirstDiaryDetail(page)) {
       const sider = page.locator('.ant-layout-sider');
       await expect(sider).toBeVisible({ timeout: 15000 });
 
-      const listTitle = page.getByRole('heading', { name: '日记列表' });        
+      const listTitle = page.getByRole('heading', { name: '记录列表' });        
       await expect(listTitle).toBeVisible({ timeout: 15000 });
     }
   });
 
-  test('桌面端 - 应该显示匹配日记开关', async ({ page }) => {
+  test('桌面端 - 应该显示匹配记录开关', async ({ page }) => {
     if (await openFirstDiaryDetail(page)) {
-      await expect(page.getByRole('heading', { name: '日记列表' })).toBeVisible();
+      await expect(page.getByRole('heading', { name: '记录列表' })).toBeVisible();
 
-      const switchLabel = page.getByText('显示匹配日记', { exact: true });
+      const switchLabel = page.getByText('显示匹配记录', { exact: true });
       await expect(switchLabel).toBeVisible();
 
       const switchElement = page.locator('.ant-switch').first();
@@ -77,7 +77,7 @@ test.describe('日记详情页测试', () => {
     }
   });
 
-  test('桌面端 - 日记列表项应该有颜色边框', async ({ page }) => {
+  test('桌面端 - 记录列表项应该有颜色边框', async ({ page }) => {
     if (await openFirstDiaryDetail(page)) {
       const listItem = page.locator('.ant-list-item').first();
       if (await listItem.isVisible()) {
@@ -89,7 +89,7 @@ test.describe('日记详情页测试', () => {
     }
   });
 
-  test('桌面端 - 应该显示日记内容和标签', async ({ page }) => {
+  test('桌面端 - 应该显示记录内容和标签', async ({ page }) => {
     if (await openFirstDiaryDetail(page)) {
       const card = page.locator('.ant-card').first();
       await expect(card).toBeVisible();
@@ -116,7 +116,7 @@ test.describe('移动端测试', () => {
     if (await openFirstDiaryDetail(page)) {
       await page.waitForTimeout(500);
 
-      const menuButton = page.locator('text=日记列表').first();
+      const menuButton = page.locator('text=记录列表').first();
       await expect(menuButton).toBeVisible();
     }
   });
@@ -126,7 +126,7 @@ test.describe('移动端测试', () => {
     if (await openFirstDiaryDetail(page)) {
       await page.waitForTimeout(500);
 
-      const menuButton = page.locator('button:has-text("日记列表")').first();   
+      const menuButton = page.locator('button:has-text("记录列表")').first();   
       if (await menuButton.isVisible()) {
         await menuButton.click();
         await page.waitForTimeout(500);

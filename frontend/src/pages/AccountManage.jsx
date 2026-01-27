@@ -104,7 +104,7 @@ export default function AccountManage() {
       if (account?.id) {
         const startedAt = Date.now();
         const msgKey = `sync-${account.id}`;
-        message.open({ key: msgKey, type: 'loading', content: '后台正在更新中（自动采集日记）...', duration: 0 });
+        message.open({ key: msgKey, type: 'loading', content: '后台正在更新中（自动采集记录）...', duration: 0 });
 
         (async () => {
           const log = await waitForLatestSyncLog(account.id, startedAt, { timeoutMs: 60000 });
@@ -121,7 +121,7 @@ export default function AccountManage() {
             message.open({
               key: msgKey,
               type: 'success',
-              content: `更新完成：我的日记 ${log.diaries_count ?? '-'} 条，配对日记 ${log.paired_diaries_count ?? '-'} 条`,
+              content: `更新完成：我的记录 ${log.diaries_count ?? '-'} 条，配对记录 ${log.paired_diaries_count ?? '-'} 条`,
             });
             return;
           }
@@ -186,7 +186,7 @@ export default function AccountManage() {
           message.open({
             key: msgKey,
             type: 'success',
-            content: `更新完成：我的日记 ${log.diaries_count ?? '-'} 条，配对日记 ${log.paired_diaries_count ?? '-'} 条`,
+            content: `更新完成：我的记录 ${log.diaries_count ?? '-'} 条，配对记录 ${log.paired_diaries_count ?? '-'} 条`,
           });
         } else if (log.status === 'failed') {
           message.open({

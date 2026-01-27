@@ -171,7 +171,7 @@ export default function DiaryList() {
       setDiaries(sortDiariesByLatest(matched));
     } catch (error) {
       if (loadSeqRef.current !== seq) return;
-      message.error('加载日记失败: ' + (error?.message || '未知错误'));
+      message.error('加载记录失败: ' + (error?.message || '未知错误'));
     } finally {
       if (loadSeqRef.current === seq) setLoading(false);
     }
@@ -264,7 +264,7 @@ export default function DiaryList() {
     return (
       <Page>
         <Title level={3} style={{ marginTop: 0 }}>
-          日记列表
+          记录列表
         </Title>
         <Card>
           <Text type="secondary">暂无账号，请先去“账号管理”添加并等待同步完成。</Text>
@@ -276,7 +276,7 @@ export default function DiaryList() {
   return (
     <Page>
       <Title level={3} style={{ marginTop: 0 }}>
-        日记列表
+        记录列表
       </Title>
 
       <Card style={{ marginBottom: 16 }}>
@@ -291,7 +291,7 @@ export default function DiaryList() {
           <Button icon={<ReloadOutlined />} onClick={loadDiaries} disabled={!selectedAccount} block={isMobile}>
             刷新
           </Button>
-          <Tag color="magenta">仅显示配对用户日记</Tag>
+          <Tag color="magenta">仅显示配对用户记录</Tag>
         </Space>
       </Card>
 
@@ -300,7 +300,7 @@ export default function DiaryList() {
           <List
             dataSource={diaries}
             loading={loading}
-            locale={{ emptyText: '暂无配对日记' }}
+            locale={{ emptyText: '暂无配对记录' }}
             renderItem={(item) => {
               const u = userById?.[item?.user_id];
               const name = u?.name || (item?.user_id ? `用户 ${item.user_id}` : '未知');
@@ -343,7 +343,7 @@ export default function DiaryList() {
             rowKey="id"
             loading={loading}
             pagination={{ pageSize: 20, showSizeChanger: true }}
-            locale={{ emptyText: '暂无配对日记' }}
+            locale={{ emptyText: '暂无配对记录' }}
             scroll={{ x: 1300 }}
           />
         )}

@@ -162,7 +162,7 @@ export default function UserDetail() {
             <Descriptions.Item label="用户名">{user.name || '未命名'}</Descriptions.Item>
             <Descriptions.Item label="用户ID">{user.nideriji_userid}</Descriptions.Item>
             <Descriptions.Item label="角色">{user.role || '-'}</Descriptions.Item>
-            <Descriptions.Item label="日记数">{user.diary_count ?? 0}</Descriptions.Item>
+            <Descriptions.Item label="记录数">{user.diary_count ?? 0}</Descriptions.Item>
             <Descriptions.Item label="字数">{user.word_count ?? 0}</Descriptions.Item>
             <Descriptions.Item label="最后登录">{formatDateTime(user.last_login_time)}</Descriptions.Item>
             <Descriptions.Item label="个性签名" span={isMobile ? 1 : 2}>
@@ -193,11 +193,11 @@ export default function UserDetail() {
           </Card>
         )}
 
-        <Card title={`日记列表（${diaries.length}）`}>
+        <Card title={`记录列表（${diaries.length}）`}>
           {isMobile ? (
             <List
               dataSource={diaries}
-              locale={{ emptyText: '暂无日记' }}
+              locale={{ emptyText: '暂无记录' }}
               renderItem={(item) => (
                 <Card
                   hoverable

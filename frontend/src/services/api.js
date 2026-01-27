@@ -91,7 +91,7 @@ export const statsAPI = {
   overview: () => api.get('/stats/overview'),
 };
 
-// 日记查询
+// 记录查询
 export const diaryAPI = {
   list: (params) => api.get('/diaries', { params }),
   get: (id) => api.get(`/diaries/${id}`),
@@ -99,7 +99,7 @@ export const diaryAPI = {
   refresh: (id) => api.post(`/diaries/${id}/refresh`),
 };
 
-// 日记修改历史
+// 记录修改历史
 export const diaryHistoryAPI = {
   list: (diaryId) => api.get(`/diary-history/${diaryId}`),
 };
@@ -125,7 +125,7 @@ export const accessAPI = {
   status: () => api.get('/access/status'),
 };
 
-// 发布日记（草稿/历史/一键发布）
+// 发布记录（草稿/历史/一键发布）
 export const publishDiaryAPI = {
   getDraft: (date) => api.get(`/publish-diaries/draft/${encodeURIComponent(date)}`),
   saveDraft: (date, data) => api.put(`/publish-diaries/draft/${encodeURIComponent(date)}`, data),

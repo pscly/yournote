@@ -159,7 +159,7 @@ export default function PublishDiary() {
       const name = a?.user_name || a?.nideriji_userid || a?.email || `账号${a?.id}`;
       const lastDiaryTs = a?.last_diary_ts;
       const lastDiaryText = lastDiaryTs ? formatBeijingDateTimeFromTs(lastDiaryTs) : '暂无';
-      const label = `${name}（账号ID: ${a?.id} / 用户ID: ${a?.nideriji_userid} / 最近日记: ${lastDiaryText}）`;
+      const label = `${name}（账号ID: ${a?.id} / 用户ID: ${a?.nideriji_userid} / 最近记录: ${lastDiaryText}）`;
       return { label, value: a.id };
     });
   }, [accounts]);
@@ -321,7 +321,7 @@ export default function PublishDiary() {
       return;
     }
     if (!content || !content.trim()) {
-      message.warning('日记内容不能为空');
+      message.warning('记录内容不能为空');
       return;
     }
     if (!selectedAccountIds || selectedAccountIds.length === 0) {
@@ -607,7 +607,7 @@ export default function PublishDiary() {
         return <Tag>未知</Tag>;
       },
     },
-    { title: '日记ID', dataIndex: 'nideriji_diary_id', key: 'nideriji_diary_id', width: 120, render: (v) => v || '-' },
+    { title: '记录ID', dataIndex: 'nideriji_diary_id', key: 'nideriji_diary_id', width: 120, render: (v) => v || '-' },
     { title: '错误信息', dataIndex: 'error_message', key: 'error_message', render: (v) => v || '-' },
   ];
 
@@ -723,7 +723,7 @@ export default function PublishDiary() {
               <Tag color="blue">账号ID {r?.account_id ?? '-'}</Tag>
               <Tag color="purple">用户ID {r?.nideriji_userid ?? '-'}</Tag>
               {runStatusTag(r?.status)}
-              <Tag color="geekblue">日记ID {r?.nideriji_diary_id || '-'}</Tag>
+              <Tag color="geekblue">记录ID {r?.nideriji_diary_id || '-'}</Tag>
             </Space>
             {r?.error_message ? (
               <Text
@@ -755,8 +755,8 @@ export default function PublishDiary() {
     <Page maxWidth={1200}>
       <Space direction="vertical" size={16} style={{ width: '100%' }}>     
         <div>
-          <Title level={3} style={{ margin: 0 }}>一键发布日记</Title>      
-          <Text type="secondary">草稿/发布历史独立存储，不会和“采集日记列表”混在一起。</Text>
+          <Title level={3} style={{ margin: 0 }}>一键发布记录</Title>      
+          <Text type="secondary">草稿/发布历史独立存储，不会和“采集记录列表”混在一起。</Text>
         </div>
 
         {(accounts || []).length === 0 && !accountsLoading && (
@@ -764,7 +764,7 @@ export default function PublishDiary() {
             type="warning"
             showIcon
             message="还没有可用账号"
-            description="请先到「账号管理」添加至少一个账号，才能发布日记。"
+            description="请先到「账号管理」添加至少一个账号，才能发布记录。"
           />
         )}
 
@@ -824,7 +824,7 @@ export default function PublishDiary() {
                     )}
                   </Card>
 
-                  <Card size="small" title="日记内容（发布/更新）">
+                  <Card size="small" title="记录内容（发布/更新）">
                     <Space direction="vertical" size={12} style={{ width: '100%' }}>
                       <TextArea
                         value={content}
@@ -1010,7 +1010,7 @@ export default function PublishDiary() {
               type="info"
               showIcon
               message={`日期：${runDetail.date}；目标账号：${runDetail?.target_account_ids?.length ?? 0} 个`}
-              description="发布接口是“发布或更新”，同一天再次发布会更新该日记。"
+              description="发布接口是“发布或更新”，同一天再次发布会更新该记录。"
             />
             {isMobile ? runDetailListNode : runDetailTableNode}
           </Space>

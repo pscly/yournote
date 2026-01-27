@@ -124,8 +124,8 @@ export default function SyncLogs() {
                   </Space>
 
                   <Space wrap size={8}>
-                    <Tag>我的日记：{log?.diaries_count ?? '-'}</Tag>
-                    <Tag>配对日记：{log?.paired_diaries_count ?? '-'}</Tag>
+                    <Tag>我的记录：{log?.diaries_count ?? '-'}</Tag>
+                    <Tag>配对记录：{log?.paired_diaries_count ?? '-'}</Tag>
                   </Space>
 
                   {log?.error_message ? (
@@ -156,8 +156,8 @@ export default function SyncLogs() {
               { title: '时间', dataIndex: 'sync_time', key: 'sync_time', width: 200, render: formatTime },
               { title: '账号ID', dataIndex: 'account_id', key: 'account_id', width: 100 },
               { title: '状态', dataIndex: 'status', key: 'status', width: 110, render: statusTag },
-              { title: '我的日记', dataIndex: 'diaries_count', key: 'diaries_count', width: 110, render: v => v ?? '-' },
-              { title: '配对日记', dataIndex: 'paired_diaries_count', key: 'paired_diaries_count', width: 110, render: v => v ?? '-' },
+              { title: '我的记录', dataIndex: 'diaries_count', key: 'diaries_count', width: 110, render: v => v ?? '-' },
+              { title: '配对记录', dataIndex: 'paired_diaries_count', key: 'paired_diaries_count', width: 110, render: v => v ?? '-' },
               { title: '错误', dataIndex: 'error_message', key: 'error_message', ellipsis: true, render: v => v || '-' },
             ]}
           />

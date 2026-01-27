@@ -43,10 +43,10 @@ test.describe('YourNote 应用测试', () => {
     await page.waitForTimeout(2000);
   });
 
-  test('应该能够查看日记列表', async ({ page }) => {
+  test('应该能够查看记录列表', async ({ page }) => {
     await page.goto('/diaries');
     await ensureAccess(page);
-    await expect(page.getByRole('heading', { name: '日记列表', level: 3 })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '记录列表', level: 3 })).toBeVisible();
   });
 
   test('应该能够查看所有用户', async ({ page }) => {
@@ -68,7 +68,7 @@ test.describe('YourNote 应用测试', () => {
     }
   });
 
-  test('应该能够点击日记查看详情', async ({ page }) => {
+  test('应该能够点击记录查看详情', async ({ page }) => {
     await page.goto('/diaries');
     await page.waitForTimeout(1000);
     const firstRow = page.locator('.ant-table-tbody tr').first();

@@ -1,14 +1,19 @@
 """Data synchronization API"""
-from fastapi import APIRouter, Depends, HTTPException    
 from datetime import timezone
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from ..database import get_db
-from ..models import Account, SyncLog
+from ..models import SyncLog
 from ..schemas import SyncResponse
 from ..services import CollectorService
+from ..utils.errors import safe_str
 
 router = APIRouter(prefix="/sync", tags=["sync"])
+logger = logging.getLogger(__name__)
 
 
 @router.post("/trigger/{account_id}")
@@ -22,9 +27,10 @@ async def trigger_sync(
         result = await collector.sync_account(account_id)
         return result
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=safe_str(e)) from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
+        logger.exception("[SYNC] Trigger failed account_id=%s", account_id)
+        raise HTTPException(status_code=500, detail="Sync failed") from e
 
 
 @router.get("/logs", response_model=list[SyncResponse])
@@ -34,7 +40,7 @@ async def get_sync_logs(
     db: AsyncSession = Depends(get_db)
 ):
     """获取同步历史记录"""
-    query = select(SyncLog).order_by(SyncLog.sync_time.desc()).limit(limit)     
+    query = select(SyncLog).order_by(SyncLog.sync_time.desc()).limit(limit)
     if account_id is not None:
         query = query.where(SyncLog.account_id == account_id)
 

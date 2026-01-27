@@ -30,6 +30,7 @@ from ..schemas import (
 )
 from ..services import CollectorService, DiaryPublisherService
 from ..services.background import schedule_publish_run
+from ..utils.errors import safe_str
 
 router = APIRouter(prefix="/publish-diaries", tags=["publish-diaries"])
 
@@ -361,17 +362,18 @@ async def publish_one(
         status_code = getattr(getattr(e, "response", None), "status_code", None)
         item.status = "failed"
         item.error_message = (
-            f"HTTPError: {e}" + (f" (HTTP {status_code})" if isinstance(status_code, int) else "")
+            f"HTTPError: {safe_str(e, max_len=400)}"
+            + (f" (HTTP {status_code})" if isinstance(status_code, int) else "")
         )
     except httpx.TimeoutException:
         item.status = "failed"
         item.error_message = "发布超时（上游无响应）"
     except httpx.RequestError as e:
         item.status = "failed"
-        item.error_message = f"网络异常: {e}"
+        item.error_message = f"网络异常: {safe_str(e, max_len=400)}"
     except Exception as e:
         item.status = "failed"
-        item.error_message = f"发布异常: {e}"
+        item.error_message = f"发布异常: {safe_str(e, max_len=400)}"
 
     await db.commit()
     await db.refresh(item)
@@ -458,7 +460,7 @@ async def publish(body: PublishDiaryRequest, db: AsyncSession = Depends(get_db))
             status_code = getattr(getattr(e, "response", None), "status_code", None)
             item.status = "failed"
             item.error_message = (
-                f"HTTPError: {e}"
+                f"HTTPError: {safe_str(e, max_len=400)}"
                 + (f" (HTTP {status_code})" if isinstance(status_code, int) else "")
             )
         except httpx.TimeoutException:
@@ -466,10 +468,10 @@ async def publish(body: PublishDiaryRequest, db: AsyncSession = Depends(get_db))
             item.error_message = "发布超时（上游无响应）"
         except httpx.RequestError as e:
             item.status = "failed"
-            item.error_message = f"网络异常: {e}"
+            item.error_message = f"网络异常: {safe_str(e, max_len=400)}"
         except Exception as e:
             item.status = "failed"
-            item.error_message = f"发布异常: {e}"
+            item.error_message = f"发布异常: {safe_str(e, max_len=400)}"
 
     await db.commit()
     await db.refresh(run)

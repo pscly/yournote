@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Badge, Button, Divider, List, Popover, Space, Tag, Typography, message } from 'antd';
 import { HistoryOutlined, ReloadOutlined, SyncOutlined } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
@@ -35,7 +35,7 @@ export default function SyncMonitor({ compact = false } = {}) {
   const unmountedRef = useRef(false);
   const pollNowRef = useRef(null);
 
-  const loadAccounts = async ({ silent = true } = {}) => {
+  const loadAccounts = useCallback(async ({ silent = true } = {}) => {
     try {
       // 优先走轻量接口；老后端没有该接口时回退到完整列表
       let res;
@@ -63,9 +63,9 @@ export default function SyncMonitor({ compact = false } = {}) {
       if (!silent) message.error('加载账号失败: ' + (e?.message || String(e)));
       // 忽略：同步指示器不应影响主功能
     }
-  };
+  }, []);
 
-  const pollLogs = async () => {
+  const pollLogs = useCallback(async () => {
     if (pollingRef.current) return { ok: true, hasRunning: false, skipped: true };
     pollingRef.current = true;
     try {
@@ -178,7 +178,7 @@ export default function SyncMonitor({ compact = false } = {}) {
     } finally {
       pollingRef.current = false;
     }
-  };
+  }, [loadAccounts]);
 
   useEffect(() => {
     unmountedRef.current = false;
@@ -246,7 +246,7 @@ export default function SyncMonitor({ compact = false } = {}) {
       clearPollTimer();
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, []);
+  }, [loadAccounts, pollLogs]);
 
   const runningLogs = useMemo(() => latestLogs.filter(l => l.status === 'running'), [latestLogs]);
   const runningCount = runningLogs.length;

@@ -1,4 +1,6 @@
 """Diary query API"""
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,8 +8,10 @@ from ..database import get_db
 from ..models import Diary, User
 from ..schemas import DiaryRefreshResponse, DiaryResponse
 from ..services import CollectorService
+from ..utils.errors import safe_str
 
 router = APIRouter(prefix="/diaries", tags=["diaries"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("", response_model=list[DiaryResponse])
@@ -74,6 +78,7 @@ async def refresh_diary(
         diary, refresh_info = await collector.refresh_diary(diary_id)
         return {"diary": diary, "refresh_info": refresh_info}
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=safe_str(e)) from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Refresh failed: {str(e)}")
+        logger.exception("[DIARY] Refresh failed diary_id=%s", diary_id)
+        raise HTTPException(status_code=500, detail="Refresh failed") from e

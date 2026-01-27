@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import httpx
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession      
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
 from ..models import Account, Diary, User
@@ -20,8 +21,10 @@ from ..schemas import (
 from ..services.collector import CollectorService
 from ..services.background import schedule_account_sync
 from ..utils.token import get_token_status
+from ..utils.errors import exception_summary, safe_str
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
+logger = logging.getLogger(__name__)
 
 
 def _normalize_auth_token(token_or_jwt: str) -> str:
@@ -93,7 +96,7 @@ async def _remote_validate_token(auth_token: str, *, db: AsyncSession) -> TokenS
             expired=bool(base.get("expired")),
             expires_at=base.get("expires_at"),
             checked_at=checked_at,
-            reason=f"网络异常: {e}",
+            reason=f"网络异常: {safe_str(e)}",
         )
     except Exception as e:
         return TokenStatus(
@@ -101,7 +104,7 @@ async def _remote_validate_token(auth_token: str, *, db: AsyncSession) -> TokenS
             expired=bool(base.get("expired")),
             expires_at=base.get("expires_at"),
             checked_at=checked_at,
-            reason=f"校验异常: {e}",
+            reason=f"校验异常: {safe_str(e)}",
         )
 
 
@@ -158,9 +161,10 @@ async def create_account(
         except httpx.TimeoutException as e:
             raise HTTPException(status_code=504, detail="登录超时（上游无响应）") from e
         except httpx.RequestError as e:
-            raise HTTPException(status_code=502, detail=f"登录请求失败: {e}") from e
+            raise HTTPException(status_code=502, detail=f"登录请求失败: {safe_str(e)}") from e
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"登录异常: {e}") from e
+            logger.exception("[ACCOUNTS] 登录异常: %s", exception_summary(e))
+            raise HTTPException(status_code=500, detail="登录异常") from e
     else:
         raise HTTPException(status_code=422, detail="请提供 auth_token 或 email+password")
 
@@ -175,9 +179,10 @@ async def create_account(
     except httpx.TimeoutException as e:
         raise HTTPException(status_code=504, detail="获取账号信息超时（上游无响应）") from e
     except httpx.RequestError as e:
-        raise HTTPException(status_code=502, detail=f"获取账号信息失败: {e}") from e
+        raise HTTPException(status_code=502, detail=f"获取账号信息失败: {safe_str(e)}") from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取账号信息失败: {e}") from e
+        logger.exception("[ACCOUNTS] 获取账号信息异常: %s", exception_summary(e))
+        raise HTTPException(status_code=500, detail="获取账号信息失败") from e
 
     user_config = rdata.get("user_config") or {}
     nideriji_userid = user_config.get("userid")
@@ -383,7 +388,7 @@ async def validate_account_token(
             expired=bool(base.get("expired")),
             expires_at=base.get("expires_at"),
             checked_at=checked_at,
-            reason=f"网络异常: {e}",
+            reason=f"网络异常: {safe_str(e)}",
         )
     except Exception as e:
         base = get_token_status(account.auth_token)
@@ -392,7 +397,7 @@ async def validate_account_token(
             expired=bool(base.get("expired")),
             expires_at=base.get("expires_at"),
             checked_at=checked_at,
-            reason=f"校验异常: {e}",
+            reason=f"校验异常: {safe_str(e)}",
         )
 
 
@@ -426,9 +431,10 @@ async def update_account_token(
     except httpx.TimeoutException as e:
         raise HTTPException(status_code=504, detail="获取账号信息超时（上游无响应）") from e
     except httpx.RequestError as e:
-        raise HTTPException(status_code=502, detail=f"获取账号信息失败: {e}") from e
+        raise HTTPException(status_code=502, detail=f"获取账号信息失败: {safe_str(e)}") from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取账号信息失败: {e}") from e
+        logger.exception("[ACCOUNTS] 更新 token 时获取账号信息异常: %s", exception_summary(e))
+        raise HTTPException(status_code=500, detail="获取账号信息失败") from e
 
     user_config = rdata.get("user_config") or {}
     token_userid = user_config.get("userid")

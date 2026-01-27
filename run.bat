@@ -2,8 +2,9 @@
 chcp 65001 >nul
 setlocal enabledelayedexpansion
 
-@REM set "BACKEND_PORT=31012"
-@REM set "FRONTEND_PORT=31011"
+@REM 默认端口（如 .env 未配置则使用默认值）
+set "BACKEND_PORT=31012"
+set "FRONTEND_PORT=31011"
 
 if exist "%~dp0.env" (
   for /f "usebackq eol=# tokens=1,* delims==" %%A in ("%~dp0.env") do (
@@ -31,6 +32,6 @@ echo ========================================
 echo start ok
 echo ========================================
 echo.
-echo  http://localhost:%BACKEND_PORT%
-echo  http://localhost:%FRONTEND_PORT%
+echo  Backend:   http://localhost:%BACKEND_PORT%  (Docs: /docs)
+echo  Frontend:  http://localhost:%FRONTEND_PORT%
 echo.

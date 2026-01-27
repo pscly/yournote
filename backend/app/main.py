@@ -1,11 +1,15 @@
 """FastAPI application entry point"""
 import asyncio
 import logging
+from pathlib import Path
+import tomllib
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
+
 from .config import settings
-from .database import init_db
+from .database import engine, init_db
 from .api import (
     accounts_router,
     sync_router,
@@ -20,6 +24,7 @@ from .api import (
 from .scheduler import scheduler
 from .middleware.access_gate import AccessGateMiddleware
 from .utils.access_log import AccessLogTimer, log_http_request
+from .utils.errors import exception_summary
 
 logger = logging.getLogger(__name__)
 
@@ -28,10 +33,27 @@ if not settings.sql_echo:
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
     logging.getLogger("sqlalchemy.pool").setLevel(logging.WARNING)
 
+
+def _read_app_version() -> str:
+    """尽量从仓库根目录的 pyproject.toml 读取版本，避免多处硬编码导致不一致。"""
+    try:
+        repo_root = Path(__file__).resolve().parents[2]
+        pyproject = repo_root / "pyproject.toml"
+        if not pyproject.exists():
+            return "0.1.0"
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        version = ((data.get("project") or {}).get("version") or "").strip()
+        return version or "0.1.0"
+    except Exception:
+        return "0.1.0"
+
+
+APP_VERSION = _read_app_version()
+
 app = FastAPI(
     title="YourNote API",
     description="Diary collection system with multi-account support",
-    version="0.1.0"
+    version=APP_VERSION,
 )
 
 # CORS middleware
@@ -77,7 +99,8 @@ async def access_log_middleware(request: Request, call_next):
         status_code = getattr(response, "status_code", 200) or 200
         return response
     except Exception as e:
-        error = str(e)
+        # 访问日志里也尽量避免写入过多敏感/超长信息：保留异常类型用于定位即可。
+        error = exception_summary(e, max_len=200 if settings.debug else 0)
         raise
     finally:
         # 访问日志不应影响业务逻辑；任何写日志异常都吞掉
@@ -89,7 +112,7 @@ async def access_log_middleware(request: Request, call_next):
                 error=error,
             )
         except Exception:
-            pass
+            logger.debug("[ACCESS_LOG] Failed to write access log", exc_info=True)
 
 # Register API routers
 app.include_router(accounts_router, prefix=settings.api_prefix)
@@ -135,10 +158,17 @@ async def shutdown_event():
 @app.get("/")
 async def root():
     """Root endpoint"""
-    return {"message": "YourNote API", "version": "0.1.0"}
+    return {"message": "YourNote API", "version": APP_VERSION}
 
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
-    return {"status": "healthy"}
+    """Health check endpoint（包含 DB 可用性探测）。"""
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+    except Exception as e:
+        logger.exception("[HEALTH] Database check failed: %s", exception_summary(e))
+        raise HTTPException(status_code=503, detail="DB_UNAVAILABLE") from e
+
+    return {"status": "healthy", "db": "ok"}

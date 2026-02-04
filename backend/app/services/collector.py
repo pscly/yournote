@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
@@ -19,6 +20,7 @@ import httpx
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..config import settings
 from ..models import (
     Account,
     Diary,
@@ -28,8 +30,10 @@ from ..models import (
     SyncLog,
     User,
 )
+from .image_cache import ImageCacheService
 
 _ACCOUNT_SYNC_LOCKS: dict[int, asyncio.Lock] = {}
+logger = logging.getLogger(__name__)
 
 
 class CollectorService:
@@ -515,21 +519,23 @@ class CollectorService:
                         account_id
                     )
 
-                await self._save_diaries(
+                _, prefetch_diary_ids_main = await self._save_diaries(
                     rdata['diaries'],
                     account_id,
                     rdata['user_config']['userid'],
                     account.auth_token,
                 )
 
+                prefetch_diary_ids: list[int] = list(prefetch_diary_ids_main or [])
                 if rdata.get('diaries_paired'):
                     paired_user_id = rdata['user_config']['paired_user_config']['userid']
-                    await self._save_diaries(
+                    _, prefetch_diary_ids_paired = await self._save_diaries(
                         rdata['diaries_paired'],
                         account_id,
                         paired_user_id,
                         account.auth_token,
                     )
+                    prefetch_diary_ids.extend(list(prefetch_diary_ids_paired or []))
 
                 diaries_count = 0
                 paired_diaries_count = 0
@@ -547,6 +553,14 @@ class CollectorService:
                     error_message=None,
                 )
                 await self.db.commit()
+
+                # 同步成功后后台预拉取图片（不阻塞接口返回）
+                if (
+                    bool(settings.image_cache_enabled)
+                    and bool(settings.image_cache_prefetch_on_sync)
+                    and prefetch_diary_ids
+                ):
+                    self._schedule_prefetch_images(account_id=account_id, diary_ids=prefetch_diary_ids)
 
                 return {
                     'status': 'success',
@@ -643,10 +657,15 @@ class CollectorService:
         account_id: int,
         user_nideriji_id: int,
         auth_token: str,
-    ) -> int:
-        """保存日记数据"""
+    ) -> tuple[int, list[int]]:
+        """保存日记数据。
+
+        返回：
+        - 本次新增日记数
+        - 需要图片预拉取的 diary_id 列表（仅包含本次新增/更新且正文含 `[图13]` 的记录）
+        """
         if not diaries:
-            return 0
+            return 0, []
 
         result = await self.db.execute(
             select(User).where(User.nideriji_userid == user_nideriji_id)        
@@ -707,6 +726,7 @@ class CollectorService:
         requested_detail_ids = set(need_detail_ids)
 
         count = 0
+        touched_for_prefetch: list[Diary] = []
         for diary_data in diaries:
             diary_id = diary_data.get("id")
             if not isinstance(diary_id, int):
@@ -742,6 +762,8 @@ class CollectorService:
                 self.db.add(diary)
                 existing_by_id[diary_id] = diary
                 count += 1
+                if ImageCacheService.extract_image_ids(diary.content):
+                    touched_for_prefetch.append(diary)
             else:
                 # 检查内容是否有变化
                 new_content = diary_data.get('content', '') or ''
@@ -772,6 +794,8 @@ class CollectorService:
                     diary.weather = diary_data.get('weather', '')
                     diary.mood = diary_data.get('mood', '')
                     diary.ts = diary_data.get('ts')
+                    if ImageCacheService.extract_image_ids(diary.content):
+                        touched_for_prefetch.append(diary)
 
             # 若本次对该日记发起过详情请求，则记录结果（用于后续跳过重复请求）
             if diary and diary_id in requested_detail_ids:
@@ -793,7 +817,110 @@ class CollectorService:
                         error="详情接口未返回该日记",
                     )
 
-        return count
+        # 确保新建记录拿到自增 id，便于后台预拉取任务定位
+        await self.db.flush()
+
+        prefetch_ids: list[int] = []
+        seen_prefetch: set[int] = set()
+        for d in touched_for_prefetch:
+            did = getattr(d, "id", None)
+            if isinstance(did, int) and did > 0 and did not in seen_prefetch:
+                seen_prefetch.add(did)
+                prefetch_ids.append(did)
+
+        return count, prefetch_ids
+
+    def _schedule_prefetch_images(self, *, account_id: int, diary_ids: list[int]) -> None:
+        """在后台预拉取图片（进程内异步任务，不阻塞同步 API）。"""
+        if not diary_ids:
+            return
+
+        # 去重 + 限制最多处理多少条记录（防止一次同步触发过量预取）
+        uniq: list[int] = []
+        seen: set[int] = set()
+        for did in diary_ids:
+            if not isinstance(did, int) or did <= 0:
+                continue
+            if did in seen:
+                continue
+            seen.add(did)
+            uniq.append(did)
+
+        if not uniq:
+            return
+
+        max_images = int(settings.image_cache_prefetch_max_images_per_sync or 0) or 200
+
+        async def _run() -> None:
+            # 注意：不能复用当前请求的 db session（请求结束会关闭），这里重新开 session
+            from ..database import AsyncSessionLocal
+
+            try:
+                async with AsyncSessionLocal() as session:
+                    account = await session.scalar(select(Account).where(Account.id == account_id))
+                    if (
+                        not account
+                        or not isinstance(getattr(account, "auth_token", None), str)
+                        or not account.auth_token.strip()
+                    ):
+                        return
+
+                    # 读取本次需要预拉取的记录正文与 nideriji_userid（用于图片接口路径）
+                    rows = (
+                        await session.execute(
+                            select(Diary.id, Diary.content, User.nideriji_userid)
+                            .join(User, Diary.user_id == User.id)
+                            .where(Diary.account_id == account_id, Diary.id.in_(uniq))
+                        )
+                    ).all()
+
+                    service = ImageCacheService(session)
+
+                    # 汇总待拉取的图片（去重），并限制数量
+                    todo: list[tuple[int, int]] = []
+                    seen_key: set[tuple[int, int]] = set()
+                    for _diary_id, content, nideriji_userid in rows:
+                        if not isinstance(nideriji_userid, int) or nideriji_userid <= 0:
+                            continue
+                        for image_id in service.extract_image_ids(content):
+                            key = (nideriji_userid, image_id)
+                            if key in seen_key:
+                                continue
+                            seen_key.add(key)
+                            todo.append(key)
+                            if len(todo) >= max_images:
+                                break
+                        if len(todo) >= max_images:
+                            break
+
+                    if not todo:
+                        return
+
+                    timeout = float(settings.image_cache_timeout_seconds or 20)
+                    async with httpx.AsyncClient(timeout=timeout) as client:
+                        for nideriji_userid, image_id in todo:
+                            await service.ensure_cached(
+                                auth_token=account.auth_token,
+                                nideriji_userid=nideriji_userid,
+                                image_id=image_id,
+                                client=client,
+                            )
+
+                    await session.commit()
+            except Exception:
+                logger.exception("[IMAGE_PREFETCH] Failed account_id=%s", account_id)
+
+        task = asyncio.create_task(_run())
+
+        def _on_done(t: asyncio.Task) -> None:
+            try:
+                t.result()
+            except asyncio.CancelledError:
+                return
+            except Exception:
+                logger.exception("[IMAGE_PREFETCH] Task error account_id=%s", account_id)
+
+        task.add_done_callback(_on_done)
 
     async def _start_sync_log(self, account_id: int) -> SyncLog:
         """创建一条“running”同步日志并返回（需要后续 finish 更新）。"""

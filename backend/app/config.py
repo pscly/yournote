@@ -133,6 +133,20 @@ class Settings(BaseSettings):
     sync_interval_minutes: int | None = None
     sync_interval_hours: int | None = None
 
+    # Image Cache（图片缓存）
+    # - 将 nideriji 的 `[图13]` 图片拉取后缓存在本项目数据库里
+    image_cache_enabled: bool = True
+    # 是否在同步完成后后台预拉取图片（不阻塞同步接口返回）
+    image_cache_prefetch_on_sync: bool = True
+    # 单次同步最多预拉取多少张图片（避免极端情况下拉爆带宽/连接池）
+    image_cache_prefetch_max_images_per_sync: int = 200
+    # 单张图片拉取超时时间（秒）
+    image_cache_timeout_seconds: int = 20
+    # 单张图片最大允许大小（字节），超出则拒绝缓存（防止异常大文件占内存）
+    image_cache_max_size_bytes: int = 10 * 1024 * 1024
+    # 上游图片接口 base url
+    nideriji_image_base_url: str = "https://f.nideriji.cn/api/image"
+
     @model_validator(mode="after")
     def _build_database_url_if_missing(self) -> "Settings":
         if self.database_url and self.database_url.strip():

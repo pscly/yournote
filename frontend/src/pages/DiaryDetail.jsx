@@ -8,6 +8,7 @@ import {
   Descriptions,
   Divider,
   Drawer,
+  Image,
   Input,
   Layout,
   List,
@@ -317,6 +318,82 @@ export default function DiaryDetail() {
   const totalWordCount = wordStats?.total?.no_whitespace ?? 0;
   const contentRawCount = wordStats?.content?.raw ?? 0;
   const modifiedTimeText = useMemo(() => formatBeijingDateTimeFromTs(diary?.ts), [diary?.ts]);
+
+  const diaryImages = useMemo(() => {
+    const images = diary?.attachments?.images;
+    return Array.isArray(images) ? images.filter(Boolean) : [];
+  }, [diary]);
+
+  const diaryImageById = useMemo(() => {
+    const map = new Map();
+    for (const img of (diaryImages || [])) {
+      const idNum = Number(img?.image_id);
+      if (Number.isFinite(idNum)) map.set(idNum, img);
+    }
+    return map;
+  }, [diaryImages]);
+
+  const [failedImageIds, setFailedImageIds] = useState({});
+  useEffect(() => {
+    // 切换记录时清空图片失败状态，避免复用旧的 error 状态
+    setFailedImageIds({});
+  }, [diary?.id]);
+
+  const markImageFailed = (imageId) => {
+    if (!imageId) return;
+    setFailedImageIds((prev) => ({ ...(prev || {}), [imageId]: true }));
+  };
+
+  const renderDiaryContent = (raw) => {
+    const text = String(raw ?? '');
+    const re = /\[图(\d+)\]/g;
+    const nodes = [];
+    let lastIndex = 0;
+    let match;
+
+    while ((match = re.exec(text)) !== null) {
+      const start = match.index;
+      const end = start + match[0].length;
+      if (start > lastIndex) {
+        nodes.push({ type: 'text', value: text.slice(lastIndex, start), key: `t-${lastIndex}` });
+      }
+
+      const imageId = Number(match[1]);
+      nodes.push({ type: 'image', imageId, key: `img-${start}-${imageId}` });
+      lastIndex = end;
+    }
+    if (lastIndex < text.length) {
+      nodes.push({ type: 'text', value: text.slice(lastIndex), key: `t-${lastIndex}` });
+    }
+
+    return nodes.map((n) => {
+      if (n.type === 'text') {
+        return <span key={n.key}>{n.value}</span>;
+      }
+      const imageId = n.imageId;
+      const imgInfo = diaryImageById.get(imageId);
+      const src = imgInfo?.url || `/api/diaries/${diary?.id}/images/${imageId}`;
+
+      if (failedImageIds?.[imageId]) {
+        return (
+          <div key={n.key} style={{ margin: '12px 0', padding: 12, borderRadius: 8, background: token.colorFillAlter, color: token.colorTextSecondary }}>
+            图片 {imageId} 加载失败（可能无权限或已删除）
+          </div>
+        );
+      }
+
+      return (
+        <div key={n.key} style={{ margin: '12px 0' }}>
+          <Image
+            src={src}
+            alt={`图${imageId}`}
+            style={{ maxWidth: '100%', borderRadius: 8 }}
+            onError={() => markImageFailed(imageId)}
+          />
+        </div>
+      );
+    });
+  };
 
   const exportCandidateDiaries = useMemo(() => {
     const list = (diaryList || []).filter(Boolean);
@@ -760,10 +837,68 @@ export default function DiaryDetail() {
                 color: token.colorText,
                 marginBottom: 0
               }}>
-                {diary.content}
+                {renderDiaryContent(diary.content)}
               </Paragraph>
             </div>
           </Card>
+
+          {diaryImages.length > 0 && (
+            <Card
+              title={`附件（图片 ${diaryImages.length}）`}
+              bordered={false}
+              style={{
+                boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+                borderRadius: 8,
+              }}
+            >
+              <Image.PreviewGroup>
+                <Space wrap size={[12, 12]}>
+                  {diaryImages.map((img) => {
+                    const imageId = Number(img?.image_id);
+                    const src = img?.url || `/api/diaries/${diary?.id}/images/${imageId}`;
+                    if (!imageId) return null;
+
+                    if (failedImageIds?.[imageId]) {
+                      return (
+                        <div
+                          key={`att-${imageId}`}
+                          style={{
+                            width: 120,
+                            height: 120,
+                            borderRadius: 8,
+                            background: token.colorFillAlter,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            padding: 8,
+                            color: token.colorTextSecondary,
+                            textAlign: 'center',
+                            fontSize: 12,
+                          }}
+                        >
+                          图{imageId}
+                          <br />
+                          加载失败
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <Image
+                        key={`att-${imageId}`}
+                        src={src}
+                        alt={`图${imageId}`}
+                        width={120}
+                        height={120}
+                        style={{ objectFit: 'cover', borderRadius: 8 }}
+                        onError={() => markImageFailed(imageId)}
+                      />
+                    );
+                  })}
+                </Space>
+              </Image.PreviewGroup>
+            </Card>
+          )}
 
           {history.length > 0 && (
             <Card

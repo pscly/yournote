@@ -1,5 +1,18 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime, date
+
+
+class DiaryImageAttachment(BaseModel):
+    """记录图片附件信息（用于前端把 `[图13]` 映射成可访问的图片 URL）。"""
+
+    image_id: int
+    url: str
+    cached: bool = False
+    status: str | None = None
+
+
+class DiaryAttachments(BaseModel):
+    images: list[DiaryImageAttachment] = Field(default_factory=list)
 
 
 class DiaryResponse(BaseModel):
@@ -21,3 +34,9 @@ class DiaryResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class DiaryDetailResponse(DiaryResponse):
+    """记录详情响应：在基础字段上附带附件信息。"""
+
+    attachments: DiaryAttachments | None = None

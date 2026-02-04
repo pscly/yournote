@@ -89,6 +89,7 @@ export const syncAPI = {
 // 仪表盘统计
 export const statsAPI = {
   overview: () => api.get('/stats/overview'),
+  pairedDiariesIncrease: (params) => api.get('/stats/paired-diaries/increase', { params }),
 };
 
 // 记录查询

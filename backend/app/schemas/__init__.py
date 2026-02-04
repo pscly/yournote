@@ -17,7 +17,7 @@ from .publish_diary import (
     PublishDiaryRunResponse,
     PublishDiaryStartRunRequest,
 )
-from .stats import StatsOverviewResponse
+from .stats import StatsOverviewResponse, StatsPairedDiariesIncreaseResponse
 from .sync import SyncResponse
 from .user import UserResponse
 
@@ -33,6 +33,7 @@ __all__ = [
     "DiaryRefreshResponse",
     "SyncResponse",
     "StatsOverviewResponse",
+    "StatsPairedDiariesIncreaseResponse",
     "PublishDiaryDraftResponse",
     "PublishDiaryDraftUpsertRequest",
     "PublishDiaryPublishOneRequest",

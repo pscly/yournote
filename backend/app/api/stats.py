@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import timezone
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..database import get_db
-from ..models import Account, SyncLog, User
-from ..schemas import StatsOverviewResponse
+from ..database import engine, get_db
+from ..models import Account, Diary, PairedRelationship, SyncLog, User
+from ..schemas import StatsOverviewResponse, StatsPairedDiariesIncreaseResponse
 
 router = APIRouter(prefix="/stats", tags=["stats"])
 
@@ -67,4 +67,84 @@ async def get_stats_overview(db: AsyncSession = Depends(get_db)):
         total_users=int(total_users or 0),
         paired_diaries_count=int(paired_diaries_count or 0),
         last_sync_time=last_sync_time,
+    )
+
+
+@router.get("/paired-diaries/increase", response_model=StatsPairedDiariesIncreaseResponse)
+async def get_paired_diaries_increase(
+    since_ms: int = Query(..., ge=1, description="统计起点（UTC 毫秒时间戳）"),
+    limit: int = Query(200, ge=1, le=1000, description="返回明细条数上限"),
+    include_inactive: bool = Query(False, description="是否包含停用账号"),
+    db: AsyncSession = Depends(get_db),
+):
+    """统计窗口内“新增配对记录”（按首次入库时间 created_at）。
+
+    设计目标：
+    - 解决“今天才解锁了以前的记录”的口径问题：只要是今天（窗口内）首次入库，就算新增；
+    - 返回 count + 明细列表（按 created_at 倒序），便于前端展示抽屉列表；
+    - 仅统计“配对用户”的记录：Diary.user_id == PairedRelationship.paired_user_id。
+    """
+
+    since_dt_utc = datetime.fromtimestamp(since_ms / 1000, tz=timezone.utc)
+
+    # 兼容 SQLite：
+    # - SQLite 不真正支持 tz-aware datetime；
+    # - 项目里 SQLite 通常存储 naive datetime（代表 UTC 的 CURRENT_TIMESTAMP）。
+    # 这里把 since_dt 也转成 naive，避免比较时出现字符串格式差异导致的“漏算/错算”。
+    if engine.dialect.name == "sqlite":
+        since_dt = since_dt_utc.replace(tzinfo=None)
+    else:
+        since_dt = since_dt_utc
+
+    join_condition = (
+        (Diary.account_id == PairedRelationship.account_id)
+        & (Diary.user_id == PairedRelationship.paired_user_id)
+    )
+
+    base_filters = [
+        PairedRelationship.is_active.is_(True),
+        Diary.created_at.is_not(None),
+        Diary.created_at >= since_dt,
+    ]
+
+    count_query = (
+        select(func.count(distinct(Diary.id)))
+        .select_from(Diary)
+        .join(PairedRelationship, join_condition)
+        .where(*base_filters)
+    )
+    if not include_inactive:
+        count_query = (
+            count_query.join(Account, Diary.account_id == Account.id)
+            .where(Account.is_active.is_(True))
+        )
+    total_count = await db.scalar(count_query)
+
+    diary_query = (
+        select(Diary)
+        .join(PairedRelationship, join_condition)
+        .where(*base_filters)
+        .distinct()
+        .order_by(Diary.created_at.desc())
+        .limit(limit)
+    )
+    if not include_inactive:
+        diary_query = (
+            diary_query.join(Account, Diary.account_id == Account.id)
+            .where(Account.is_active.is_(True))
+        )
+    diaries = await db.scalars(diary_query)
+    diaries = list(diaries.all())
+
+    user_ids = {d.user_id for d in diaries if d and isinstance(d.user_id, int)}
+    authors: list[User] = []
+    if user_ids:
+        authors = await db.scalars(select(User).where(User.id.in_(sorted(user_ids))))
+        authors = list(authors.all())
+
+    return StatsPairedDiariesIncreaseResponse(
+        count=int(total_count or 0),
+        diaries=diaries,
+        authors=authors,
+        since_time=since_dt_utc,
     )

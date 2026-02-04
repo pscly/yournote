@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Button, Card, Col, Drawer, Grid, List, Row, Space, Spin, Statistic, Table, Tag, Typography, message } from 'antd';
+import { Button, Card, Col, Drawer, Grid, List, Row, Segmented, Space, Spin, Statistic, Table, Tag, Typography, message } from 'antd';
 import { BookOutlined, DownOutlined, SyncOutlined, TeamOutlined, UpOutlined, UserOutlined } from '@ant-design/icons';
 import { accountAPI, diaryAPI, statsAPI, syncAPI, userAPI } from '../services/api';
 import { waitForLatestSyncLog } from '../utils/sync';
 import { useNavigate } from 'react-router-dom';
-import { formatBeijingDateTimeFromTs, normalizeEpochMs, parseServerDate } from '../utils/time';
+import { formatBeijingDateTime, formatBeijingDateTimeFromTs, normalizeEpochMs, parseServerDate } from '../utils/time';
 import { getDiaryWordStats } from '../utils/wordCount';
 import Page from '../components/Page';
 
@@ -12,6 +12,8 @@ const { Title, Text } = Typography;
 
 // 账号列表收起状态：默认收起；同时用 v2 避免旧版本“默认展开”的历史偏好影响新默认值。
 const DASHBOARD_ACCOUNTS_COLLAPSED_KEY = 'yournote.dashboard.accountsCollapsed.v2';
+// 仪表盘“新增配对记录”统计窗口（可切换，避免只按记录日期导致漏算“今天才解锁的旧记录”）
+const DASHBOARD_PAIRED_INCREASE_WINDOW_KEY = 'yournote.dashboard.pairedIncreaseWindow.v1';
 
 function readBoolStorage(key) {
   try {
@@ -32,6 +34,25 @@ function writeBoolStorage(key, value) {
   }
 }
 
+function readStringStorage(key) {
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (typeof raw !== 'string') return null;
+    const s = raw.trim();
+    return s ? s : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeStringStorage(key, value) {
+  try {
+    window.localStorage.setItem(key, String(value ?? ''));
+  } catch {
+    // ignore
+  }
+}
+
 function getDiaryTimestamp(item) {
   const raw = item?.created_date || item?.created_time;
   const d = parseServerDate(raw);
@@ -43,20 +64,6 @@ function getDiarySortKey(item) {
   const tsMs = normalizeEpochMs(item?.ts);
   if (tsMs) return tsMs;
   return getDiaryTimestamp(item);
-}
-
-function getDiaryCreatedAtMs(item) {
-  const created = parseServerDate(item?.created_time);
-  if (created) return created.getTime();
-
-  // 兜底：created_time 缺失时，尽量用 ts（最后修改）或 created_date 推断
-  const tsMs = normalizeEpochMs(item?.ts);
-  if (tsMs) return tsMs;
-
-  const dateOnly = parseServerDate(item?.created_date);
-  if (dateOnly) return dateOnly.getTime();
-
-  return 0;
 }
 
 export default function Dashboard() {
@@ -78,6 +85,15 @@ export default function Dashboard() {
     totalUsers: 0,
     pairedDiaries: 0,
   });
+  const [pairedIncreaseWindow, setPairedIncreaseWindow] = useState(() => {
+    const stored = readStringStorage(DASHBOARD_PAIRED_INCREASE_WINDOW_KEY);
+    if (stored === 'today0' || stored === 'yesterday20') return stored;
+    return 'yesterday20';
+  });
+  const [pairedIncreaseLoading, setPairedIncreaseLoading] = useState(false);
+  const [pairedIncreaseCount, setPairedIncreaseCount] = useState(0);
+  const [pairedIncreaseDiaries, setPairedIncreaseDiaries] = useState([]);
+  const [pairedIncreaseAuthorByUserId, setPairedIncreaseAuthorByUserId] = useState({});
   const [latestLoading, setLatestLoading] = useState(false);
   const [latestDiaries, setLatestDiaries] = useState([]);
   const [latestAuthorByUserId, setLatestAuthorByUserId] = useState({});   
@@ -88,30 +104,75 @@ export default function Dashboard() {
     day: '2-digit',
   }).format(new Date()).replace(/\//g, '-');
 
-  const sinceYesterday20Ms = useMemo(() => {
-    // 今日 20:00（北京时间）= 今日 12:00（UTC）；取 -24h 得到“昨日 20:00（北京时间）”
+  const pairedIncreaseSinceMs = useMemo(() => {
     const [yy, mm, dd] = String(todayText).split('-').map(Number);
     if (!yy || !mm || !dd) return 0;
+
+    if (pairedIncreaseWindow === 'today0') {
+      // 今日 00:00（北京时间）= 昨日 16:00（UTC）
+      return Date.UTC(yy, mm - 1, dd, 0, 0, 0) - 8 * 60 * 60 * 1000;
+    }
+
+    // 默认：昨日 20:00（北京时间）= 今日 12:00（UTC）再 -24h
     const today20UtcMs = Date.UTC(yy, mm - 1, dd, 12, 0, 0);
     return today20UtcMs - 24 * 60 * 60 * 1000;
-  }, [todayText]);
+  }, [todayText, pairedIncreaseWindow]);
 
-  const sinceYesterday20Label = useMemo(() => {
-    if (!sinceYesterday20Ms) return '昨日 20:00';
-    return formatBeijingDateTimeFromTs(sinceYesterday20Ms);
-  }, [sinceYesterday20Ms]);
+  const pairedIncreaseSinceLabel = useMemo(() => {
+    if (!pairedIncreaseSinceMs) {
+      return pairedIncreaseWindow === 'today0' ? '今日 00:00' : '昨日 20:00';
+    }
+    return formatBeijingDateTimeFromTs(pairedIncreaseSinceMs);
+  }, [pairedIncreaseSinceMs, pairedIncreaseWindow]);
 
-  const pairedIncreaseDiaries = useMemo(() => {
-    if (!sinceYesterday20Ms) return [];
-    const list = (latestDiaries || []).filter((d) => getDiaryCreatedAtMs(d) >= sinceYesterday20Ms);
-    list.sort((a, b) => getDiaryCreatedAtMs(b) - getDiaryCreatedAtMs(a));
-    return list;
-  }, [latestDiaries, sinceYesterday20Ms]);
-
-  const pairedIncreaseCount = pairedIncreaseDiaries.length;
   const increaseDiaryLimit = isMobile ? 20 : 50;
-  const increaseDiariesToShow = pairedIncreaseDiaries.slice(0, increaseDiaryLimit);
+  const increaseDiariesToShow = (pairedIncreaseDiaries || []).slice(0, increaseDiaryLimit);
   const increaseHidden = Math.max(0, pairedIncreaseCount - increaseDiariesToShow.length);
+
+  const handlePairedIncreaseWindowChange = useCallback((value) => {
+    const v = String(value || '');
+    if (v !== 'today0' && v !== 'yesterday20') return;
+    setPairedIncreaseWindow(v);
+    writeStringStorage(DASHBOARD_PAIRED_INCREASE_WINDOW_KEY, v);
+  }, []);
+
+  const loadPairedIncrease = useCallback(async () => {
+    if (!pairedIncreaseSinceMs) {
+      setPairedIncreaseCount(0);
+      setPairedIncreaseDiaries([]);
+      setPairedIncreaseAuthorByUserId({});
+      return;
+    }
+
+    setPairedIncreaseLoading(true);
+    try {
+      const res = await statsAPI.pairedDiariesIncrease({
+        since_ms: pairedIncreaseSinceMs,
+        limit: 200,
+        include_inactive: 1,
+      });
+      const data = res?.data || {};
+      const diaries = Array.isArray(data?.diaries) ? data.diaries : [];
+      const authors = Array.isArray(data?.authors) ? data.authors : [];
+
+      const authorById = {};
+      authors.forEach((u) => {
+        if (u?.id) authorById[u.id] = u;
+      });
+
+      const countNum = Number(data?.count);
+      setPairedIncreaseCount(Number.isFinite(countNum) ? countNum : diaries.length);
+      setPairedIncreaseDiaries(diaries);
+      setPairedIncreaseAuthorByUserId(authorById);
+    } catch (error) {
+      setPairedIncreaseCount(0);
+      setPairedIncreaseDiaries([]);
+      setPairedIncreaseAuthorByUserId({});
+      message.error('加载新增配对记录失败: ' + error.message);
+    } finally {
+      setPairedIncreaseLoading(false);
+    }
+  }, [pairedIncreaseSinceMs]);
 
   const loadLatestPairedDiariesAll = useCallback(async (accountList) => {        
     const list = accountList || [];
@@ -208,6 +269,10 @@ export default function Dashboard() {
     loadData();
   }, [loadData]);
 
+  useEffect(() => {
+    loadPairedIncrease();
+  }, [loadPairedIncrease]);
+
   const toggleAccountsCollapsed = useCallback(() => {
     setAccountsCollapsed((prev) => {
       const next = !prev;
@@ -242,7 +307,7 @@ export default function Dashboard() {
         message.open({ key: msgKey, type: 'success', content: '更新完成' });
       }
 
-      await loadData();
+      await Promise.all([loadData(), loadPairedIncrease()]);
     } catch (error) {
       message.open({ key: msgKey, type: 'error', content: '更新失败: ' + error.message });
     } finally {
@@ -278,11 +343,20 @@ export default function Dashboard() {
         <Col xs={12} md={8}>
           <Card hoverable onClick={() => navigate('/diaries')} style={{ cursor: 'pointer' }}>
             <Statistic title="配对记录数" value={stats.pairedDiaries} prefix={<BookOutlined />} />
-            <Space size={8} style={{ marginTop: 8 }} onClick={(e) => e.stopPropagation()}>
+            <Space size={8} style={{ marginTop: 8 }} onClick={(e) => e.stopPropagation()} wrap>
               <Text type="secondary" style={{ fontSize: 12 }}>
-                较 {sinceYesterday20Label}
+                较 {pairedIncreaseSinceLabel}
               </Text>
-              {latestLoading ? (
+              <Segmented
+                size="small"
+                value={pairedIncreaseWindow}
+                options={[
+                  { label: '昨日20:00', value: 'yesterday20' },
+                  { label: '今日00:00', value: 'today0' },
+                ]}
+                onChange={handlePairedIncreaseWindowChange}
+              />
+              {pairedIncreaseLoading ? (
                 <Spin size="small" />
               ) : pairedIncreaseCount > 0 ? (
                 <Button
@@ -310,7 +384,7 @@ export default function Dashboard() {
         title="账号列表"
         extra={
           <Space size={8}>
-            <Button onClick={loadData} disabled={loading}>
+            <Button onClick={() => { loadData(); loadPairedIncrease(); }} disabled={loading}>
               刷新
             </Button>
             <Button
@@ -507,7 +581,7 @@ export default function Dashboard() {
           <Space size={8} align="baseline">
             <span>新增配对记录</span>
             <Text type="secondary" style={{ fontSize: 12 }}>
-              （较 {sinceYesterday20Label} +{pairedIncreaseCount}）
+              （较 {pairedIncreaseSinceLabel} +{pairedIncreaseCount}）
             </Text>
           </Space>
         )}
@@ -516,8 +590,9 @@ export default function Dashboard() {
         width={isMobile ? '100%' : 560}
       >
         <Space wrap style={{ width: '100%', marginBottom: 12 }}>
-          <Tag color="green">统计起点：{sinceYesterday20Label}</Tag>
+          <Tag color="green">统计起点：{pairedIncreaseSinceLabel}</Tag>
           <Tag color="magenta">仅配对用户记录</Tag>
+          <Tag color="cyan">按入库时间统计</Tag>
         </Space>
 
         {increaseHidden > 0 && (
@@ -528,17 +603,18 @@ export default function Dashboard() {
 
         <List
           dataSource={increaseDiariesToShow}
+          loading={pairedIncreaseLoading}
           locale={{ emptyText: '暂无新增配对记录' }}
           renderItem={(item) => {
             const stats = getDiaryWordStats(item);
             const wordCount = stats?.content?.no_whitespace ?? 0;
 
-            const author = latestAuthorByUserId?.[item?.user_id];
+            const author = pairedIncreaseAuthorByUserId?.[item?.user_id];
             const authorName = author?.name || (item?.user_id ? `用户 ${item.user_id}` : '未知作者');
             const authorText = author?.nideriji_userid ? `${authorName}（${author.nideriji_userid}）` : authorName;
 
-            const createdAtMs = getDiaryCreatedAtMs(item);
-            const createdAtText = createdAtMs ? formatBeijingDateTimeFromTs(createdAtMs) : '';
+            const insertedAtText = item?.created_at ? formatBeijingDateTime(item.created_at) : '';
+            const showInsertedAt = insertedAtText && insertedAtText !== '-';
 
             const updatedAtText = formatBeijingDateTimeFromTs(item?.ts);
 
@@ -562,7 +638,7 @@ export default function Dashboard() {
                     <Space wrap size={8}>
                       <Tag color="magenta">{authorText}</Tag>
                       <Tag color="blue">{item?.created_date || '-'}</Tag>
-                      {createdAtText && <Tag color="cyan">创建 {createdAtText}</Tag>}
+                      {showInsertedAt && <Tag color="cyan">入库 {insertedAtText}</Tag>}
                       {updatedAtText && <Tag color="purple">更新 {updatedAtText}</Tag>}
                       <Tag color="geekblue">{wordCount} 字</Tag>
                       <span style={{ fontWeight: 500 }}>{item?.title || '无标题'}</span>
@@ -582,7 +658,6 @@ export default function Dashboard() {
               setDeltaDrawerOpen(false);
               navigate('/diaries');
             }}
-            disabled={accounts.length === 0}
           >
             去记录列表
           </Button>

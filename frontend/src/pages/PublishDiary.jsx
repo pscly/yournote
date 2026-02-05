@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Button, Card, Checkbox, Divider, Grid, Input, InputNumber, List, Pagination, Segmented, Tooltip, message, Modal, Space, Table, Tabs, Tag, Typography } from 'antd';
+import { Alert, Button, Card, Checkbox, Collapse, Divider, Grid, Input, InputNumber, List, Pagination, Segmented, Skeleton, Tooltip, message, Modal, Space, Table, Tabs, Tag, Typography } from 'antd';
 import { ReloadOutlined, SaveOutlined, SendOutlined } from '@ant-design/icons';
 import { accountAPI, publishDiaryAPI } from '../services/api';
 import Page from '../components/Page';
@@ -181,6 +181,7 @@ export default function PublishDiary() {
   // 发布历史查看方式：
   // - date：按日期筛选（查看当日所有发布）
   // - daily_latest：按天汇总（每个日期只展示“最后一次发布”，用于浏览所有日子的日终稿）
+  // - daily_timeline：按天连续阅读（同样是日终稿，但用“时间线/折叠面板”承载正文）
   const [historyView, setHistoryView] = useState('date');
   const [latestByDate, setLatestByDate] = useState({
     count: 0,
@@ -200,6 +201,11 @@ export default function PublishDiary() {
     return readDailyLatestPreviewSettings().preview_len;
   });
 
+  const [timelineOpenKeys, setTimelineOpenKeys] = useState([]);
+  const [timelineRunDetailsById, setTimelineRunDetailsById] = useState({});
+  const [timelineLoadingById, setTimelineLoadingById] = useState({});
+  const [timelineErrorById, setTimelineErrorById] = useState({});
+
   const [runModalOpen, setRunModalOpen] = useState(false);
   const [runDetailLoading, setRunDetailLoading] = useState(false);
   const [runDetail, setRunDetail] = useState(null);
@@ -210,6 +216,7 @@ export default function PublishDiary() {
   const [publishPanelOpen, setPublishPanelOpen] = useState(true);
   const publishMsgKeyRef = useRef(null);
   const publishPollTimerRef = useRef(null);
+  const timelineAutoInitRef = useRef('');
 
   const accountOptions = useMemo(() => {
     return (accounts || []).map(a => {
@@ -277,6 +284,53 @@ export default function PublishDiary() {
       setAccountsLoading(false);
     }
   }, []);
+
+  // “按天连续阅读（日终稿）”需要按需拉取每个 run 的完整正文；这里做一个轻量的缓存与并发保护。
+  const timelineRunDetailsRef = useRef({});
+  const timelineLoadingRef = useRef({});
+
+  useEffect(() => {
+    timelineRunDetailsRef.current = timelineRunDetailsById || {};
+  }, [timelineRunDetailsById]);
+
+  useEffect(() => {
+    timelineLoadingRef.current = timelineLoadingById || {};
+  }, [timelineLoadingById]);
+
+  const ensureTimelineRunDetailLoaded = useCallback(async (runId) => {
+    const idNum = Number(runId);
+    if (!Number.isFinite(idNum) || idNum <= 0) return;
+    const id = String(Math.trunc(idNum));
+
+    if (timelineRunDetailsRef.current?.[id]) return;
+    if (timelineLoadingRef.current?.[id]) return;
+
+    setTimelineLoadingById(prev => ({ ...(prev || {}), [id]: true }));
+    setTimelineErrorById(prev => ({ ...(prev || {}), [id]: '' }));
+    try {
+      const res = await publishDiaryAPI.getRun(idNum);
+      const run = res?.data;
+      if (run?.id) {
+        setTimelineRunDetailsById(prev => ({ ...(prev || {}), [id]: run }));
+      } else {
+        setTimelineErrorById(prev => ({ ...(prev || {}), [id]: '返回数据不完整' }));
+      }
+    } catch (error) {
+      const msg = error?.response?.data?.detail || error?.message || String(error);
+      setTimelineErrorById(prev => ({ ...(prev || {}), [id]: String(msg || '加载失败') }));
+      message.error('加载日终稿内容失败: ' + (msg || '未知错误'));
+    } finally {
+      setTimelineLoadingById(prev => ({ ...(prev || {}), [id]: false }));
+    }
+  }, []);
+
+  const expandTimelineRecent = useCallback((count) => {
+    const n = Math.max(1, Number(count) || 1);
+    const items = Array.isArray(latestByDate?.items) ? latestByDate.items : [];
+    const keys = items.slice(0, n).map(r => String(r?.id)).filter(Boolean);
+    setTimelineOpenKeys(keys);
+    keys.forEach(k => ensureTimelineRunDetailLoaded(k));
+  }, [ensureTimelineRunDetailLoaded, latestByDate?.items]);
 
   const loadDraft = async (targetDate) => {
     if (!targetDate) return;
@@ -625,10 +679,10 @@ export default function PublishDiary() {
 
   const handleHistoryViewChange = useCallback((value) => {
     const v = String(value || '');
-    if (v !== 'date' && v !== 'daily_latest') return;
+    if (v !== 'date' && v !== 'daily_latest' && v !== 'daily_timeline') return;
 
     setHistoryView(v);
-    if (v === 'daily_latest') {
+    if (v === 'daily_latest' || v === 'daily_timeline') {
       // 切到“按天汇总”时，默认从第一页开始加载
       loadLatestRunsByDate({ page: 1, pageSize: latestByDatePageSize });
     }
@@ -653,10 +707,44 @@ export default function PublishDiary() {
   // 当用户切到“发布历史”页且选择“按天汇总”时，自动加载一次（避免空白页）
   useEffect(() => {
     if (activeTab !== 'history') return;
-    if (historyView !== 'daily_latest') return;
+    if (historyView !== 'daily_latest' && historyView !== 'daily_timeline') return;
     loadLatestRunsByDate({ page: latestByDatePage, pageSize: latestByDatePageSize });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, historyView]);
+
+  // 时间线模式：进入页面后默认展开最近一天，方便“连续阅读”。
+  useEffect(() => {
+    if (historyView !== 'daily_timeline') {
+      timelineAutoInitRef.current = '';
+      return;
+    }
+    if (activeTab !== 'history') return;
+    if (latestByDateLoading) return;
+
+    const items = Array.isArray(latestByDate?.items) ? latestByDate.items : [];
+    if (items.length === 0) return;
+
+    const marker = `${Number(latestByDate?.offset) || 0}:${Number(latestByDate?.limit) || latestByDatePageSize}`;
+    if (timelineAutoInitRef.current === marker) return;
+    timelineAutoInitRef.current = marker;
+
+    if (timelineOpenKeys.length > 0) return;
+    const firstId = items[0]?.id;
+    if (!firstId) return;
+    const key = String(firstId);
+    setTimelineOpenKeys([key]);
+    ensureTimelineRunDetailLoaded(key);
+  }, [
+    activeTab,
+    historyView,
+    latestByDateLoading,
+    latestByDate?.offset,
+    latestByDate?.limit,
+    latestByDate?.items,
+    latestByDatePageSize,
+    timelineOpenKeys.length,
+    ensureTimelineRunDetailLoaded,
+  ]);
 
   useEffect(() => {
     if (!publishing) return;
@@ -1102,6 +1190,7 @@ export default function PublishDiary() {
                         options={[
                           { label: '按日期（当日全部发布）', value: 'date' },
                           { label: '按天汇总（日终稿）', value: 'daily_latest' },
+                          { label: '按天连续阅读（日终稿）', value: 'daily_timeline' },
                         ]}
                         onChange={handleHistoryViewChange}
                       />
@@ -1135,24 +1224,26 @@ export default function PublishDiary() {
                         <Text type="secondary">查看的是该日“所有发布记录”（同一天可能多次更新）。</Text>
                       </Space>
                     </Card>
-                  ) : (
-                    <Card
-                      size="small"
-                      title="按天汇总（日终稿）"
-                      extra={(
-                        <Button
-                          icon={<ReloadOutlined />}
-                          onClick={() => loadLatestRunsByDate({ page: latestByDatePage, pageSize: latestByDatePageSize })}
-                          loading={latestByDateLoading}
+	                  ) : (
+	                    <Card
+	                      size="small"
+	                      title={historyView === 'daily_timeline' ? '按天连续阅读（日终稿）' : '按天汇总（日终稿）'}
+	                      extra={(
+	                        <Button
+	                          icon={<ReloadOutlined />}
+	                          onClick={() => loadLatestRunsByDate({ page: latestByDatePage, pageSize: latestByDatePageSize })}
+	                          loading={latestByDateLoading}
                         >
                           刷新
                         </Button>
                       )}
-                    >
-                      <Space direction="vertical" size={8} style={{ width: '100%' }}>
-                        <Text type="secondary">
-                          每个日期只展示“最后一次发布”（以该日最大 Run ID 作为日终稿）。点击可查看内容。
-                        </Text>
+	                    >
+	                      <Space direction="vertical" size={8} style={{ width: '100%' }}>
+	                        <Text type="secondary">
+	                          {historyView === 'daily_timeline'
+	                            ? '每个日期只展示“最后一次发布”（以该日最大 Run ID 作为日终稿）。展开即可连续阅读（正文按需加载）。'
+	                            : '每个日期只展示“最后一次发布”（以该日最大 Run ID 作为日终稿）。点击可查看内容。'}
+	                        </Text>
                         <Space wrap>
                           <Tag color="geekblue">共 {latestByDate?.count ?? 0} 天</Tag>
                           <Tag>当前 {latestByDatePage} / {Math.max(1, Math.ceil((latestByDate?.count ?? 0) / (latestByDatePageSize || 1)))}</Tag>
@@ -1202,24 +1293,43 @@ export default function PublishDiary() {
                               }}
                               disabled={!dailyLatestPreviewEnabled}
                               style={{ width: isMobile ? '100%' : 140 }}
-                            />
-                            <Text type="secondary">字</Text>
-                          </Space>
-                        </Space>
-                      </Space>
-                    </Card>
-                  )}
+	                            />
+	                            <Text type="secondary">字</Text>
+	                          </Space>
+	                        </Space>
 
-                  <Card size="small" title={historyView === 'date' ? '发布记录（当日）' : '日终稿（所有日子）'}>
-                    {historyView === 'date' ? (
-                      isMobile ? runListNode : runTableNode
-                    ) : (
-                      isMobile ? (
-                        <List
-                          dataSource={latestByDate?.items || []}
-                          loading={latestByDateLoading}
-                          locale={{ emptyText: '暂无发布记录' }}
-                          renderItem={(r) => (
+	                        {historyView === 'daily_timeline' && (
+	                          <Space wrap>
+	                            <Button
+	                              size="small"
+	                              onClick={() => expandTimelineRecent(7)}
+	                              disabled={latestByDateLoading || (latestByDate?.items || []).length === 0}
+	                            >
+	                              展开最近 7 天
+	                            </Button>
+	                            <Button
+	                              size="small"
+	                              onClick={() => setTimelineOpenKeys([])}
+	                              disabled={timelineOpenKeys.length === 0}
+	                            >
+	                              折叠全部
+	                            </Button>
+	                          </Space>
+	                        )}
+	                      </Space>
+	                    </Card>
+	                  )}
+
+	                  <Card size="small" title={historyView === 'date' ? '发布记录（当日）' : '日终稿（所有日子）'}>
+	                    {historyView === 'date' ? (
+	                      isMobile ? runListNode : runTableNode
+	                    ) : historyView === 'daily_latest' ? (
+	                      isMobile ? (
+	                        <List
+	                          dataSource={latestByDate?.items || []}
+	                          loading={latestByDateLoading}
+	                          locale={{ emptyText: '暂无发布记录' }}
+	                          renderItem={(r) => (
                             <Card
                               hoverable
                               style={{ marginBottom: 12 }}
@@ -1294,11 +1404,11 @@ export default function PublishDiary() {
                                 </Space>
                               </Space>
                             </Card>
-                          )}
-                        />
-                      ) : (
-                        <>
-                          <Table
+	                          )}
+	                        />
+	                      ) : (
+	                        <>
+	                          <Table
                             rowKey="id"
                             size="small"
                             loading={latestByDateLoading}
@@ -1395,11 +1505,136 @@ export default function PublishDiary() {
                               onChange={(p, ps) => loadLatestRunsByDate({ page: p, pageSize: ps })}
                               showTotal={(t) => `共 ${t} 天`}
                             />
-                          </div>
-                        </>
-                      )
-                    )}
-                  </Card>
+	                          </div>
+	                        </>
+	                      )
+	                    ) : (
+	                      <>
+	                        {latestByDateLoading && <Skeleton active paragraph={{ rows: 6 }} />}
+	                        {!latestByDateLoading && (latestByDate?.items || []).length === 0 && (
+	                          <Text type="secondary">暂无发布记录</Text>
+	                        )}
+	                        {!latestByDateLoading && (latestByDate?.items || []).length > 0 && (
+	                          <Collapse
+	                            activeKey={timelineOpenKeys}
+	                            onChange={(keys) => {
+	                              const next = Array.isArray(keys) ? keys : (keys ? [keys] : []);
+	                              setTimelineOpenKeys(next);
+	                              next.forEach(k => ensureTimelineRunDetailLoaded(k));
+	                            }}
+	                            items={(latestByDate?.items || []).filter(r => r?.id).map((r) => {
+	                              const runId = String(r?.id || '');
+	                              const loading = Boolean(timelineLoadingById?.[runId]);
+	                              const err = timelineErrorById?.[runId];
+	                              const detail = timelineRunDetailsById?.[runId];
+	                              const fullText = typeof detail?.content === 'string' ? detail.content : '';
+	                              const metaWordCount = fullText ? String(fullText).replace(/\s+/gu, '').length : 0;
+	                              const metaLen = fullText ? String(fullText).length : 0;
+
+	                              const previewText = typeof r?.content_preview === 'string' ? r.content_preview : '';
+	                              const showPreviewLine = dailyLatestPreviewEnabled && previewText;
+
+	                              return {
+	                                key: runId,
+	                                label: (
+	                                  <div style={{ width: '100%' }}>
+	                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+	                                      <Tag color="purple">{r?.date || '-'}</Tag>
+	                                      <Tag color="blue">Run #{r?.id ?? '-'}</Tag>
+	                                      <Tag color="geekblue">{r?.target_account_ids?.length ?? 0} 个账号</Tag>
+	                                      <Tag color="green">成功 {r?.success_count ?? 0}</Tag>
+	                                      <Tag color="red">失败 {r?.failed_count ?? 0}</Tag>
+	                                      <Text type="secondary">时间：{formatBeijingDateTime(r?.created_at)}</Text>
+	                                    </div>
+	                                    {showPreviewLine && (
+	                                      <Text
+	                                        type="secondary"
+	                                        style={{ display: 'block', marginTop: 4 }}
+	                                        ellipsis
+	                                      >
+	                                        {previewText}
+	                                      </Text>
+	                                    )}
+	                                  </div>
+	                                ),
+	                                children: (
+	                                  <Space direction="vertical" size={12} style={{ width: '100%' }}>
+	                                    <Space wrap>
+	                                      <Button size="small" onClick={() => openRunDetail(r.id)}>查看（含每账号结果）</Button>
+	                                      <Button size="small" onClick={() => loadRunContentIntoEditor(r.id)}>载入内容</Button>
+	                                      <Button
+	                                        size="small"
+	                                        onClick={() => {
+	                                          setHistoryView('date');
+	                                          setHistoryDate(r?.date || '');
+	                                          loadRuns(r?.date);
+	                                        }}
+	                                      >
+	                                        查看当天全部发布
+	                                      </Button>
+	                                      {!detail?.id && !loading && (
+	                                        <Button size="small" onClick={() => ensureTimelineRunDetailLoaded(runId)}>
+	                                          加载正文
+	                                        </Button>
+	                                      )}
+	                                    </Space>
+
+	                                    {loading && <Skeleton active paragraph={{ rows: 6 }} />}
+	                                    {!loading && err && (
+	                                      <Alert
+	                                        type="error"
+	                                        showIcon
+	                                        message="加载失败"
+	                                        description={err}
+	                                        action={(
+	                                          <Button size="small" onClick={() => ensureTimelineRunDetailLoaded(runId)}>
+	                                            重试
+	                                          </Button>
+	                                        )}
+	                                      />
+	                                    )}
+
+	                                    {!loading && !err && detail?.id && (
+	                                      <>
+	                                        <Paragraph
+	                                          copyable={{ text: fullText }}
+	                                          style={{
+	                                            whiteSpace: 'pre-wrap',
+	                                            wordBreak: 'break-word',
+	                                            overflowWrap: 'anywhere',
+	                                            marginBottom: 0,
+	                                          }}
+	                                        >
+	                                          {fullText ? fullText : '（空）'}
+	                                        </Paragraph>
+	                                        <Text type="secondary">字数（去空白）：{metaWordCount}；字符：{metaLen}</Text>
+	                                      </>
+	                                    )}
+
+	                                    {!loading && !err && !detail?.id && (
+	                                      <Text type="secondary">展开后会自动加载正文；也可点击上方“加载正文”。</Text>
+	                                    )}
+	                                  </Space>
+	                                ),
+	                              };
+	                            })}
+	                          />
+	                        )}
+
+	                        <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end' }}>
+	                          <Pagination
+	                            current={latestByDatePage}
+	                            pageSize={latestByDatePageSize}
+	                            total={Number(latestByDate?.count) || 0}
+	                            showSizeChanger
+	                            pageSizeOptions={['20', '50', '100', '200']}
+	                            onChange={(p, ps) => loadLatestRunsByDate({ page: p, pageSize: ps })}
+	                            showTotal={(t) => `共 ${t} 天`}
+	                          />
+	                        </div>
+	                      </>
+	                    )}
+	                  </Card>
                 </Space>
               ),
             },

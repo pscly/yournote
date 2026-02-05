@@ -19,7 +19,7 @@ const ensureAccess = async (page) => {
 };
 
 test.describe('发布历史增强', () => {
-  test('发布历史页应支持“按日期/按天汇总”两种查看方式', async ({ page }) => {
+  test('发布历史页应支持“按日期/按天汇总/按天连续阅读”多种查看方式', async ({ page }) => {
     await page.goto('/publish');
     await ensureAccess(page);
 
@@ -30,12 +30,17 @@ test.describe('发布历史增强', () => {
     await expect(page.getByText('查看方式', { exact: true })).toBeVisible();
     await expect(page.getByText(/按日期.*当日全部发布/)).toBeVisible();
     await expect(page.getByText(/按天汇总.*日终稿/)).toBeVisible();
+    await expect(page.getByText(/按天连续阅读.*日终稿/)).toBeVisible();
 
     // 切到“按天汇总（日终稿）”，不要求后端有数据也能看到列表区
     await page.getByText(/按天汇总.*日终稿/).click();
     await page.waitForTimeout(400);
 
     await expect(page.getByText('日终稿（所有日子）', { exact: true })).toBeVisible();
+
+    // 切到“按天连续阅读（日终稿）”，应出现时间线相关操作
+    await page.getByText(/按天连续阅读.*日终稿/).click();
+    await page.waitForTimeout(400);
+    await expect(page.getByRole('button', { name: '展开最近 7 天' })).toBeVisible();
   });
 });
-

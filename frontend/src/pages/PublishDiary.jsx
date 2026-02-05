@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Button, Card, Checkbox, Divider, Grid, Input, List, Pagination, Segmented, message, Modal, Space, Table, Tabs, Tag, Typography } from 'antd';
+import { Alert, Button, Card, Checkbox, Divider, Grid, Input, InputNumber, List, Pagination, Segmented, Tooltip, message, Modal, Space, Table, Tabs, Tag, Typography } from 'antd';
 import { ReloadOutlined, SaveOutlined, SendOutlined } from '@ant-design/icons';
 import { accountAPI, publishDiaryAPI } from '../services/api';
 import Page from '../components/Page';
@@ -9,6 +9,7 @@ const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
 
 const LAST_SELECTION_KEY = 'yournote_publish_diary_last_account_ids';
+const DAILY_LATEST_PREVIEW_SETTINGS_KEY = 'yournote_publish_diary_daily_latest_preview_settings_v1';
 const DEFAULT_PUBLISH_CONCURRENCY = 5;
 
 function readLocalLastSelection() {
@@ -27,6 +28,37 @@ function writeLocalLastSelection(ids) {
   try {
     const list = Array.isArray(ids) ? ids.filter(v => Number.isInteger(v)) : [];
     localStorage.setItem(LAST_SELECTION_KEY, JSON.stringify(list));
+  } catch {
+    // localStorage 失败不影响业务
+  }
+}
+
+function readDailyLatestPreviewSettings() {
+  const fallback = { enabled: true, preview_len: 200 };
+  try {
+    const raw = localStorage.getItem(DAILY_LATEST_PREVIEW_SETTINGS_KEY);
+    if (!raw) return fallback;
+    const data = JSON.parse(raw);
+    const enabled = typeof data?.enabled === 'boolean' ? data.enabled : fallback.enabled;
+    const rawLen = Number(data?.preview_len);
+    const previewLen = Number.isFinite(rawLen)
+      ? Math.min(5000, Math.max(0, rawLen))
+      : fallback.preview_len;
+    return { enabled, preview_len: previewLen };
+  } catch {
+    return fallback;
+  }
+}
+
+function writeDailyLatestPreviewSettings(next) {
+  try {
+    const enabled = typeof next?.enabled === 'boolean' ? next.enabled : true;
+    const rawLen = Number(next?.preview_len);
+    const previewLen = Number.isFinite(rawLen) ? Math.min(5000, Math.max(0, rawLen)) : 200;
+    localStorage.setItem(
+      DAILY_LATEST_PREVIEW_SETTINGS_KEY,
+      JSON.stringify({ enabled, preview_len: previewLen }),
+    );
   } catch {
     // localStorage 失败不影响业务
   }
@@ -161,6 +193,13 @@ export default function PublishDiary() {
   const [latestByDatePage, setLatestByDatePage] = useState(1);
   const [latestByDatePageSize, setLatestByDatePageSize] = useState(50);
 
+  const [dailyLatestPreviewEnabled, setDailyLatestPreviewEnabled] = useState(() => {
+    return readDailyLatestPreviewSettings().enabled;
+  });
+  const [dailyLatestPreviewLen, setDailyLatestPreviewLen] = useState(() => {
+    return readDailyLatestPreviewSettings().preview_len;
+  });
+
   const [runModalOpen, setRunModalOpen] = useState(false);
   const [runDetailLoading, setRunDetailLoading] = useState(false);
   const [runDetail, setRunDetail] = useState(null);
@@ -284,7 +323,12 @@ export default function PublishDiary() {
     }
   };
 
-  const loadLatestRunsByDate = useCallback(async ({ page = 1, pageSize = 50 } = {}) => {
+  const loadLatestRunsByDate = useCallback(async ({
+    page = 1,
+    pageSize = 50,
+    includePreview = dailyLatestPreviewEnabled,
+    previewLen = dailyLatestPreviewLen,
+  } = {}) => {
     const p = Math.max(1, Number(page) || 1);
     const ps = Number(pageSize) || 50;
     const safePageSize = Math.min(200, Math.max(1, ps));
@@ -292,7 +336,13 @@ export default function PublishDiary() {
 
     setLatestByDateLoading(true);
     try {
-      const res = await publishDiaryAPI.listLatestRunsByDate({ limit: safePageSize, offset });
+      const safePreviewLen = Math.min(5000, Math.max(0, Number(previewLen) || 0));
+      const res = await publishDiaryAPI.listLatestRunsByDate({
+        limit: safePageSize,
+        offset,
+        include_preview: Boolean(includePreview),
+        preview_len: safePreviewLen,
+      });
       const data = res?.data || {};
       const items = Array.isArray(data?.items) ? data.items : [];
       const countNum = Number(data?.count);
@@ -318,7 +368,11 @@ export default function PublishDiary() {
     } finally {
       setLatestByDateLoading(false);
     }
-  }, []);
+  }, [dailyLatestPreviewEnabled, dailyLatestPreviewLen]);
+
+  useEffect(() => {
+    writeDailyLatestPreviewSettings({ enabled: dailyLatestPreviewEnabled, preview_len: dailyLatestPreviewLen });
+  }, [dailyLatestPreviewEnabled, dailyLatestPreviewLen]);
 
   const openRunDetail = async (runId) => {
     setRunModalOpen(true);
@@ -1103,6 +1157,55 @@ export default function PublishDiary() {
                           <Tag color="geekblue">共 {latestByDate?.count ?? 0} 天</Tag>
                           <Tag>当前 {latestByDatePage} / {Math.max(1, Math.ceil((latestByDate?.count ?? 0) / (latestByDatePageSize || 1)))}</Tag>
                         </Space>
+                        <Space
+                          wrap
+                          align="center"
+                          direction={isMobile ? 'vertical' : 'horizontal'}
+                          style={{ width: isMobile ? '100%' : undefined }}
+                        >
+                          <Checkbox
+                            checked={dailyLatestPreviewEnabled}
+                            onChange={(e) => {
+                              const next = Boolean(e?.target?.checked);
+                              setDailyLatestPreviewEnabled(next);
+                              // 开关预览会影响接口返回字段，主动刷新一次更直观
+                              loadLatestRunsByDate({
+                                page: latestByDatePage,
+                                pageSize: latestByDatePageSize,
+                                includePreview: next,
+                                previewLen: dailyLatestPreviewLen,
+                              });
+                            }}
+                          >
+                            显示内容预览
+                          </Checkbox>
+
+                          <Space align="center" wrap>
+                            <Text type="secondary">预览长度</Text>
+                            <InputNumber
+                              min={0}
+                              max={5000}
+                              step={50}
+                              value={dailyLatestPreviewLen}
+                              onChange={(v) => {
+                                const n = Number(v);
+                                const next = Number.isFinite(n) ? n : 0;
+                                setDailyLatestPreviewLen(next);
+                                if (dailyLatestPreviewEnabled) {
+                                  loadLatestRunsByDate({
+                                    page: latestByDatePage,
+                                    pageSize: latestByDatePageSize,
+                                    includePreview: dailyLatestPreviewEnabled,
+                                    previewLen: next,
+                                  });
+                                }
+                              }}
+                              disabled={!dailyLatestPreviewEnabled}
+                              style={{ width: isMobile ? '100%' : 140 }}
+                            />
+                            <Text type="secondary">字</Text>
+                          </Space>
+                        </Space>
                       </Space>
                     </Card>
                   )}
@@ -1132,6 +1235,29 @@ export default function PublishDiary() {
                                   <Tag color="red">失败 {r?.failed_count ?? 0}</Tag>
                                 </Space>
                                 <Text type="secondary">时间：{formatBeijingDateTime(r?.created_at)}</Text>
+                                {dailyLatestPreviewEnabled && (
+                                  <div style={{ padding: 10, border: '1px solid #f0f0f0', borderRadius: 8, background: '#fafafa' }}>
+                                    <Text type="secondary">内容预览</Text>
+                                    <Paragraph
+                                      style={{
+                                        marginBottom: 0,
+                                        whiteSpace: 'pre-wrap',
+                                        wordBreak: 'break-word',
+                                        overflowWrap: 'anywhere',
+                                      }}
+                                      ellipsis={{ rows: 4, expandable: true, symbol: '展开' }}
+                                    >
+                                      {typeof r?.content_preview === 'string' && r.content_preview
+                                        ? r.content_preview
+                                        : '（空）'}
+                                    </Paragraph>
+                                    {(Number(r?.content_word_count_no_ws) > 0 || Number(r?.content_len) > 0) && (
+                                      <Text type="secondary">
+                                        字数（去空白）：{Number(r?.content_word_count_no_ws) || 0}；字符：{Number(r?.content_len) || 0}
+                                      </Text>
+                                    )}
+                                  </div>
+                                )}
                                 <Space direction="vertical" size={8} style={{ width: '100%' }}>
                                   <Button
                                     size="small"
@@ -1179,6 +1305,46 @@ export default function PublishDiary() {
                             columns={[
                               { title: '日期', dataIndex: 'date', key: 'date', width: 120 },
                               { title: 'Run ID', dataIndex: 'id', key: 'id', width: 90 },
+                              {
+                                title: '内容预览',
+                                key: 'content_preview',
+                                render: (_, r) => {
+                                  if (!dailyLatestPreviewEnabled) {
+                                    return <Text type="secondary">（已关闭）</Text>;
+                                  }
+                                  const preview = typeof r?.content_preview === 'string' ? r.content_preview : '';
+                                  const wc = Number(r?.content_word_count_no_ws) || 0;
+                                  const len = Number(r?.content_len) || 0;
+                                  const meta = (wc > 0 || len > 0)
+                                    ? `字数（去空白）：${wc}；字符：${len}`
+                                    : '';
+
+                                  return (
+                                    <Tooltip
+                                      placement="topLeft"
+                                      title={(
+                                        <div style={{ whiteSpace: 'pre-wrap', maxWidth: 520 }}>
+                                          {preview ? preview : '（空）'}
+                                          {meta ? `\n\n${meta}` : ''}
+                                        </div>
+                                      )}
+                                    >
+                                      <Text
+                                        type="secondary"
+                                        style={{
+                                          display: 'inline-block',
+                                          maxWidth: 520,
+                                          whiteSpace: 'nowrap',
+                                          cursor: 'help',
+                                        }}
+                                        ellipsis
+                                      >
+                                        {preview ? preview : '（空）'}
+                                      </Text>
+                                    </Tooltip>
+                                  );
+                                },
+                              },
                               {
                                 title: '账号数',
                                 key: 'accounts',

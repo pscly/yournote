@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -23,6 +24,7 @@ from ..schemas import (
     PublishDiaryDraftUpsertRequest,
     PublishDiaryPublishOneRequest,
     PublishDiaryRequest,
+    PublishDiaryRunDailyLatestItemResponse,
     PublishDiaryRunsLatestByDateResponse,
     PublishDiaryRunItemResponse,
     PublishDiaryRunListItemResponse,
@@ -34,6 +36,7 @@ from ..services.background import schedule_publish_run
 from ..utils.errors import safe_str
 
 router = APIRouter(prefix="/publish-diaries", tags=["publish-diaries"])
+_WS_RE = re.compile(r"\s+", flags=re.UNICODE)
 
 
 def _ensure_date_yyyy_mm_dd(value: str) -> str:
@@ -61,6 +64,21 @@ def _parse_int_list_json(value: str | None) -> list[int]:
         elif isinstance(item, str) and item.isdigit():
             ids.append(int(item))
     return ids
+
+
+def _build_content_preview(text: str | None, preview_len: int) -> str:
+    if preview_len <= 0:
+        return ""
+    raw = "" if text is None else str(text)
+    if len(raw) <= preview_len:
+        return raw
+    return raw[:preview_len] + "…"
+
+
+def _count_no_whitespace(text: str | None) -> int:
+    if not text:
+        return 0
+    return len(_WS_RE.sub("", str(text)))
 
 
 async def _build_run_list_items(
@@ -166,6 +184,8 @@ async def list_runs(
 async def list_latest_runs_by_date(
     limit: int = Query(100, ge=1, le=1000, description="按天汇总返回条数（=天数）"),
     offset: int = Query(0, ge=0, description="按天汇总分页 offset"),
+    include_preview: bool = Query(True, description="是否返回 content_preview（用于列表预览）"),
+    preview_len: int = Query(200, ge=0, le=5000, description="内容预览长度（字符数）"),
     db: AsyncSession = Depends(get_db),
 ):
     """按天汇总的发布历史（每个日期只返回最后一次发布）。
@@ -201,7 +221,22 @@ async def list_latest_runs_by_date(
     result = await db.execute(query)
     runs = list(result.scalars().all())
 
-    items = await _build_run_list_items(runs, db)
+    base_items = await _build_run_list_items(runs, db)
+    run_by_id = {r.id: r for r in runs if r and isinstance(getattr(r, "id", None), int)}
+
+    items: list[PublishDiaryRunDailyLatestItemResponse] = []
+    for base in base_items:
+        run = run_by_id.get(base.id)
+        content = getattr(run, "content", None) if run else None
+        preview = _build_content_preview(content, preview_len) if include_preview else None
+        items.append(
+            PublishDiaryRunDailyLatestItemResponse(
+                **base.model_dump(),
+                content_preview=preview,
+                content_word_count_no_ws=_count_no_whitespace(content) if include_preview else 0,
+                content_len=len(content or "") if include_preview else 0,
+            )
+        )
     return PublishDiaryRunsLatestByDateResponse(
         count=total,
         limit=limit,
@@ -211,8 +246,8 @@ async def list_latest_runs_by_date(
     )
 
 
-@router.get("/runs/{run_id}", response_model=PublishDiaryRunResponse)     
-async def get_run(run_id: int, db: AsyncSession = Depends(get_db)):       
+@router.get("/runs/{run_id}", response_model=PublishDiaryRunResponse)
+async def get_run(run_id: int, db: AsyncSession = Depends(get_db)):
     """查看一次发布的详情（含每个账号结果）。"""
     result = await db.execute(select(PublishDiaryRun).where(PublishDiaryRun.id == run_id))
     run = result.scalar_one_or_none()

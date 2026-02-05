@@ -52,6 +52,14 @@ class PublishDiaryRunListItemResponse(BaseModel):
     failed_count: int = 0
 
 
+class PublishDiaryRunDailyLatestItemResponse(PublishDiaryRunListItemResponse):
+    """按天汇总（日终稿）列表项：在基础字段上补充内容预览信息。"""
+
+    content_preview: str | None = None
+    content_word_count_no_ws: int = 0
+    content_len: int = 0
+
+
 class PublishDiaryRunsLatestByDateResponse(BaseModel):
     """按天汇总的“日终稿”列表：每个日期只返回最后一次发布（Run）。
 
@@ -64,7 +72,7 @@ class PublishDiaryRunsLatestByDateResponse(BaseModel):
     limit: int = 100
     offset: int = 0
     has_more: bool = False
-    items: list[PublishDiaryRunListItemResponse] = Field(default_factory=list)
+    items: list[PublishDiaryRunDailyLatestItemResponse] = Field(default_factory=list)
 
 
 class PublishDiaryRequest(BaseModel):

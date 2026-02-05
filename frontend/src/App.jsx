@@ -30,6 +30,7 @@ import Dashboard from './pages/Dashboard';
 import AccountManage from './pages/AccountManage';
 import DiaryList from './pages/DiaryList';
 import DiaryDetail from './pages/DiaryDetail';
+import PairedIncreaseHistory from './pages/PairedIncreaseHistory';
 import PublishDiary from './pages/PublishDiary';
 import AllUsers from './pages/AllUsers';
 import UserDetail from './pages/UserDetail';
@@ -323,6 +324,7 @@ function AppShell({ themeMode, setThemeMode }) {
             <Route path="/accounts" element={<AccountManage />} />
             <Route path="/diaries" element={<DiaryList />} />
             <Route path="/diary/:id" element={<DiaryDetail />} />
+            <Route path="/paired-increase-history" element={<PairedIncreaseHistory />} />
             <Route path="/publish" element={<PublishDiary />} />
             <Route path="/users" element={<AllUsers />} />
             <Route path="/user/:id" element={<UserDetail />} />

@@ -99,6 +99,36 @@ test.describe('记录详情页测试', () => {
     }
   });
 
+  test('桌面端 - 页面底部应该显示附件区（含图号）', async ({ page }) => {
+    if (!(await openFirstDiaryDetail(page))) return;
+
+    const attachmentsCard = page.locator('.ant-card').filter({
+      has: page.locator('.ant-card-head-title', { hasText: '附件（图片' }),
+    }).first();
+    await expect(attachmentsCard).toBeVisible({ timeout: 15000 });
+
+    const titleText = (await attachmentsCard.locator('.ant-card-head-title').innerText()) || '';
+    const match = titleText.match(/图片\\s*(\\d+)/);
+    const imageCount = match ? Number(match[1]) : 0;
+
+    if (imageCount > 0) {
+      const imageLabels = attachmentsCard.locator('text=/^图\\d+$/');
+      expect(await imageLabels.count()).toBeGreaterThan(0);
+    }
+
+    const historyCard = page.locator('.ant-card').filter({
+      has: page.locator('.ant-card-head-title:has-text("修改历史")'),
+    }).first();
+
+    if (await historyCard.count()) {
+      const historyBox = await historyCard.boundingBox();
+      const attachmentsBox = await attachmentsCard.boundingBox();
+      if (historyBox && attachmentsBox) {
+        expect(attachmentsBox.y).toBeGreaterThan(historyBox.y);
+      }
+    }
+  });
+
   test('桌面端 - 返回按钮应该可用', async ({ page }) => {
     if (await openFirstDiaryDetail(page)) {
       const backButton = page.locator('text=返回');

@@ -8,6 +8,7 @@ import {
   Descriptions,
   Divider,
   Drawer,
+  Empty,
   Image,
   Input,
   Layout,
@@ -842,64 +843,6 @@ export default function DiaryDetail() {
             </div>
           </Card>
 
-          {diaryImages.length > 0 && (
-            <Card
-              title={`附件（图片 ${diaryImages.length}）`}
-              bordered={false}
-              style={{
-                boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
-                borderRadius: 8,
-              }}
-            >
-              <Image.PreviewGroup>
-                <Space wrap size={[12, 12]}>
-                  {diaryImages.map((img) => {
-                    const imageId = Number(img?.image_id);
-                    const src = img?.url || `/api/diaries/${diary?.id}/images/${imageId}`;
-                    if (!imageId) return null;
-
-                    if (failedImageIds?.[imageId]) {
-                      return (
-                        <div
-                          key={`att-${imageId}`}
-                          style={{
-                            width: 120,
-                            height: 120,
-                            borderRadius: 8,
-                            background: token.colorFillAlter,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            padding: 8,
-                            color: token.colorTextSecondary,
-                            textAlign: 'center',
-                            fontSize: 12,
-                          }}
-                        >
-                          图{imageId}
-                          <br />
-                          加载失败
-                        </div>
-                      );
-                    }
-
-                    return (
-                      <Image
-                        key={`att-${imageId}`}
-                        src={src}
-                        alt={`图${imageId}`}
-                        width={120}
-                        height={120}
-                        style={{ objectFit: 'cover', borderRadius: 8 }}
-                        onError={() => markImageFailed(imageId)}
-                      />
-                    );
-                  })}
-                </Space>
-              </Image.PreviewGroup>
-            </Card>
-          )}
-
           {history.length > 0 && (
             <Card
               title={
@@ -932,6 +875,77 @@ export default function DiaryDetail() {
               </Timeline>
             </Card>
           )}
+
+          <Card
+            title={`附件（图片 ${diaryImages.length}）`}
+            bordered={false}
+            style={{
+              boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+              borderRadius: 8,
+            }}
+          >
+            {diaryImages.length > 0 ? (
+              <Image.PreviewGroup>
+                <Space wrap size={[12, 12]}>
+                  {diaryImages.map((img) => {
+                    const imageId = Number(img?.image_id);
+                    const src = img?.url || `/api/diaries/${diary?.id}/images/${imageId}`;
+                    if (!imageId) return null;
+
+                    const failed = !!failedImageIds?.[imageId];
+
+                    return (
+                      <div key={`att-${imageId}`} style={{ width: 120 }}>
+                        {failed ? (
+                          <div
+                            style={{
+                              width: 120,
+                              height: 120,
+                              borderRadius: 8,
+                              background: token.colorFillAlter,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              padding: 8,
+                              color: token.colorTextSecondary,
+                              textAlign: 'center',
+                              fontSize: 12,
+                            }}
+                          >
+                            加载失败
+                          </div>
+                        ) : (
+                          <Image
+                            src={src}
+                            alt={`图${imageId}`}
+                            width={120}
+                            height={120}
+                            style={{ objectFit: 'cover', borderRadius: 8 }}
+                            onError={() => markImageFailed(imageId)}
+                          />
+                        )}
+
+                        <div
+                          style={{
+                            marginTop: 6,
+                            fontSize: 12,
+                            color: token.colorTextSecondary,
+                            textAlign: 'center',
+                            lineHeight: 1.2,
+                            userSelect: 'none',
+                          }}
+                        >
+                          图{imageId}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </Space>
+              </Image.PreviewGroup>
+            ) : (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="无附件" />
+            )}
+          </Card>
         </Space>
       </Content>
 

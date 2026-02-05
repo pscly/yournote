@@ -595,6 +595,20 @@ export default function Dashboard() {
           <Tag color="cyan">按入库时间统计</Tag>
         </Space>
 
+        <div style={{ marginBottom: 8 }}>
+          <Button
+            type="link"
+            size="small"
+            style={{ paddingLeft: 0 }}
+            onClick={() => {
+              setDeltaDrawerOpen(false);
+              navigate('/paired-increase-history');
+            }}
+          >
+            查看历史（按天）
+          </Button>
+        </div>
+
         {increaseHidden > 0 && (
           <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
             仅展示最近 {increaseDiariesToShow.length} 条（还有 {increaseHidden} 条未展示）

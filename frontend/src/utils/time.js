@@ -66,3 +66,32 @@ export function formatBeijingDateTimeFromTs(ts, { showSeconds = false } = {}) {
 
   return d.toLocaleString('zh-CN', options);
 }
+
+export function getBeijingDateString(offsetDays = 0) {
+  const offset = Number(offsetDays) || 0;
+  const d = new Date(Date.now() + offset * 24 * 60 * 60 * 1000);
+  try {
+    return new Intl.DateTimeFormat('zh-CN', {
+      timeZone: 'Asia/Shanghai',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(d).replace(/\//g, '-');
+  } catch {
+    // fallback：以本地日期输出（极少数环境无 Intl/timeZone）
+    const yy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yy}-${mm}-${dd}`;
+  }
+}
+
+export function beijingDateStringToUtcRangeMs(dateString) {
+  const [yy, mm, dd] = String(dateString || '').split('-').map(Number);
+  if (!yy || !mm || !dd) return { since_ms: 0, until_ms: 0 };
+
+  // 北京时间 00:00 = UTC 前一日 16:00（固定 +8 时区，无夏令时）
+  const sinceMs = Date.UTC(yy, mm - 1, dd, 0, 0, 0) - 8 * 60 * 60 * 1000;
+  const untilMs = sinceMs + 24 * 60 * 60 * 1000;
+  return { since_ms: sinceMs, until_ms: untilMs };
+}

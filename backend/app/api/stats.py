@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -73,6 +73,7 @@ async def get_stats_overview(db: AsyncSession = Depends(get_db)):
 @router.get("/paired-diaries/increase", response_model=StatsPairedDiariesIncreaseResponse)
 async def get_paired_diaries_increase(
     since_ms: int = Query(..., ge=1, description="统计起点（UTC 毫秒时间戳）"),
+    until_ms: int | None = Query(None, ge=1, description="统计终点（UTC 毫秒时间戳，左闭右开，不传则不设上限）"),
     limit: int = Query(200, ge=1, le=1000, description="返回明细条数上限"),
     include_inactive: bool = Query(False, description="是否包含停用账号"),
     db: AsyncSession = Depends(get_db),
@@ -85,7 +86,13 @@ async def get_paired_diaries_increase(
     - 仅统计“配对用户”的记录：Diary.user_id == PairedRelationship.paired_user_id。
     """
 
+    if until_ms is not None and until_ms <= since_ms:
+        raise HTTPException(status_code=422, detail="until_ms must be greater than since_ms")
+
     since_dt_utc = datetime.fromtimestamp(since_ms / 1000, tz=timezone.utc)
+    until_dt_utc = None
+    if until_ms is not None:
+        until_dt_utc = datetime.fromtimestamp(until_ms / 1000, tz=timezone.utc)
 
     # 兼容 SQLite：
     # - SQLite 不真正支持 tz-aware datetime；
@@ -93,8 +100,10 @@ async def get_paired_diaries_increase(
     # 这里把 since_dt 也转成 naive，避免比较时出现字符串格式差异导致的“漏算/错算”。
     if engine.dialect.name == "sqlite":
         since_dt = since_dt_utc.replace(tzinfo=None)
+        until_dt = until_dt_utc.replace(tzinfo=None) if until_dt_utc else None
     else:
         since_dt = since_dt_utc
+        until_dt = until_dt_utc
 
     join_condition = (
         (Diary.account_id == PairedRelationship.account_id)
@@ -106,6 +115,8 @@ async def get_paired_diaries_increase(
         Diary.created_at.is_not(None),
         Diary.created_at >= since_dt,
     ]
+    if until_dt is not None:
+        base_filters.append(Diary.created_at < until_dt)
 
     count_query = (
         select(func.count(distinct(Diary.id)))

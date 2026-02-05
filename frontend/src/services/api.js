@@ -95,6 +95,7 @@ export const statsAPI = {
 // 记录查询
 export const diaryAPI = {
   list: (params) => api.get('/diaries', { params }),
+  query: (params) => api.get('/diaries/query', { params }),
   get: (id) => api.get(`/diaries/${id}`),
   byAccount: (accountId, limit = 50) => api.get(`/diaries/by-account/${accountId}`, { params: { limit } }),
   refresh: (id) => api.post(`/diaries/${id}/refresh`),

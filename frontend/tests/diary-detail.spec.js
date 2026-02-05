@@ -25,7 +25,8 @@ const openFirstDiaryDetail = async (page) => {
 
   const firstRow = page.locator('.ant-table-tbody tr').first();
   if (await firstRow.isVisible()) {
-    const titleCell = firstRow.locator('td').nth(2);
+    // 列表列顺序：日期、修改时间、作者、标题...
+    const titleCell = firstRow.locator('td').nth(3);
     await titleCell.click();
   } else {
     const firstCard = page.locator('.ant-list .ant-card').first();

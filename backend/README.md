@@ -7,7 +7,7 @@
 ### 1. 安装依赖
 
 ```bash
-cd F:\codes\yournote
+cd <仓库根目录>
 uv sync
 ```
 

@@ -21,7 +21,7 @@ YourNote 的前端项目，基于 React + Vite。
 在仓库根目录运行：
 
 ```bat
-启动项目.bat
+run.bat
 ```
 
 ### 方式 2：手动启动

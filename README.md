@@ -6,7 +6,7 @@ YourNote 是一个本地化的“日记采集 + 多账号同步 + 写作发布�
 - 前端：React + Vite + Ant Design
 - 数据库：默认 SQLite（可切 PostgreSQL）
 
-## 快速开始（Windows）
+## 快速开始（本地开发）
 
 ### 1) 安装依赖
 
@@ -33,7 +33,7 @@ uv run python init_db.py
 推荐一键启动（会分别启动前后端）：
 
 ```bat
-启动项目.bat
+run.bat
 ```
 
 或手动启动：
@@ -45,6 +45,21 @@ uv run python run.py
 
 # 前端（另开终端）
 cd frontend
+npm run dev
+```
+
+## 在 Ubuntu / Linux 上启动（手动）
+
+说明：仓库内的 `run.bat`/`stop.bat` 面向 Windows；在 Ubuntu / Linux 上建议按下面方式手动启动。
+
+```bash
+# 1) 后端（终端 A）
+cd backend
+uv run python run.py
+
+# 2) 前端（终端 B）
+cd frontend
+npm install
 npm run dev
 ```
 

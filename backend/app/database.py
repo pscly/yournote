@@ -93,3 +93,15 @@ async def _ensure_schema(conn) -> None:
     await conn.execute(
         text("CREATE INDEX IF NOT EXISTS idx_sync_logs_account_time_desc ON sync_logs (account_id, sync_time DESC)")
     )
+
+    # 记录列表/搜索：常用排序索引
+    # 说明：
+    # - `ts`：前端列表默认按“最近更新时间”排序
+    # - `created_at`：用于“新增（按入库时间）”与历史统计等场景
+    # - 使用 IF NOT EXISTS 同时兼容 SQLite / PostgreSQL
+    await conn.execute(
+        text("CREATE INDEX IF NOT EXISTS idx_diaries_ts_desc ON diaries (ts DESC)")
+    )
+    await conn.execute(
+        text("CREATE INDEX IF NOT EXISTS idx_diaries_created_at_desc ON diaries (created_at DESC)")
+    )

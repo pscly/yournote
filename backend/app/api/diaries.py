@@ -1,18 +1,85 @@
 """Diary query API"""
-import logging
+from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from sqlalchemy import select
+import logging
+import re
+from datetime import date
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from sqlalchemy import and_, distinct, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import get_db
-from ..models import Account, Diary, User
-from ..schemas import DiaryAttachments, DiaryDetailResponse, DiaryRefreshResponse, DiaryResponse
+from ..models import Account, Diary, PairedRelationship, User
+from ..schemas import (
+    DiaryAttachments,
+    DiaryDetailResponse,
+    DiaryListItemResponse,
+    DiaryQueryResponse,
+    DiaryRefreshResponse,
+    DiaryResponse,
+)
 from ..services import CollectorService
 from ..services.image_cache import ImageCacheService
 from ..utils.errors import safe_str
 
 router = APIRouter(prefix="/diaries", tags=["diaries"])
 logger = logging.getLogger(__name__)
+
+_WS_RE = re.compile(r"\s+", flags=re.UNICODE)
+_LIKE_ESCAPE = "\\"
+
+
+def _escape_like_term(value: str) -> str:
+    """转义 LIKE 模式中的特殊字符，避免用户输入意外触发通配或转义。"""
+    if not value:
+        return ""
+    return (
+        value.replace(_LIKE_ESCAPE, _LIKE_ESCAPE * 2)
+        .replace("%", _LIKE_ESCAPE + "%")
+        .replace("_", _LIKE_ESCAPE + "_")
+    )
+
+
+def _split_search_terms(raw: str, *, max_terms: int = 5) -> list[str]:
+    parts = [p.strip() for p in re.split(r"\s+", raw or "") if p and p.strip()]
+    # 去重但保持顺序，避免同词重复导致 SQL 条件膨胀
+    out: list[str] = []
+    seen: set[str] = set()
+    for p in parts:
+        if p in seen:
+            continue
+        seen.add(p)
+        out.append(p)
+        if len(out) >= max_terms:
+            break
+    return out
+
+
+def _parse_date_yyyy_mm_dd(value: str | None, field_name: str) -> date | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"{field_name} must be YYYY-MM-DD") from e
+
+
+def _count_no_whitespace(text: str | None) -> int:
+    if not text:
+        return 0
+    return len(_WS_RE.sub("", str(text)))
+
+
+def _build_preview(text: str | None, preview_len: int) -> str:
+    if preview_len <= 0:
+        return ""
+    raw = "" if text is None else str(text)
+    if len(raw) <= preview_len:
+        return raw
+    return raw[:preview_len] + "…"
 
 
 @router.get("", response_model=list[DiaryResponse])
@@ -34,6 +101,151 @@ async def list_diaries(
     result = await db.execute(query)
     diaries = result.scalars().all()
     return diaries
+
+
+@router.get("/query", response_model=DiaryQueryResponse)
+async def query_diaries(
+    q: str | None = Query(None, description="关键字（标题/正文，空格分词，默认 AND）"),
+    scope: str = Query("matched", description="范围：matched=仅配对用户记录，all=全部记录"),
+    account_id: int | None = Query(None, ge=1, description="按账号过滤"),
+    user_id: int | None = Query(None, ge=1, description="按作者 user_id 过滤"),
+    date_from: str | None = Query(None, description="起始日期（YYYY-MM-DD，含）"),
+    date_to: str | None = Query(None, description="结束日期（YYYY-MM-DD，含）"),
+    include_inactive: bool = Query(True, description="是否包含停用账号"),
+    limit: int = Query(50, ge=1, le=200, description="分页大小"),
+    offset: int = Query(0, ge=0, description="分页 offset"),
+    order_by: str = Query("ts", description="排序字段：ts/created_date/created_at"),
+    order: str = Query("desc", description="排序方向：desc/asc"),
+    preview_len: int = Query(120, ge=0, le=1000, description="内容预览长度（字符数）"),
+    db: AsyncSession = Depends(get_db),
+):
+    """记录查询（支持搜索/筛选/分页）。"""
+
+    scope_norm = (scope or "").strip().lower() or "matched"
+    if scope_norm not in {"matched", "all"}:
+        raise HTTPException(status_code=422, detail="scope must be matched or all")
+
+    order_by_norm = (order_by or "").strip().lower() or "ts"
+    if order_by_norm not in {"ts", "created_date", "created_at"}:
+        raise HTTPException(status_code=422, detail="order_by must be ts, created_date or created_at")
+
+    order_norm = (order or "").strip().lower() or "desc"
+    if order_norm not in {"desc", "asc"}:
+        raise HTTPException(status_code=422, detail="order must be desc or asc")
+
+    df = _parse_date_yyyy_mm_dd(date_from, "date_from")
+    dt = _parse_date_yyyy_mm_dd(date_to, "date_to")
+    if df and dt and dt < df:
+        raise HTTPException(status_code=422, detail="date_to must be greater than or equal to date_from")
+
+    where_clauses = []
+    if account_id is not None:
+        where_clauses.append(Diary.account_id == account_id)
+    if user_id is not None:
+        where_clauses.append(Diary.user_id == user_id)
+    if df is not None:
+        where_clauses.append(Diary.created_date >= df)
+    if dt is not None:
+        where_clauses.append(Diary.created_date <= dt)
+
+    q_text = (q or "").strip()
+    terms = _split_search_terms(q_text, max_terms=5)
+    if terms:
+        title_lower = func.lower(func.coalesce(Diary.title, ""))
+        content_lower = func.lower(func.coalesce(Diary.content, ""))
+        for term in terms:
+            t = _escape_like_term(term.lower())
+            pattern = f"%{t}%"
+            where_clauses.append(
+                or_(
+                    title_lower.like(pattern, escape=_LIKE_ESCAPE),
+                    content_lower.like(pattern, escape=_LIKE_ESCAPE),
+                )
+            )
+
+    join_condition = and_(
+        Diary.account_id == PairedRelationship.account_id,
+        Diary.user_id == PairedRelationship.paired_user_id,
+    )
+
+    def _apply_joins(query):
+        if scope_norm == "matched":
+            query = (
+                query.join(PairedRelationship, join_condition)
+                .where(PairedRelationship.is_active.is_(True))
+            )
+        if not include_inactive:
+            query = (
+                query.join(Account, Diary.account_id == Account.id)
+                .where(Account.is_active.is_(True))
+            )
+        return query
+
+    count_query = select(func.count(distinct(Diary.id))).select_from(Diary)
+    count_query = _apply_joins(count_query).where(*where_clauses)
+    total = int((await db.scalar(count_query)) or 0)
+
+    col_map = {
+        "ts": Diary.ts,
+        "created_date": Diary.created_date,
+        "created_at": Diary.created_at,
+    }
+    primary_col = col_map[order_by_norm]
+    if order_norm == "asc":
+        primary_order = primary_col.asc()
+        id_order = Diary.id.asc()
+        date_order = Diary.created_date.asc()
+    else:
+        primary_order = primary_col.desc()
+        id_order = Diary.id.desc()
+        date_order = Diary.created_date.desc()
+
+    order_clauses = [primary_order]
+    if order_by_norm != "created_date":
+        order_clauses.append(date_order)
+    order_clauses.append(id_order)
+
+    items_query = select(Diary).select_from(Diary)
+    items_query = (
+        _apply_joins(items_query)
+        .where(*where_clauses)
+        .distinct()
+        .order_by(*order_clauses)
+        .limit(limit)
+        .offset(offset)
+    )
+
+    diaries = await db.scalars(items_query)
+    diaries = list(diaries.all())
+
+    items = [
+        DiaryListItemResponse(
+            id=d.id,
+            nideriji_diary_id=d.nideriji_diary_id,
+            user_id=d.user_id,
+            account_id=d.account_id,
+            created_date=d.created_date,
+            ts=d.ts,
+            created_at=d.created_at,
+            updated_at=d.updated_at,
+            title=d.title,
+            content_preview=_build_preview(d.content, preview_len),
+            word_count_no_ws=_count_no_whitespace(d.content),
+            weather=d.weather,
+            mood=d.mood,
+            space=d.space,
+        )
+        for d in diaries
+        if d is not None
+    ]
+
+    return DiaryQueryResponse(
+        count=total,
+        limit=limit,
+        offset=offset,
+        has_more=(offset + len(items) < total),
+        items=items,
+    )
 
 
 @router.get("/{diary_id}", response_model=DiaryDetailResponse)

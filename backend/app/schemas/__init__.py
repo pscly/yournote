@@ -6,6 +6,7 @@ from .account import (
     TokenValidateRequest,
 )
 from .diary import DiaryAttachments, DiaryDetailResponse, DiaryImageAttachment, DiaryResponse
+from .diary_query import DiaryListItemResponse, DiaryQueryResponse
 from .diary_refresh import DiaryRefreshInfo, DiaryRefreshResponse
 from .publish_diary import (
     PublishDiaryDraftResponse,
@@ -32,6 +33,8 @@ __all__ = [
     "DiaryImageAttachment",
     "DiaryAttachments",
     "DiaryDetailResponse",
+    "DiaryListItemResponse",
+    "DiaryQueryResponse",
     "DiaryRefreshInfo",
     "DiaryRefreshResponse",
     "SyncResponse",

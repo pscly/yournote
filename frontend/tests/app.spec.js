@@ -73,7 +73,8 @@ test.describe('YourNote 应用测试', () => {
     await page.waitForTimeout(1000);
     const firstRow = page.locator('.ant-table-tbody tr').first();
     if (await firstRow.isVisible()) {
-      const titleCell = firstRow.locator('td').nth(2);
+      // 列表列顺序：日期、修改时间、作者、标题...
+      const titleCell = firstRow.locator('td').nth(3);
       await titleCell.click();
       await page.waitForTimeout(1000);
       await expect(page.getByRole('heading', { level: 2 })).toBeVisible();

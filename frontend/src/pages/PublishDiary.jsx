@@ -725,26 +725,33 @@ export default function PublishDiary() {
     if (items.length === 0) return;
 
     const marker = `${Number(latestByDate?.offset) || 0}:${Number(latestByDate?.limit) || latestByDatePageSize}`;
-    if (timelineAutoInitRef.current === marker) return;
-    timelineAutoInitRef.current = marker;
+	    if (timelineAutoInitRef.current === marker) return;
+	    timelineAutoInitRef.current = marker;
 
-    if (timelineOpenKeys.length > 0) return;
-    const firstId = items[0]?.id;
-    if (!firstId) return;
-    const key = String(firstId);
+	    // 说明：分页切换时可能残留“上一页”的展开 key；这里仅保留本页存在的 key，
+	    // 若本页没有任何展开项，则默认展开最新一天。
+	    const itemIdSet = new Set(items.map(i => String(i?.id)).filter(Boolean));
+	    const validOpenKeys = (timelineOpenKeys || []).map(String).filter(k => itemIdSet.has(k));
+	    if (timelineOpenKeys.length > 0 && validOpenKeys.length !== timelineOpenKeys.length) {
+	      setTimelineOpenKeys(validOpenKeys);
+	    }
+	    if (validOpenKeys.length > 0) return;
+	    const firstId = items[0]?.id;
+	    if (!firstId) return;
+	    const key = String(firstId);
     setTimelineOpenKeys([key]);
     ensureTimelineRunDetailLoaded(key);
   }, [
     activeTab,
     historyView,
     latestByDateLoading,
-    latestByDate?.offset,
-    latestByDate?.limit,
-    latestByDate?.items,
-    latestByDatePageSize,
-    timelineOpenKeys.length,
-    ensureTimelineRunDetailLoaded,
-  ]);
+	    latestByDate?.offset,
+	    latestByDate?.limit,
+	    latestByDate?.items,
+	    latestByDatePageSize,
+	    timelineOpenKeys,
+	    ensureTimelineRunDetailLoaded,
+	  ]);
 
   useEffect(() => {
     if (!publishing) return;

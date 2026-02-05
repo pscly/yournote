@@ -132,6 +132,7 @@ export const publishDiaryAPI = {
   getDraft: (date) => api.get(`/publish-diaries/draft/${encodeURIComponent(date)}`),
   saveDraft: (date, data) => api.put(`/publish-diaries/draft/${encodeURIComponent(date)}`, data),
   listRuns: (params) => api.get('/publish-diaries/runs', { params }),
+  listLatestRunsByDate: (params) => api.get('/publish-diaries/runs/latest-by-date', { params }),
   getRun: (id) => api.get(`/publish-diaries/runs/${id}`),
   // 创建一次“发布 Run”（不执行发布），用于前端并行逐账号发布时先拿到 run_id
   createRun: (data, config = {}) => api.post('/publish-diaries/runs', data, { timeout: 0, ...config }),

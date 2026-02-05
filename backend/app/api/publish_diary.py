@@ -12,8 +12,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
@@ -23,6 +23,7 @@ from ..schemas import (
     PublishDiaryDraftUpsertRequest,
     PublishDiaryPublishOneRequest,
     PublishDiaryRequest,
+    PublishDiaryRunsLatestByDateResponse,
     PublishDiaryRunItemResponse,
     PublishDiaryRunListItemResponse,
     PublishDiaryRunResponse,
@@ -60,6 +61,42 @@ def _parse_int_list_json(value: str | None) -> list[int]:
         elif isinstance(item, str) and item.isdigit():
             ids.append(int(item))
     return ids
+
+
+async def _build_run_list_items(
+    runs: list[PublishDiaryRun],
+    db: AsyncSession,
+) -> list[PublishDiaryRunListItemResponse]:
+    run_ids = [r.id for r in (runs or []) if r and isinstance(r.id, int)]
+
+    items_by_run: dict[int, list[PublishDiaryRunItem]] = {}
+    if run_ids:
+        items_result = await db.execute(
+            select(PublishDiaryRunItem).where(PublishDiaryRunItem.run_id.in_(run_ids))
+        )
+        for item in items_result.scalars().all():
+            items_by_run.setdefault(item.run_id, []).append(item)
+
+    response: list[PublishDiaryRunListItemResponse] = []
+    for r in runs or []:
+        created_at = r.created_at
+        if created_at and created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+
+        items = items_by_run.get(r.id, [])
+        success_count = sum(1 for i in items if (i.status or "") == "success")
+        failed_count = sum(1 for i in items if (i.status or "") == "failed")
+        response.append(
+            PublishDiaryRunListItemResponse(
+                id=r.id,
+                date=r.date,
+                target_account_ids=_parse_int_list_json(r.target_account_ids_json),
+                created_at=created_at,
+                success_count=success_count,
+                failed_count=failed_count,
+            )
+        )
+    return response
 
 
 @router.get("/draft/{date}", response_model=PublishDiaryDraftResponse)
@@ -122,35 +159,56 @@ async def list_runs(
 
     result = await db.execute(query)
     runs = result.scalars().all()
-    run_ids = [r.id for r in runs if r and isinstance(r.id, int)]
-    items_by_run: dict[int, list[PublishDiaryRunItem]] = {}
-    if run_ids:
-        items_result = await db.execute(
-            select(PublishDiaryRunItem).where(PublishDiaryRunItem.run_id.in_(run_ids))
-        )
-        for item in items_result.scalars().all():
-            items_by_run.setdefault(item.run_id, []).append(item)
+    return await _build_run_list_items(list(runs or []), db)
 
-    response: list[PublishDiaryRunListItemResponse] = []
-    for r in runs:
-        created_at = r.created_at
-        if created_at and created_at.tzinfo is None:
-            created_at = created_at.replace(tzinfo=timezone.utc)
 
-        items = items_by_run.get(r.id, [])
-        success_count = sum(1 for i in items if (i.status or "") == "success")
-        failed_count = sum(1 for i in items if (i.status or "") == "failed")
-        response.append(
-            PublishDiaryRunListItemResponse(
-                id=r.id,
-                date=r.date,
-                target_account_ids=_parse_int_list_json(r.target_account_ids_json),
-                created_at=created_at,
-                success_count=success_count,
-                failed_count=failed_count,
-            )
+@router.get("/runs/latest-by-date", response_model=PublishDiaryRunsLatestByDateResponse)
+async def list_latest_runs_by_date(
+    limit: int = Query(100, ge=1, le=1000, description="按天汇总返回条数（=天数）"),
+    offset: int = Query(0, ge=0, description="按天汇总分页 offset"),
+    db: AsyncSession = Depends(get_db),
+):
+    """按天汇总的发布历史（每个日期只返回最后一次发布）。
+
+    判定口径：
+    - 同一天多次发布/更新时，以该 date 的最大 run_id 作为“日终稿”（最后一次发布）。
+    """
+
+    total_dates = await db.scalar(
+        select(func.count(distinct(PublishDiaryRun.date))).select_from(PublishDiaryRun)
+    )
+    total = int(total_dates or 0)
+
+    # 先按 date 分组取每个 date 的 max(run.id)，再 join 回 run 表拿到完整记录
+    subq = (
+        select(
+            PublishDiaryRun.date.label("date"),
+            func.max(PublishDiaryRun.id).label("max_id"),
         )
-    return response
+        .select_from(PublishDiaryRun)
+        .group_by(PublishDiaryRun.date)
+        .order_by(PublishDiaryRun.date.desc())
+        .limit(limit)
+        .offset(offset)
+        .subquery()
+    )
+
+    query = (
+        select(PublishDiaryRun)
+        .join(subq, PublishDiaryRun.id == subq.c.max_id)
+        .order_by(PublishDiaryRun.date.desc(), PublishDiaryRun.id.desc())
+    )
+    result = await db.execute(query)
+    runs = list(result.scalars().all())
+
+    items = await _build_run_list_items(runs, db)
+    return PublishDiaryRunsLatestByDateResponse(
+        count=total,
+        limit=limit,
+        offset=offset,
+        has_more=(offset + len(items) < total),
+        items=items,
+    )
 
 
 @router.get("/runs/{run_id}", response_model=PublishDiaryRunResponse)     

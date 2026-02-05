@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Button, Card, Checkbox, Grid, Input, List, message, Modal, Space, Table, Tabs, Tag, Typography } from 'antd';
+import { Alert, Button, Card, Checkbox, Divider, Grid, Input, List, Pagination, Segmented, message, Modal, Space, Table, Tabs, Tag, Typography } from 'antd';
 import { ReloadOutlined, SaveOutlined, SendOutlined } from '@ant-design/icons';
 import { accountAPI, publishDiaryAPI } from '../services/api';
 import Page from '../components/Page';
 import { formatBeijingDateTime, formatBeijingDateTimeFromTs } from '../utils/time';
 
-const { Title, Text } = Typography;
+const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
 
 const LAST_SELECTION_KEY = 'yournote_publish_diary_last_account_ids';
@@ -129,6 +129,9 @@ export default function PublishDiary() {
   const [activeTab, setActiveTab] = useState('edit'); // edit | history
 
   const [date, setDate] = useState(() => todayStr());
+  // 发布历史里的“筛选日期”与编辑器日期解耦：
+  // - 避免用户在历史页切换日期时，意外覆盖编辑器里的未保存内容
+  const [historyDate, setHistoryDate] = useState(() => todayStr());
   const [content, setContent] = useState('');
   const [draftUpdatedAt, setDraftUpdatedAt] = useState(null);
 
@@ -142,6 +145,21 @@ export default function PublishDiary() {
 
   const [runs, setRuns] = useState([]);
   const [runsLoading, setRunsLoading] = useState(false);
+
+  // 发布历史查看方式：
+  // - date：按日期筛选（查看当日所有发布）
+  // - daily_latest：按天汇总（每个日期只展示“最后一次发布”，用于浏览所有日子的日终稿）
+  const [historyView, setHistoryView] = useState('date');
+  const [latestByDate, setLatestByDate] = useState({
+    count: 0,
+    limit: 50,
+    offset: 0,
+    has_more: false,
+    items: [],
+  });
+  const [latestByDateLoading, setLatestByDateLoading] = useState(false);
+  const [latestByDatePage, setLatestByDatePage] = useState(1);
+  const [latestByDatePageSize, setLatestByDatePageSize] = useState(50);
 
   const [runModalOpen, setRunModalOpen] = useState(false);
   const [runDetailLoading, setRunDetailLoading] = useState(false);
@@ -265,6 +283,42 @@ export default function PublishDiary() {
       setRunsLoading(false);
     }
   };
+
+  const loadLatestRunsByDate = useCallback(async ({ page = 1, pageSize = 50 } = {}) => {
+    const p = Math.max(1, Number(page) || 1);
+    const ps = Number(pageSize) || 50;
+    const safePageSize = Math.min(200, Math.max(1, ps));
+    const offset = (p - 1) * safePageSize;
+
+    setLatestByDateLoading(true);
+    try {
+      const res = await publishDiaryAPI.listLatestRunsByDate({ limit: safePageSize, offset });
+      const data = res?.data || {};
+      const items = Array.isArray(data?.items) ? data.items : [];
+      const countNum = Number(data?.count);
+
+      setLatestByDate({
+        count: Number.isFinite(countNum) ? countNum : 0,
+        limit: Number(data?.limit || safePageSize) || safePageSize,
+        offset: Number(data?.offset || offset) || offset,
+        has_more: Boolean(data?.has_more),
+        items,
+      });
+      setLatestByDatePage(p);
+      setLatestByDatePageSize(safePageSize);
+    } catch (error) {
+      message.error('加载日终稿（按天汇总）失败: ' + (error?.response?.data?.detail || error?.message || String(error)));
+      setLatestByDate({
+        count: 0,
+        limit: safePageSize,
+        offset,
+        has_more: false,
+        items: [],
+      });
+    } finally {
+      setLatestByDateLoading(false);
+    }
+  }, []);
 
   const openRunDetail = async (runId) => {
     setRunModalOpen(true);
@@ -514,6 +568,41 @@ export default function PublishDiary() {
     loadDraft(date);
     loadRuns(date);
   }, [date]);
+
+  const handleHistoryViewChange = useCallback((value) => {
+    const v = String(value || '');
+    if (v !== 'date' && v !== 'daily_latest') return;
+
+    setHistoryView(v);
+    if (v === 'daily_latest') {
+      // 切到“按天汇总”时，默认从第一页开始加载
+      loadLatestRunsByDate({ page: 1, pageSize: latestByDatePageSize });
+    }
+  }, [loadLatestRunsByDate, latestByDatePageSize]);
+
+  // 切到“发布历史（按日期）”时：使用 historyDate 拉取，避免覆盖编辑器内容
+  useEffect(() => {
+    if (activeTab !== 'history') return;
+    if (historyView !== 'date') return;
+    if (!historyDate) return;
+    loadRuns(historyDate);
+  }, [activeTab, historyView, historyDate]);
+
+  // 从历史页切回编辑页时：刷新一次“当天发布历史（快速查看）”，避免 run 列表停留在别的日期
+  useEffect(() => {
+    if (activeTab !== 'edit') return;
+    if (!date) return;
+    loadRuns(date);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  // 当用户切到“发布历史”页且选择“按天汇总”时，自动加载一次（避免空白页）
+  useEffect(() => {
+    if (activeTab !== 'history') return;
+    if (historyView !== 'daily_latest') return;
+    loadLatestRunsByDate({ page: latestByDatePage, pageSize: latestByDatePageSize });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, historyView]);
 
   useEffect(() => {
     if (!publishing) return;
@@ -948,32 +1037,202 @@ export default function PublishDiary() {
               label: '发布历史',
               children: (
                 <Space direction="vertical" size={16} style={{ width: '100%' }}>
-                  <Card size="small" title="按日期筛选">
+                  <Card size="small" title="查看方式">
                     <Space
                       wrap
                       direction={isMobile ? 'vertical' : 'horizontal'}
                       style={{ width: isMobile ? '100%' : undefined }}
                     >
-                      <Input
-                        type="date"
-                        value={date}
-                        onChange={(e) => setDate(e.target.value)}
-                        style={{ width: isMobile ? '100%' : 170 }}
+                      <Segmented
+                        value={historyView}
+                        options={[
+                          { label: '按日期（当日全部发布）', value: 'date' },
+                          { label: '按天汇总（日终稿）', value: 'daily_latest' },
+                        ]}
+                        onChange={handleHistoryViewChange}
                       />
-                      <Button
-                        onClick={() => loadRuns(date)}
-                        icon={<ReloadOutlined />}
-                        loading={runsLoading}
-                        block={isMobile}
-                      >
-                        刷新
-                      </Button>
-                      <Text type="secondary">提示：点击“载入内容”可把历史发布内容带回编辑器继续更新。</Text>
+                      <Text type="secondary">
+                        提示：点击“查看”可直接阅读发布内容；点击“载入内容”可带回编辑器继续更新。
+                      </Text>
                     </Space>
                   </Card>
 
-                  <Card size="small" title="发布记录">
-                    {isMobile ? runListNode : runTableNode}
+                  {historyView === 'date' ? (
+                    <Card size="small" title="按日期筛选">
+                      <Space
+                        wrap
+                        direction={isMobile ? 'vertical' : 'horizontal'}
+                        style={{ width: isMobile ? '100%' : undefined }}
+                      >
+                        <Input
+                          type="date"
+                          value={historyDate}
+                          onChange={(e) => setHistoryDate(e.target.value)}
+                          style={{ width: isMobile ? '100%' : 170 }}
+                        />
+                        <Button
+                          onClick={() => loadRuns(historyDate)}
+                          icon={<ReloadOutlined />}
+                          loading={runsLoading}
+                          block={isMobile}
+                        >
+                          刷新
+                        </Button>
+                        <Text type="secondary">查看的是该日“所有发布记录”（同一天可能多次更新）。</Text>
+                      </Space>
+                    </Card>
+                  ) : (
+                    <Card
+                      size="small"
+                      title="按天汇总（日终稿）"
+                      extra={(
+                        <Button
+                          icon={<ReloadOutlined />}
+                          onClick={() => loadLatestRunsByDate({ page: latestByDatePage, pageSize: latestByDatePageSize })}
+                          loading={latestByDateLoading}
+                        >
+                          刷新
+                        </Button>
+                      )}
+                    >
+                      <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                        <Text type="secondary">
+                          每个日期只展示“最后一次发布”（以该日最大 Run ID 作为日终稿）。点击可查看内容。
+                        </Text>
+                        <Space wrap>
+                          <Tag color="geekblue">共 {latestByDate?.count ?? 0} 天</Tag>
+                          <Tag>当前 {latestByDatePage} / {Math.max(1, Math.ceil((latestByDate?.count ?? 0) / (latestByDatePageSize || 1)))}</Tag>
+                        </Space>
+                      </Space>
+                    </Card>
+                  )}
+
+                  <Card size="small" title={historyView === 'date' ? '发布记录（当日）' : '日终稿（所有日子）'}>
+                    {historyView === 'date' ? (
+                      isMobile ? runListNode : runTableNode
+                    ) : (
+                      isMobile ? (
+                        <List
+                          dataSource={latestByDate?.items || []}
+                          loading={latestByDateLoading}
+                          locale={{ emptyText: '暂无发布记录' }}
+                          renderItem={(r) => (
+                            <Card
+                              hoverable
+                              style={{ marginBottom: 12 }}
+                              bodyStyle={{ padding: 14 }}
+                              onClick={() => openRunDetail(r.id)}
+                            >
+                              <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                                <Space wrap size={8}>
+                                  <Tag color="purple">{r?.date || '-'}</Tag>
+                                  <Tag color="blue">Run #{r?.id ?? '-'}</Tag>
+                                  <Tag color="geekblue">{r?.target_account_ids?.length ?? 0} 个账号</Tag>
+                                  <Tag color="green">成功 {r?.success_count ?? 0}</Tag>
+                                  <Tag color="red">失败 {r?.failed_count ?? 0}</Tag>
+                                </Space>
+                                <Text type="secondary">时间：{formatBeijingDateTime(r?.created_at)}</Text>
+                                <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                                  <Button
+                                    size="small"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openRunDetail(r.id);
+                                    }}
+                                    block
+                                  >
+                                    查看
+                                  </Button>
+                                  <Button
+                                    size="small"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      loadRunContentIntoEditor(r.id);
+                                    }}
+                                    block
+                                  >
+                                    载入内容
+                                  </Button>
+                                  <Button
+                                    size="small"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setHistoryView('date');
+                                      setHistoryDate(r?.date || '');
+                                      loadRuns(r?.date);
+                                    }}
+                                    block
+                                  >
+                                    查看当天全部发布
+                                  </Button>
+                                </Space>
+                              </Space>
+                            </Card>
+                          )}
+                        />
+                      ) : (
+                        <>
+                          <Table
+                            rowKey="id"
+                            size="small"
+                            loading={latestByDateLoading}
+                            columns={[
+                              { title: '日期', dataIndex: 'date', key: 'date', width: 120 },
+                              { title: 'Run ID', dataIndex: 'id', key: 'id', width: 90 },
+                              {
+                                title: '账号数',
+                                key: 'accounts',
+                                width: 90,
+                                render: (_, r) => (r?.target_account_ids?.length ?? 0),
+                              },
+                              { title: '成功', dataIndex: 'success_count', key: 'success_count', width: 80 },
+                              { title: '失败', dataIndex: 'failed_count', key: 'failed_count', width: 80 },
+                              {
+                                title: '时间',
+                                dataIndex: 'created_at',
+                                key: 'created_at',
+                                width: 180,
+                                render: (v) => formatBeijingDateTime(v),
+                              },
+                              {
+                                title: '操作',
+                                key: 'actions',
+                                width: 320,
+                                render: (_, r) => (
+                                  <Space>
+                                    <Button size="small" onClick={() => openRunDetail(r.id)}>查看</Button>
+                                    <Button size="small" onClick={() => loadRunContentIntoEditor(r.id)}>载入内容</Button>
+                                    <Button
+                                      size="small"
+                                      onClick={() => {
+                                        setHistoryView('date');
+                                        setHistoryDate(r?.date || '');
+                                        loadRuns(r?.date);
+                                      }}
+                                    >
+                                      查看当天全部发布
+                                    </Button>
+                                  </Space>
+                                ),
+                              },
+                            ]}
+                            dataSource={latestByDate?.items || []}
+                            pagination={false}
+                          />
+                          <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end' }}>
+                            <Pagination
+                              current={latestByDatePage}
+                              pageSize={latestByDatePageSize}
+                              total={Number(latestByDate?.count) || 0}
+                              showSizeChanger
+                              pageSizeOptions={['20', '50', '100', '200']}
+                              onChange={(p, ps) => loadLatestRunsByDate({ page: p, pageSize: ps })}
+                              showTotal={(t) => `共 ${t} 天`}
+                            />
+                          </div>
+                        </>
+                      )
+                    )}
                   </Card>
                 </Space>
               ),
@@ -1009,10 +1268,29 @@ export default function PublishDiary() {
             <Alert
               type="info"
               showIcon
-              message={`日期：${runDetail.date}；目标账号：${runDetail?.target_account_ids?.length ?? 0} 个`}
-              description="发布接口是“发布或更新”，同一天再次发布会更新该记录。"
+              message={`日期：${runDetail.date}；目标账号：${runDetail?.target_account_ids?.length ?? 0} 个；时间：${formatBeijingDateTime(runDetail?.created_at)}`}
+              description="发布接口是“发布或更新”，同一天再次发布会更新该记录；历史里“日终稿”展示的是该日最后一次发布。"
             />
-            {isMobile ? runDetailListNode : runDetailTableNode}
+
+            <Card size="small" title="发布内容">
+              <Paragraph
+                copyable={{ text: runDetail?.content || '' }}
+                style={{
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  overflowWrap: 'anywhere',
+                  marginBottom: 0,
+                }}
+              >
+                {runDetail?.content ? runDetail.content : '（空）'}
+              </Paragraph>
+            </Card>
+
+            <Divider style={{ margin: '8px 0' }} />
+
+            <Card size="small" title="每账号结果">
+              {isMobile ? runDetailListNode : runDetailTableNode}
+            </Card>
           </Space>
         )}
       </Modal>

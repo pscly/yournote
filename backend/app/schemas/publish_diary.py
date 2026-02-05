@@ -52,6 +52,21 @@ class PublishDiaryRunListItemResponse(BaseModel):
     failed_count: int = 0
 
 
+class PublishDiaryRunsLatestByDateResponse(BaseModel):
+    """按天汇总的“日终稿”列表：每个日期只返回最后一次发布（Run）。
+
+    说明：
+    - 该接口用于“查看所有日子的最终版本”，不返回当日的所有 run。
+    - 点击某个条目可再调用 `GET /publish-diaries/runs/{run_id}` 查看内容与每账号结果。
+    """
+
+    count: int = 0
+    limit: int = 100
+    offset: int = 0
+    has_more: bool = False
+    items: list[PublishDiaryRunListItemResponse] = Field(default_factory=list)
+
+
 class PublishDiaryRequest(BaseModel):
     """点击“发布”的请求体"""
 

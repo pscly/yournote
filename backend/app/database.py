@@ -105,3 +105,25 @@ async def _ensure_schema(conn) -> None:
     await conn.execute(
         text("CREATE INDEX IF NOT EXISTS idx_diaries_created_at_desc ON diaries (created_at DESC)")
     )
+
+    # 记录查询（筛选 + 日期范围 + 稳定排序）常用复合索引
+    # 说明：
+    # - PostgreSQL 可反向扫描索引，因此不强依赖 DESC；SQLite 也能从复合索引里获益
+    # - 这些索引能显著加速 “账号/作者 + 日期范围 + 分页” 的常见查询
+    await conn.execute(
+        text("CREATE INDEX IF NOT EXISTS idx_diaries_acc_date_id ON diaries (account_id, created_date, id)")
+    )
+    await conn.execute(
+        text("CREATE INDEX IF NOT EXISTS idx_diaries_user_date_id ON diaries (user_id, created_date, id)")
+    )
+    await conn.execute(
+        text("CREATE INDEX IF NOT EXISTS idx_diaries_date_id ON diaries (created_date, id)")
+    )
+
+    # 配对范围（scope=matched）会 join paired_relationships 并过滤 is_active
+    await conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS idx_paired_relationships_acc_paired_active "
+            "ON paired_relationships (account_id, paired_user_id, is_active)"
+        )
+    )

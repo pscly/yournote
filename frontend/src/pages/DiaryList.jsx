@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Alert,
   Button,
   Card,
+  Divider,
   Grid,
+  Image,
   Input,
   List,
   Pagination,
@@ -10,6 +13,7 @@ import {
   Select,
   Space,
   Spin,
+  Switch,
   Table,
   Tag,
   Typography,
@@ -28,6 +32,11 @@ const { Title, Paragraph, Text } = Typography;
 
 const DIARY_LIST_SCOPE_KEY = 'yournote.diaryList.scope.v1';
 const DIARY_LIST_PAGE_SIZE_KEY = 'yournote.diaryList.pageSize.v1';
+const DIARY_LIST_Q_MODE_KEY = 'yournote.diaryList.qMode.v1';
+const DIARY_LIST_Q_SYNTAX_KEY = 'yournote.diaryList.qSyntax.v1';
+const DIARY_LIST_STATS_ENABLED_KEY = 'yournote.diaryList.statsEnabled.v1';
+const DIARY_LIST_VIEW_MODE_KEY = 'yournote.diaryList.viewMode.v1';
+const DIARY_LIST_MULTI_EXPAND_KEY = 'yournote.diaryList.multiExpand.v1';
 
 const ALL = 'all';
 const PAGE_SIZE_OPTIONS = [20, 50, 100, 200];
@@ -82,6 +91,24 @@ function parseScope(value) {
   return null;
 }
 
+function parseQMode(value) {
+  const v = String(value ?? '').trim().toLowerCase();
+  if (v === 'and' || v === 'or') return v;
+  return null;
+}
+
+function parseQSyntax(value) {
+  const v = String(value ?? '').trim().toLowerCase();
+  if (v === 'smart' || v === 'plain') return v;
+  return null;
+}
+
+function parseViewMode(value) {
+  const v = String(value ?? '').trim().toLowerCase();
+  if (v === 'list' || v === 'read') return v;
+  return null;
+}
+
 function parseOrderBy(value) {
   const v = String(value ?? '').trim().toLowerCase();
   if (v === 'ts' || v === 'created_date' || v === 'created_at') return v;
@@ -102,6 +129,78 @@ function parseDateYmd(value) {
   return v;
 }
 
+function parseBool01(value) {
+  const v = String(value ?? '').trim();
+  if (v === '1') return true;
+  if (v === '0') return false;
+  return null;
+}
+
+function escapeRegExp(text) {
+  return String(text || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function parseSmartQuery(raw, { maxPositive = 10, maxExcludes = 10 } = {}) {
+  const s = String(raw ?? '').trim();
+  if (!s) return { terms: [], phrases: [], excludes: [] };
+
+  const terms = [];
+  const phrases = [];
+  const excludes = [];
+
+  const posSeen = new Set();
+  const excSeen = new Set();
+  let posCount = 0;
+
+  let i = 0;
+  while (i < s.length) {
+    while (i < s.length && /\s/.test(s[i])) i += 1;
+    if (i >= s.length) break;
+
+    let neg = false;
+    if (s[i] === '-') {
+      neg = true;
+      i += 1;
+      while (i < s.length && /\s/.test(s[i])) i += 1;
+      if (i >= s.length) break;
+    }
+
+    let quoted = false;
+    let token = '';
+    if (s[i] === '"') {
+      quoted = true;
+      i += 1;
+      const start = i;
+      while (i < s.length && s[i] !== '"') i += 1;
+      token = s.slice(start, i).trim();
+      if (i < s.length && s[i] === '"') i += 1;
+    } else {
+      const start = i;
+      while (i < s.length && !/\s/.test(s[i])) i += 1;
+      token = s.slice(start, i).trim();
+    }
+
+    if (!token) continue;
+    const key = token.toLowerCase();
+    if (neg) {
+      if (excludes.length >= maxExcludes) continue;
+      if (excSeen.has(key)) continue;
+      excSeen.add(key);
+      excludes.push(token);
+      continue;
+    }
+
+    if (posCount >= maxPositive) continue;
+    if (posSeen.has(key)) continue;
+    posSeen.add(key);
+    posCount += 1;
+    if (quoted) phrases.push(token);
+    else terms.push(token);
+  }
+
+  return { terms, phrases, excludes };
+}
+
 export default function DiaryList() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -109,12 +208,31 @@ export default function DiaryList() {
   const isMobile = !screens.md;
   const { token } = theme.useToken();
   const searchInputRef = useRef(null);
+  const isMobileByWindow = (() => {
+    try {
+      return window.innerWidth < 768;
+    } catch {
+      return isMobile;
+    }
+  })();
 
   const storedScope = readStringStorage(DIARY_LIST_SCOPE_KEY);
   const storedPageSize = readIntStorage(DIARY_LIST_PAGE_SIZE_KEY);
+  const storedQMode = readStringStorage(DIARY_LIST_Q_MODE_KEY);
+  const storedQSyntax = readStringStorage(DIARY_LIST_Q_SYNTAX_KEY);
+  const storedStatsEnabledRaw = readStringStorage(DIARY_LIST_STATS_ENABLED_KEY);
+  const storedStatsEnabled = parseBool01(storedStatsEnabledRaw);
+  const storedViewMode = readStringStorage(DIARY_LIST_VIEW_MODE_KEY);
+  const storedMultiExpandRaw = readStringStorage(DIARY_LIST_MULTI_EXPAND_KEY);
+  const storedMultiExpand = parseBool01(storedMultiExpandRaw);
 
   const initialUrlQ = String(searchParams.get('q') || '').trim();
   const initialScope = parseScope(searchParams.get('scope')) || (storedScope === 'matched' || storedScope === 'all' ? storedScope : null) || 'matched';
+  const initialQMode = parseQMode(searchParams.get('mode')) || parseQMode(storedQMode) || 'and';
+  const initialQSyntax = parseQSyntax(searchParams.get('syntax')) || parseQSyntax(storedQSyntax) || 'smart';
+  const initialStatsEnabled = parseBool01(searchParams.get('stats')) ?? storedStatsEnabled ?? (!isMobileByWindow);
+  const initialViewMode = parseViewMode(searchParams.get('view')) || parseViewMode(storedViewMode) || (isMobileByWindow ? 'read' : 'list');
+  const initialMultiExpand = parseBool01(searchParams.get('multi')) ?? storedMultiExpand ?? false;
   const initialPageSizeRaw = parsePositiveInt(searchParams.get('pageSize')) || storedPageSize;
   const initialPageSize = PAGE_SIZE_OPTIONS.includes(initialPageSizeRaw) ? initialPageSizeRaw : 50;
   const initialPage = Math.max(1, parsePositiveInt(searchParams.get('page')) || 1);
@@ -129,9 +247,15 @@ export default function DiaryList() {
 
   const [accounts, setAccounts] = useState([]);
   const [userById, setUserById] = useState({});
+  const [initDone, setInitDone] = useState(false);
 
   const [qInput, setQInput] = useState(initialUrlQ);
   const [q, setQ] = useState(initialUrlQ);
+  const [qMode, setQMode] = useState(initialQMode);
+  const [qSyntax, setQSyntax] = useState(initialQSyntax);
+  const [statsEnabled, setStatsEnabled] = useState(initialStatsEnabled);
+  const [viewMode, setViewMode] = useState(initialViewMode);
+  const [multiExpand, setMultiExpand] = useState(initialMultiExpand);
 
   const [scope, setScope] = useState(initialScope);
   const [accountValue, setAccountValue] = useState(initialAccountId ?? ALL);
@@ -148,6 +272,13 @@ export default function DiaryList() {
   const [loading, setLoading] = useState(false);
   const [total, setTotal] = useState(0);
   const [diaries, setDiaries] = useState([]);
+  const [lastTookMs, setLastTookMs] = useState(null);
+  const [lastNormalized, setLastNormalized] = useState(null);
+  const [expandedIds, setExpandedIds] = useState([]);
+  const [detailById, setDetailById] = useState({});
+  const [detailLoadingById, setDetailLoadingById] = useState({});
+  const [detailErrorById, setDetailErrorById] = useState({});
+  const [failedImageByDiaryId, setFailedImageByDiaryId] = useState({});
   const loadSeqRef = useRef(0);
 
   const syncUrl = useCallback((next, { replace = false } = {}) => {
@@ -157,6 +288,17 @@ export default function DiaryList() {
     if (qText) p.set('q', qText);
 
     p.set('scope', next.scope || 'matched');
+
+    const mode = parseQMode(next.qMode) || qMode || 'and';
+    const syntax = parseQSyntax(next.qSyntax) || qSyntax || 'smart';
+    const stats = (typeof next.statsEnabled === 'boolean') ? next.statsEnabled : Boolean(statsEnabled);
+    const view = parseViewMode(next.viewMode) || viewMode || (isMobile ? 'read' : 'list');
+    const multi = (typeof next.multiExpand === 'boolean') ? next.multiExpand : Boolean(multiExpand);
+    p.set('mode', mode);
+    p.set('syntax', syntax);
+    p.set('stats', stats ? '1' : '0');
+    p.set('view', view);
+    p.set('multi', multi ? '1' : '0');
 
     if (typeof next.accountId === 'number' && next.accountId > 0) p.set('accountId', String(next.accountId));
     if (typeof next.userId === 'number' && next.userId > 0) p.set('userId', String(next.userId));
@@ -170,7 +312,7 @@ export default function DiaryList() {
     p.set('order', next.order || 'desc');
 
     setSearchParams(p, { replace });
-  }, [setSearchParams]);
+  }, [setSearchParams, qMode, qSyntax, statsEnabled, viewMode, multiExpand, isMobile]);
 
   const currentAccountId = useMemo(() => (accountValue === ALL ? null : parsePositiveInt(accountValue)), [accountValue]);
   const currentUserId = useMemo(() => (userValue === ALL ? null : parsePositiveInt(userValue)), [userValue]);
@@ -197,6 +339,8 @@ export default function DiaryList() {
       setUserById(byId);
     } catch (error) {
       message.error('初始化失败: ' + (error?.message || '未知错误'));
+    } finally {
+      setInitDone(true);
     }
   }, []);
 
@@ -208,11 +352,15 @@ export default function DiaryList() {
     try {
       const res = await diaryAPI.query({
         q: q || undefined,
+        q_mode: qMode,
+        q_syntax: qSyntax,
         scope,
         account_id: currentAccountId || undefined,
         user_id: currentUserId || undefined,
         date_from: currentDateFrom || undefined,
         date_to: currentDateTo || undefined,
+        include_stats: Boolean(statsEnabled),
+        include_preview: true,
         limit: pageSize,
         offset: (page - 1) * pageSize,
         order_by: orderBy,
@@ -225,17 +373,22 @@ export default function DiaryList() {
       const data = res?.data || {};
       const items = Array.isArray(data?.items) ? data.items : [];
       const countNum = Number(data?.count);
+      const tookMsNum = Number(data?.took_ms);
       setDiaries(items);
       setTotal(Number.isFinite(countNum) ? countNum : items.length);
+      setLastTookMs(Number.isFinite(tookMsNum) ? tookMsNum : null);
+      setLastNormalized(data?.normalized || null);
     } catch (error) {
       if (loadSeqRef.current !== seq) return;
       setDiaries([]);
       setTotal(0);
+      setLastTookMs(null);
+      setLastNormalized(null);
       message.error('加载记录失败: ' + (error?.message || '未知错误'));
     } finally {
       if (loadSeqRef.current === seq) setLoading(false);
     }
-  }, [q, scope, currentAccountId, currentUserId, currentDateFrom, currentDateTo, page, pageSize, orderBy, order, isMobile]);
+  }, [q, qMode, qSyntax, statsEnabled, scope, currentAccountId, currentUserId, currentDateFrom, currentDateTo, page, pageSize, orderBy, order, isMobile]);
 
   useEffect(() => {
     loadInit();
@@ -244,6 +397,15 @@ export default function DiaryList() {
   useEffect(() => {
     loadDiaries();
   }, [loadDiaries]);
+
+  // 阅读模式：当查询条件/分页变化时，清空上一批结果的展开项，避免“展开状态错位”。
+  useEffect(() => {
+    setExpandedIds([]);
+  }, [q, qMode, qSyntax, scope, currentAccountId, currentUserId, currentDateFrom, currentDateTo, orderBy, order, page, pageSize]);
+
+  useEffect(() => {
+    if (viewMode !== 'read') setExpandedIds([]);
+  }, [viewMode]);
 
   // 让用户偏好“记住上次选择”：即使是通过分享链接打开，也会更新到本地偏好。
   useEffect(() => {
@@ -254,10 +416,35 @@ export default function DiaryList() {
     if (PAGE_SIZE_OPTIONS.includes(pageSize)) writeIntStorage(DIARY_LIST_PAGE_SIZE_KEY, pageSize);
   }, [pageSize]);
 
+  useEffect(() => {
+    if (qMode === 'and' || qMode === 'or') writeStringStorage(DIARY_LIST_Q_MODE_KEY, qMode);
+  }, [qMode]);
+
+  useEffect(() => {
+    if (qSyntax === 'smart' || qSyntax === 'plain') writeStringStorage(DIARY_LIST_Q_SYNTAX_KEY, qSyntax);
+  }, [qSyntax]);
+
+  useEffect(() => {
+    writeStringStorage(DIARY_LIST_STATS_ENABLED_KEY, statsEnabled ? '1' : '0');
+  }, [statsEnabled]);
+
+  useEffect(() => {
+    if (viewMode === 'list' || viewMode === 'read') writeStringStorage(DIARY_LIST_VIEW_MODE_KEY, viewMode);
+  }, [viewMode]);
+
+  useEffect(() => {
+    writeStringStorage(DIARY_LIST_MULTI_EXPAND_KEY, multiExpand ? '1' : '0');
+  }, [multiExpand]);
+
   // 支持浏览器前进/后退：URL 改变时同步状态
   useEffect(() => {
     const urlQ = String(searchParams.get('q') || '').trim();
     const urlScope = parseScope(searchParams.get('scope')) || 'matched';
+    const urlMode = parseQMode(searchParams.get('mode'));
+    const urlSyntax = parseQSyntax(searchParams.get('syntax'));
+    const urlStats = parseBool01(searchParams.get('stats'));
+    const urlView = parseViewMode(searchParams.get('view'));
+    const urlMulti = parseBool01(searchParams.get('multi'));
     const urlPageSizeRaw = parsePositiveInt(searchParams.get('pageSize')) || 50;
     const urlPageSize = PAGE_SIZE_OPTIONS.includes(urlPageSizeRaw) ? urlPageSizeRaw : 50;
     const urlPage = Math.max(1, parsePositiveInt(searchParams.get('page')) || 1);
@@ -271,6 +458,11 @@ export default function DiaryList() {
     if (qInput !== urlQ) setQInput(urlQ);
     if (q !== urlQ) setQ(urlQ);
     if (scope !== urlScope) setScope(urlScope);
+    if (urlMode && qMode !== urlMode) setQMode(urlMode);
+    if (urlSyntax && qSyntax !== urlSyntax) setQSyntax(urlSyntax);
+    if (typeof urlStats === 'boolean' && statsEnabled !== urlStats) setStatsEnabled(urlStats);
+    if (urlView && viewMode !== urlView) setViewMode(urlView);
+    if (typeof urlMulti === 'boolean' && multiExpand !== urlMulti) setMultiExpand(urlMulti);
     if (pageSize !== urlPageSize) setPageSize(urlPageSize);
     if (page !== urlPage) setPage(urlPage);
     if ((accountValue === ALL ? null : parsePositiveInt(accountValue)) !== urlAccountId) setAccountValue(urlAccountId ?? ALL);
@@ -385,6 +577,129 @@ export default function DiaryList() {
       order,
     }, { replace: false });
   }, [qInput, q, scope, currentAccountId, currentUserId, currentDateFrom, currentDateTo, pageSize, orderBy, order, syncUrl]);
+
+  const handleQModeChange = useCallback((value) => {
+    const nextMode = parseQMode(value);
+    if (!nextMode) return;
+    const nextQ = qInput.trim();
+    setQMode(nextMode);
+    setQ(nextQ);
+    setPage(1);
+    syncUrl({
+      q: nextQ,
+      qMode: nextMode,
+      qSyntax,
+      statsEnabled,
+      scope,
+      accountId: currentAccountId,
+      userId: currentUserId,
+      dateFrom: currentDateFrom,
+      dateTo: currentDateTo,
+      page: 1,
+      pageSize,
+      orderBy,
+      order,
+    }, { replace: false });
+  }, [qInput, qSyntax, statsEnabled, scope, currentAccountId, currentUserId, currentDateFrom, currentDateTo, pageSize, orderBy, order, syncUrl]);
+
+  const handleQSyntaxChange = useCallback((value) => {
+    const nextSyntax = parseQSyntax(value);
+    if (!nextSyntax) return;
+    const nextQ = qInput.trim();
+    setQSyntax(nextSyntax);
+    setQ(nextQ);
+    setPage(1);
+    syncUrl({
+      q: nextQ,
+      qMode,
+      qSyntax: nextSyntax,
+      statsEnabled,
+      viewMode,
+      multiExpand,
+      scope,
+      accountId: currentAccountId,
+      userId: currentUserId,
+      dateFrom: currentDateFrom,
+      dateTo: currentDateTo,
+      page: 1,
+      pageSize,
+      orderBy,
+      order,
+    }, { replace: false });
+  }, [qInput, qMode, statsEnabled, viewMode, multiExpand, scope, currentAccountId, currentUserId, currentDateFrom, currentDateTo, pageSize, orderBy, order, syncUrl]);
+
+  const handleViewModeChange = useCallback((value) => {
+    const nextView = parseViewMode(value);
+    if (!nextView) return;
+    setViewMode(nextView);
+    setExpandedIds([]);
+    syncUrl({
+      q,
+      qMode,
+      qSyntax,
+      statsEnabled,
+      viewMode: nextView,
+      multiExpand,
+      scope,
+      accountId: currentAccountId,
+      userId: currentUserId,
+      dateFrom: currentDateFrom,
+      dateTo: currentDateTo,
+      page,
+      pageSize,
+      orderBy,
+      order,
+    }, { replace: false });
+  }, [q, qMode, qSyntax, statsEnabled, multiExpand, scope, currentAccountId, currentUserId, currentDateFrom, currentDateTo, page, pageSize, orderBy, order, syncUrl]);
+
+  const handleMultiExpandChange = useCallback((checked) => {
+    const nextMulti = Boolean(checked);
+    setMultiExpand(nextMulti);
+    setExpandedIds((prev) => {
+      if (nextMulti) return prev;
+      // 切回“仅展开一条”时，保留第一条展开项，避免页面一下子撑得过长
+      return Array.isArray(prev) && prev.length > 0 ? [prev[0]] : [];
+    });
+    syncUrl({
+      q,
+      qMode,
+      qSyntax,
+      statsEnabled,
+      viewMode,
+      multiExpand: nextMulti,
+      scope,
+      accountId: currentAccountId,
+      userId: currentUserId,
+      dateFrom: currentDateFrom,
+      dateTo: currentDateTo,
+      page,
+      pageSize,
+      orderBy,
+      order,
+    }, { replace: false });
+  }, [q, qMode, qSyntax, statsEnabled, viewMode, scope, currentAccountId, currentUserId, currentDateFrom, currentDateTo, page, pageSize, orderBy, order, syncUrl]);
+
+  const handleStatsEnabledChange = useCallback((checked) => {
+    const nextStats = Boolean(checked);
+    setStatsEnabled(nextStats);
+    syncUrl({
+      q,
+      qMode,
+      qSyntax,
+      statsEnabled: nextStats,
+      viewMode,
+      multiExpand,
+      scope,
+      accountId: currentAccountId,
+      userId: currentUserId,
+      dateFrom: currentDateFrom,
+      dateTo: currentDateTo,
+      page,
+      pageSize,
+      orderBy,
+      order,
+    }, { replace: false });
+  }, [q, qMode, qSyntax, viewMode, multiExpand, scope, currentAccountId, currentUserId, currentDateFrom, currentDateTo, page, pageSize, orderBy, order, syncUrl]);
 
   // 快捷键：
   // - `/`：聚焦搜索框（不在输入框内时）
@@ -600,6 +915,223 @@ export default function DiaryList() {
     }, { replace: false });
   }, [pageSize, q, scope, currentAccountId, currentUserId, currentDateFrom, currentDateTo, orderBy, order, syncUrl]);
 
+  const loadDiaryDetail = useCallback(async (diaryId) => {
+    const idNum = Number(diaryId);
+    if (!Number.isFinite(idNum) || idNum <= 0) return;
+
+    setDetailLoadingById((prev) => ({ ...(prev || {}), [idNum]: true }));
+    setDetailErrorById((prev) => ({ ...(prev || {}), [idNum]: null }));
+    try {
+      const res = await diaryAPI.get(idNum);
+      const data = res?.data || null;
+      setDetailById((prev) => ({ ...(prev || {}), [idNum]: data }));
+    } catch (error) {
+      const msg = error?.message || '加载失败';
+      setDetailErrorById((prev) => ({ ...(prev || {}), [idNum]: String(msg) }));
+    } finally {
+      setDetailLoadingById((prev) => ({ ...(prev || {}), [idNum]: false }));
+    }
+  }, []);
+
+  const ensureDiaryDetailLoaded = useCallback((diaryId) => {
+    const idNum = Number(diaryId);
+    if (!Number.isFinite(idNum) || idNum <= 0) return;
+    if (detailById?.[idNum]) return;
+    if (detailLoadingById?.[idNum]) return;
+    loadDiaryDetail(idNum);
+  }, [detailById, detailLoadingById, loadDiaryDetail]);
+
+  const openDiaryForReading = useCallback((diaryId) => {
+    const idNum = Number(diaryId);
+    if (!Number.isFinite(idNum) || idNum <= 0) return;
+    ensureDiaryDetailLoaded(idNum);
+    setExpandedIds((prev) => {
+      const list = Array.isArray(prev) ? prev : [];
+      if (list.includes(idNum)) return list;
+      if (multiExpand) return [...list, idNum];
+      return [idNum];
+    });
+  }, [ensureDiaryDetailLoaded, multiExpand]);
+
+  const toggleDiaryExpanded = useCallback((diaryId) => {
+    const idNum = Number(diaryId);
+    if (!Number.isFinite(idNum) || idNum <= 0) return;
+
+    const isOpen = expandedIds.includes(idNum);
+    if (isOpen) {
+      setExpandedIds((prev) => (Array.isArray(prev) ? prev.filter((x) => x !== idNum) : []));
+      return;
+    }
+
+    openDiaryForReading(idNum);
+  }, [expandedIds, openDiaryForReading]);
+
+  const markImageFailed = useCallback((diaryId, imageId) => {
+    const did = Number(diaryId);
+    const iid = Number(imageId);
+    if (!Number.isFinite(did) || did <= 0) return;
+    if (!Number.isFinite(iid) || iid <= 0) return;
+    setFailedImageByDiaryId((prev) => {
+      const base = prev || {};
+      const perDiary = base[did] || {};
+      return {
+        ...base,
+        [did]: {
+          ...perDiary,
+          [iid]: true,
+        },
+      };
+    });
+  }, []);
+
+  const renderDiaryContentWithImages = useCallback((diaryDetail) => {
+    const diaryId = Number(diaryDetail?.id);
+    const text = String(diaryDetail?.content ?? '');
+    const images = Array.isArray(diaryDetail?.attachments?.images)
+      ? diaryDetail.attachments.images.filter(Boolean)
+      : [];
+
+    const imageById = new Map();
+    for (const img of images) {
+      const idNum = Number(img?.image_id);
+      if (Number.isFinite(idNum)) imageById.set(idNum, img);
+    }
+
+    const failedMap = failedImageByDiaryId?.[diaryId] || {};
+    const re = /\[图(\d+)\]/g;
+    const nodes = [];
+    let lastIndex = 0;
+    let match;
+
+    while ((match = re.exec(text)) !== null) {
+      const start = match.index;
+      const end = start + match[0].length;
+      if (start > lastIndex) {
+        nodes.push({ type: 'text', value: text.slice(lastIndex, start), key: `t-${lastIndex}` });
+      }
+      const imageId = Number(match[1]);
+      nodes.push({ type: 'image', imageId, key: `img-${start}-${imageId}` });
+      lastIndex = end;
+    }
+    if (lastIndex < text.length) {
+      nodes.push({ type: 'text', value: text.slice(lastIndex), key: `t-${lastIndex}` });
+    }
+
+    return nodes.map((n) => {
+      if (n.type === 'text') {
+        return <span key={n.key}>{n.value}</span>;
+      }
+
+      const imageId = n.imageId;
+      const imgInfo = imageById.get(imageId);
+      const src = imgInfo?.url || `/api/diaries/${diaryId}/images/${imageId}`;
+
+      if (failedMap?.[imageId]) {
+        return (
+          <div key={n.key} style={{ margin: '12px 0', padding: 12, borderRadius: 8, background: token.colorFillAlter, color: token.colorTextSecondary }}>
+            图片 {imageId} 加载失败（可能无权限或已删除）
+          </div>
+        );
+      }
+
+      return (
+        <div key={n.key} style={{ margin: '12px 0' }}>
+          <Image
+            src={src}
+            alt={`图${imageId}`}
+            style={{ maxWidth: '100%', borderRadius: 8 }}
+            onError={() => markImageFailed(diaryId, imageId)}
+          />
+        </div>
+      );
+    });
+  }, [failedImageByDiaryId, markImageFailed, token.colorFillAlter, token.colorTextSecondary]);
+
+  const queryMeta = useMemo(() => {
+    const n = lastNormalized;
+
+    const normSyntax = parseQSyntax(n?.syntax) || qSyntax || 'smart';
+    const toStrList = (v) => (Array.isArray(v) ? v : [])
+      .filter((x) => typeof x === 'string' && x.trim())
+      .map((x) => x.trim());
+
+    if (n && typeof n === 'object') {
+      return {
+        syntax: normSyntax,
+        terms: toStrList(n?.terms),
+        phrases: toStrList(n?.phrases),
+        excludes: toStrList(n?.excludes),
+      };
+    }
+
+    const rawQ = String(q || '').trim();
+    if (!rawQ) return { syntax: normSyntax, terms: [], phrases: [], excludes: [] };
+
+    if (normSyntax === 'plain') {
+      return { syntax: normSyntax, terms: rawQ.split(/\s+/).filter(Boolean).slice(0, 10), phrases: [], excludes: [] };
+    }
+
+    const parsed = parseSmartQuery(rawQ, { maxPositive: 10, maxExcludes: 10 });
+    return { syntax: normSyntax, ...parsed };
+  }, [lastNormalized, q, qSyntax]);
+
+  const highlightTokens = useMemo(() => {
+    const excludes = new Set((queryMeta?.excludes || []).map((x) => String(x).toLowerCase()));
+    const tokens = [...(queryMeta?.terms || []), ...(queryMeta?.phrases || [])]
+      .filter((t) => typeof t === 'string' && t.trim())
+      .map((t) => t.trim())
+      .filter((t) => !excludes.has(t.toLowerCase()));
+
+    // 限制数量：避免生成过长正则，影响渲染
+    return tokens.slice(0, 10);
+  }, [queryMeta]);
+
+  const highlightRegexSource = useMemo(() => {
+    if (!highlightTokens.length) return null;
+    const sorted = [...highlightTokens].sort((a, b) => b.length - a.length);
+    const escaped = sorted.map(escapeRegExp).filter(Boolean);
+    if (!escaped.length) return null;
+    return escaped.join('|');
+  }, [highlightTokens]);
+
+  const renderHighlighted = useCallback((value) => {
+    const raw = String(value ?? '').toString();
+    if (!raw) return '-';
+    if (!highlightRegexSource) return raw;
+
+    const regex = new RegExp(highlightRegexSource, 'gi');
+    const out = [];
+    let lastIndex = 0;
+    let m;
+
+    while ((m = regex.exec(raw)) !== null) {
+      const start = m.index;
+      const end = start + String(m[0] || '').length;
+      if (end <= start) {
+        // 极端情况避免死循环
+        regex.lastIndex += 1;
+        continue;
+      }
+      if (start > lastIndex) out.push(raw.slice(lastIndex, start));
+      out.push(
+        <mark
+          key={`${start}-${end}`}
+          style={{
+            backgroundColor: token.colorWarningBg,
+            color: token.colorText,
+            padding: '0 2px',
+            borderRadius: 2,
+          }}
+        >
+          {raw.slice(start, end)}
+        </mark>,
+      );
+      lastIndex = end;
+    }
+    if (lastIndex < raw.length) out.push(raw.slice(lastIndex));
+    return <>{out}</>;
+  }, [highlightRegexSource, token.colorText, token.colorWarningBg]);
+
   const columns = useMemo(() => [
     { title: '日期', dataIndex: 'created_date', key: 'date', width: 120, render: (v) => v || '-' },
     {
@@ -630,7 +1162,7 @@ export default function DiaryList() {
       dataIndex: 'title',
       key: 'title',
       width: 240,
-      render: (v) => v || '-',
+      render: (v) => renderHighlighted(v || '-'),
       onCell: (record) => ({
         onClick: () => navigate(`/diary/${record.id}`),
         style: { cursor: 'pointer' },
@@ -641,7 +1173,7 @@ export default function DiaryList() {
       dataIndex: 'content_preview',
       key: 'content',
       ellipsis: true,
-      render: (v) => v || '-',
+      render: (v) => renderHighlighted(v || '-'),
       onCell: (record) => ({
         onClick: () => navigate(`/diary/${record.id}`),
         style: { cursor: 'pointer', color: token.colorPrimary },
@@ -653,6 +1185,7 @@ export default function DiaryList() {
       width: 110,
       align: 'right',
       render: (_, record) => {
+        if (!statsEnabled) return '-';
         const serverCount = Number(record?.word_count_no_ws);
         if (Number.isFinite(serverCount)) return <Tag color="geekblue">{serverCount} 字</Tag>;
         const stats = getDiaryWordStats(record);
@@ -662,20 +1195,9 @@ export default function DiaryList() {
     },
     { title: '心情', dataIndex: 'mood', key: 'mood', width: 90, render: (m) => (m ? <Tag>{m}</Tag> : '-') },
     { title: '天气', dataIndex: 'weather', key: 'weather', width: 90, render: (w) => (w ? <Tag color="blue">{w}</Tag> : '-') },
-  ], [navigate, userById, token]);
+  ], [navigate, userById, token, renderHighlighted, statsEnabled]);
 
-  if (accounts.length === 0) {
-    return (
-      <Page>
-        <Title level={3} style={{ marginTop: 0 }}>
-          记录列表
-        </Title>
-        <Card>
-          <Text type="secondary">暂无账号，请先去“账号管理”添加并等待同步完成。</Text>
-        </Card>
-      </Page>
-    );
-  }
+  const noAccounts = initDone && (accounts?.length || 0) === 0;
 
   const scopeTag = scope === 'all'
     ? <Tag color="blue">范围：全部记录</Tag>
@@ -689,6 +1211,21 @@ export default function DiaryList() {
 
       <Card style={{ marginBottom: 16 }}>
         <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          {noAccounts && (
+            <Alert
+              type="warning"
+              showIcon
+              message="暂无账号"
+              description={(
+                <Space wrap>
+                  <Text type="secondary">请先去“账号管理”添加账号并等待同步完成。</Text>
+                  <Button size="small" type="primary" onClick={() => navigate('/accounts')}>
+                    去账号管理
+                  </Button>
+                </Space>
+              )}
+            />
+          )}
           <Space wrap style={{ width: '100%' }}>
             <Input.Search
               allowClear
@@ -703,6 +1240,26 @@ export default function DiaryList() {
               enterButton={<><SearchOutlined /> 搜索</>}
               style={{ flex: 1, minWidth: isMobile ? '100%' : 420 }}
             />
+            <Segmented
+              value={qMode}
+              options={[
+                { label: '全部命中', value: 'and' },
+                { label: '任意命中', value: 'or' },
+              ]}
+              onChange={handleQModeChange}
+              disabled={loading}
+              style={{ minWidth: isMobile ? '100%' : 200 }}
+            />
+            <Select
+              value={qSyntax}
+              onChange={handleQSyntaxChange}
+              disabled={loading}
+              style={{ width: isMobile ? '100%' : 140 }}
+              options={[
+                { label: '智能语法', value: 'smart' },
+                { label: '纯文本', value: 'plain' },
+              ]}
+            />
             <Button icon={<ReloadOutlined />} onClick={loadDiaries} disabled={loading} block={isMobile}>
               刷新
             </Button>
@@ -710,6 +1267,12 @@ export default function DiaryList() {
               重置条件
             </Button>
           </Space>
+
+          <Text type="secondary">
+            {qSyntax === 'plain'
+              ? '纯文本模式：不解析引号短语与 -排除；快捷键：按 / 聚焦搜索框，Esc 清空搜索。'
+              : '提示：支持 "短语" 搜索、-关键词 排除；快捷键：按 / 聚焦搜索框，Esc 清空搜索。'}
+          </Text>
 
           <Space wrap direction={isMobile ? 'vertical' : 'horizontal'} style={{ width: '100%' }}>
             <Space wrap>
@@ -722,6 +1285,29 @@ export default function DiaryList() {
                 ]}
                 onChange={handleScopeChange}
               />
+            </Space>
+
+            <Space wrap>
+              <Text type="secondary">视图</Text>
+              <Segmented
+                value={viewMode}
+                options={[
+                  { label: '列表', value: 'list' },
+                  { label: '阅读', value: 'read' },
+                ]}
+                onChange={handleViewModeChange}
+                disabled={loading}
+              />
+              <Space size={6}>
+                <Text type="secondary">字数</Text>
+                <Switch checked={statsEnabled} onChange={handleStatsEnabledChange} disabled={loading} />
+              </Space>
+              {viewMode === 'read' && (
+                <Space size={6}>
+                  <Text type="secondary">多条展开</Text>
+                  <Switch checked={multiExpand} onChange={handleMultiExpandChange} disabled={loading} />
+                </Space>
+              )}
             </Space>
 
             <Space wrap>
@@ -765,13 +1351,135 @@ export default function DiaryList() {
               />
               {scopeTag}
               <Tag color="geekblue">共 {Number(total) || 0} 条</Tag>
+              {typeof lastTookMs === 'number' && <Tag color="geekblue">耗时 {lastTookMs} ms</Tag>}
             </Space>
           </Space>
         </Space>
       </Card>
 
       <Card>
-        {isMobile ? (
+        {viewMode === 'read' ? (
+          <List
+            dataSource={diaries}
+            loading={loading}
+            locale={{ emptyText: '暂无记录' }}
+            renderItem={(item, index) => {
+              const diaryId = Number(item?.id);
+              const isOpen = Number.isFinite(diaryId) && expandedIds.includes(diaryId);
+              const detail = Number.isFinite(diaryId) ? detailById?.[diaryId] : null;
+              const detailLoading = Number.isFinite(diaryId) ? Boolean(detailLoadingById?.[diaryId]) : false;
+              const detailError = Number.isFinite(diaryId) ? detailErrorById?.[diaryId] : null;
+
+              const u = userById?.[item?.user_id];
+              const name = u?.name || (item?.user_id ? `用户 ${item.user_id}` : '未知');
+              const authorText = u?.nideriji_userid ? `${name}（${u.nideriji_userid}）` : name;
+              const wordCount = Number(item?.word_count_no_ws) || 0;
+              const modifiedText = formatBeijingDateTimeFromTs(item?.ts);
+
+              const prevId = (index > 0) ? Number(diaries?.[index - 1]?.id) : null;
+              const nextId = (index < (diaries?.length || 0) - 1) ? Number(diaries?.[index + 1]?.id) : null;
+
+              return (
+                <Card
+                  style={{ marginBottom: 12 }}
+                  bodyStyle={{ padding: 14 }}
+                >
+                  <Space direction="vertical" size={10} style={{ width: '100%' }}>
+                    <Space wrap size={8}>
+                      <Tag color="magenta">{authorText}</Tag>
+                      <Tag color="blue">{item.created_date || '未知日期'}</Tag>
+                      {modifiedText !== '-' && <Tag color="purple">修改 {modifiedText}</Tag>}
+                      {statsEnabled && <Tag color="geekblue">{wordCount} 字</Tag>}
+                      {item.mood && <Tag>{item.mood}</Tag>}
+                      {item.weather && <Tag color="cyan">{item.weather}</Tag>}
+                    </Space>
+
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => toggleDiaryExpanded(diaryId)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') toggleDiaryExpanded(diaryId);
+                      }}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      <Text strong>{renderHighlighted(item.title || '无标题')}</Text>
+                    </div>
+
+                    {!isOpen && (
+                      <Paragraph
+                        style={{ margin: 0, color: token.colorTextSecondary }}
+                        ellipsis={{ rows: 3 }}
+                      >
+                        {renderHighlighted(item.content_preview || '-')}
+                      </Paragraph>
+                    )}
+
+                    <Space wrap>
+                      <Button
+                        size="small"
+                        type={isOpen ? 'default' : 'primary'}
+                        onClick={() => toggleDiaryExpanded(diaryId)}
+                        disabled={!Number.isFinite(diaryId)}
+                      >
+                        {isOpen ? '收起' : '展开阅读'}
+                      </Button>
+                      <Button
+                        size="small"
+                        onClick={() => navigate(`/diary/${item.id}`)}
+                        disabled={!Number.isFinite(diaryId)}
+                      >
+                        打开详情
+                      </Button>
+                      {isOpen && (
+                        <>
+                          <Button
+                            size="small"
+                            disabled={!Number.isFinite(prevId)}
+                            onClick={() => openDiaryForReading(prevId)}
+                          >
+                            上一条
+                          </Button>
+                          <Button
+                            size="small"
+                            disabled={!Number.isFinite(nextId)}
+                            onClick={() => openDiaryForReading(nextId)}
+                          >
+                            下一条
+                          </Button>
+                        </>
+                      )}
+                    </Space>
+
+                    {isOpen && (
+                      <div>
+                        <Divider style={{ margin: '10px 0' }} />
+                        {detailLoading && (
+                          <div style={{ padding: '12px 0' }}>
+                            <Spin />
+                          </div>
+                        )}
+                        {detailError && (
+                          <Alert
+                            type="error"
+                            showIcon
+                            message="加载失败"
+                            description={String(detailError)}
+                          />
+                        )}
+                        {detail && (
+                          <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>
+                            {renderDiaryContentWithImages(detail)}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </Space>
+                </Card>
+              );
+            }}
+          />
+        ) : isMobile ? (
           <List
             dataSource={diaries}
             loading={loading}
@@ -794,16 +1502,16 @@ export default function DiaryList() {
                       <Tag color="magenta">{authorText}</Tag>
                       <Tag color="blue">{item.created_date || '未知日期'}</Tag>
                       {modifiedText !== '-' && <Tag color="purple">修改 {modifiedText}</Tag>}
-                      <Tag color="geekblue">{wordCount} 字</Tag>
+                      {statsEnabled && <Tag color="geekblue">{wordCount} 字</Tag>}
                       {item.mood && <Tag>{item.mood}</Tag>}
                       {item.weather && <Tag color="cyan">{item.weather}</Tag>}
                     </Space>
-                    <Text strong>{item.title || '无标题'}</Text>
+                    <Text strong>{renderHighlighted(item.title || '无标题')}</Text>
                     <Paragraph
                       style={{ margin: 0, color: token.colorTextSecondary }}
                       ellipsis={{ rows: 2 }}
                     >
-                      {item.content_preview || '-'}
+                      {renderHighlighted(item.content_preview || '-')}
                     </Paragraph>
                   </Space>
                 </Card>

@@ -32,6 +32,22 @@ class DiaryListItemResponse(BaseModel):
     space: str | None = None
 
 
+class DiaryQueryNormalized(BaseModel):
+    """后端解析后的查询结构（用于前端展示与排障）。
+
+    说明：
+    - terms：普通关键词（按空格分词）
+    - phrases：短语（双引号包裹）
+    - excludes：排除词（以 '-' 开头）
+    """
+
+    mode: str = "and"  # and | or
+    syntax: str = "smart"  # smart | plain
+    terms: list[str] = Field(default_factory=list)
+    phrases: list[str] = Field(default_factory=list)
+    excludes: list[str] = Field(default_factory=list)
+
+
 class DiaryQueryResponse(BaseModel):
     """记录查询响应：count + items，支持前端分页。"""
 
@@ -39,5 +55,8 @@ class DiaryQueryResponse(BaseModel):
     limit: int = 50
     offset: int = 0
     has_more: bool = False
+    # 后端处理耗时（ms）：包含 SQL 查询 + Python 组装 items 的开销
+    took_ms: int = 0
+    # 查询解析后的结构化信息，便于前端展示“当前在搜什么”
+    normalized: DiaryQueryNormalized | None = None
     items: list[DiaryListItemResponse] = Field(default_factory=list)
-

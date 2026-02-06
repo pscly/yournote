@@ -26,11 +26,17 @@ test.describe('记录列表搜索与筛选', () => {
     const searchInput = page.getByPlaceholder('搜索标题/内容（空格多关键词，默认 AND）');
     await expect(searchInput).toBeVisible();
 
-    await expect(page.getByText('范围', { exact: true })).toBeVisible();
-    await expect(page.getByText('账号', { exact: true })).toBeVisible();
-    await expect(page.getByText('作者', { exact: true })).toBeVisible();
-    await expect(page.getByText('日期', { exact: true })).toBeVisible();
-    await expect(page.getByText('排序', { exact: true })).toBeVisible();
+    // 搜索模式（AND/OR）与语法模式（智能/纯文本）
+    await expect(page.getByText('全部命中', { exact: true })).toBeVisible();
+    await expect(page.getByText('任意命中', { exact: true })).toBeVisible();
+    await expect(page.getByText('智能语法', { exact: true })).toBeVisible();
+
+    // 说明：页面内可能在表格列头/测量单元格等位置也出现相同文本，避免 strict mode 命中多个元素导致失败
+    await expect(page.getByText('范围', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText('账号', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText('作者', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText('日期', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText('排序', { exact: true }).first()).toBeVisible();
 
     // 尝试从第一行取一个标题片段做搜索；若无数据则跳过断言（避免依赖固定测试数据）
     await page.waitForTimeout(800);
@@ -49,6 +55,8 @@ test.describe('记录列表搜索与筛选', () => {
     await expect(page).toHaveURL(/\\bq=/);
     await expect(page).toHaveURL(/\\bscope=/);
     await expect(page).toHaveURL(/\\bpageSize=/);
+    await expect(page).toHaveURL(/\\bmode=/);
+    await expect(page).toHaveURL(/\\bsyntax=/);
 
     // 刷新后，条件应仍然存在（可复现）
     await page.reload();
@@ -76,4 +84,3 @@ test.describe('记录列表搜索与筛选', () => {
     await expect(page.getByRole('heading', { name: '记录列表', level: 3 })).toBeVisible();
   });
 });
-

@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import and_, distinct, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from ..database import get_db
+from ..database import engine, get_db
 from ..models import Account, Diary, PairedRelationship, User
 from ..schemas import (
     DiaryAttachments,
@@ -55,6 +56,96 @@ def _split_search_terms(raw: str, *, max_terms: int = 5) -> list[str]:
     return out
 
 
+def _parse_smart_search_query(
+    raw: str,
+    *,
+    max_positive_terms: int = 5,
+    max_excludes: int = 5,
+) -> tuple[list[str], list[str], list[str]]:
+    """解析智能搜索语法（引号短语 + 排除词）。
+
+    支持：
+    - 普通关键词：foo bar
+    - 短语：\"foo bar\"
+    - 排除：-foo 或 -\"foo bar\"
+    """
+
+    s = str(raw or "").strip()
+    if not s:
+        return [], [], []
+
+    terms: list[str] = []
+    phrases: list[str] = []
+    excludes: list[str] = []
+
+    pos_seen: set[str] = set()
+    exc_seen: set[str] = set()
+    pos_count = 0
+
+    i = 0
+    n = len(s)
+
+    while i < n:
+        # skip spaces
+        while i < n and s[i].isspace():
+            i += 1
+        if i >= n:
+            break
+
+        neg = False
+        if s[i] == "-":
+            neg = True
+            i += 1
+            while i < n and s[i].isspace():
+                i += 1
+            if i >= n:
+                break
+
+        quoted = False
+        token = ""
+        if i < n and s[i] == "\"":
+            quoted = True
+            i += 1
+            start = i
+            while i < n and s[i] != "\"":
+                i += 1
+            token = s[start:i].strip()
+            if i < n and s[i] == "\"":
+                i += 1
+        else:
+            start = i
+            while i < n and not s[i].isspace():
+                i += 1
+            token = s[start:i].strip()
+
+        if not token:
+            continue
+
+        key = token.lower()
+        if neg:
+            if len(excludes) >= max_excludes:
+                # 超限则忽略后续排除条件（避免 SQL 条件膨胀）
+                continue
+            if key in exc_seen:
+                continue
+            exc_seen.add(key)
+            excludes.append(token)
+            continue
+
+        if pos_count >= max_positive_terms:
+            continue
+        if key in pos_seen:
+            continue
+        pos_seen.add(key)
+        pos_count += 1
+        if quoted:
+            phrases.append(token)
+        else:
+            terms.append(token)
+
+    return terms, phrases, excludes
+
+
 def _parse_date_yyyy_mm_dd(value: str | None, field_name: str) -> date | None:
     if value is None:
         return None
@@ -79,7 +170,41 @@ def _build_preview(text: str | None, preview_len: int) -> str:
     raw = "" if text is None else str(text)
     if len(raw) <= preview_len:
         return raw
+
     return raw[:preview_len] + "…"
+
+
+def _build_match_snippet(text: str | None, preview_len: int, match_terms: list[str]) -> str:
+    """构造“命中附近片段”预览，提升搜索结果可读性。"""
+    if preview_len <= 0:
+        return ""
+    raw = "" if text is None else str(text)
+    if len(raw) <= preview_len:
+        return raw
+    if not match_terms:
+        return raw[:preview_len] + "…"
+
+    raw_lower = raw.lower()
+    best_idx: int | None = None
+    for t in match_terms:
+        term = str(t or "").strip().lower()
+        if not term:
+            continue
+        idx = raw_lower.find(term)
+        if idx < 0:
+            continue
+        if best_idx is None or idx < best_idx:
+            best_idx = idx
+
+    if best_idx is None:
+        return raw[:preview_len] + "…"
+
+    # 让命中点前留一点上下文（约 25%）
+    start = max(0, best_idx - int(preview_len * 0.25))
+    snippet = raw[start:start + preview_len]
+    prefix = "…" if start > 0 else ""
+    suffix = "…" if (start + preview_len) < len(raw) else ""
+    return f"{prefix}{snippet}{suffix}"
 
 
 @router.get("", response_model=list[DiaryResponse])
@@ -106,12 +231,16 @@ async def list_diaries(
 @router.get("/query", response_model=DiaryQueryResponse)
 async def query_diaries(
     q: str | None = Query(None, description="关键字（标题/正文，空格分词，默认 AND）"),
+    q_mode: str = Query("and", description="关键字模式：and=全部命中（默认），or=命中任一"),
+    q_syntax: str = Query("smart", description="查询语法：smart=支持引号短语/排除词，plain=纯文本"),
     scope: str = Query("matched", description="范围：matched=仅配对用户记录，all=全部记录"),
     account_id: int | None = Query(None, ge=1, description="按账号过滤"),
     user_id: int | None = Query(None, ge=1, description="按作者 user_id 过滤"),
     date_from: str | None = Query(None, description="起始日期（YYYY-MM-DD，含）"),
     date_to: str | None = Query(None, description="结束日期（YYYY-MM-DD，含）"),
     include_inactive: bool = Query(True, description="是否包含停用账号"),
+    include_stats: bool = Query(True, description="是否返回字数等统计字段"),
+    include_preview: bool = Query(True, description="是否返回 content_preview（列表预览）"),
     limit: int = Query(50, ge=1, le=200, description="分页大小"),
     offset: int = Query(0, ge=0, description="分页 offset"),
     order_by: str = Query("ts", description="排序字段：ts/created_date/created_at"),
@@ -120,10 +249,19 @@ async def query_diaries(
     db: AsyncSession = Depends(get_db),
 ):
     """记录查询（支持搜索/筛选/分页）。"""
+    started = time.perf_counter()
 
     scope_norm = (scope or "").strip().lower() or "matched"
     if scope_norm not in {"matched", "all"}:
         raise HTTPException(status_code=422, detail="scope must be matched or all")
+
+    q_mode_norm = (q_mode or "").strip().lower() or "and"
+    if q_mode_norm not in {"and", "or"}:
+        raise HTTPException(status_code=422, detail="q_mode must be and or or")
+
+    q_syntax_norm = (q_syntax or "").strip().lower() or "smart"
+    if q_syntax_norm not in {"smart", "plain"}:
+        raise HTTPException(status_code=422, detail="q_syntax must be smart or plain")
 
     order_by_norm = (order_by or "").strip().lower() or "ts"
     if order_by_norm not in {"ts", "created_date", "created_at"}:
@@ -149,19 +287,51 @@ async def query_diaries(
         where_clauses.append(Diary.created_date <= dt)
 
     q_text = (q or "").strip()
-    terms = _split_search_terms(q_text, max_terms=5)
-    if terms:
-        title_lower = func.lower(func.coalesce(Diary.title, ""))
-        content_lower = func.lower(func.coalesce(Diary.content, ""))
-        for term in terms:
-            t = _escape_like_term(term.lower())
+    if q_syntax_norm == "plain":
+        terms = _split_search_terms(q_text, max_terms=5)
+        phrases: list[str] = []
+        excludes: list[str] = []
+    else:
+        terms, phrases, excludes = _parse_smart_search_query(q_text, max_positive_terms=5, max_excludes=5)
+
+    positive = [t for t in (terms + phrases) if isinstance(t, str) and t.strip()]
+
+    if positive or excludes:
+        # PostgreSQL：优先用 ILIKE，避免 lower(col) 这种“包一层函数”导致索引（如未来 trigram）无法命中
+        dialect_obj = getattr(engine, "dialect", None)
+        dialect = str(getattr(dialect_obj, "name", "") or "").lower()
+        use_ilike = dialect.startswith("postgresql")
+
+        title_expr = func.coalesce(Diary.title, "")
+        content_expr = func.coalesce(Diary.content, "")
+        if not use_ilike:
+            title_expr = func.lower(title_expr)
+            content_expr = func.lower(content_expr)
+
+        def _match_clause(token: str):
+            t = _escape_like_term(token.lower())
             pattern = f"%{t}%"
-            where_clauses.append(
-                or_(
-                    title_lower.like(pattern, escape=_LIKE_ESCAPE),
-                    content_lower.like(pattern, escape=_LIKE_ESCAPE),
+            if use_ilike:
+                return or_(
+                    title_expr.ilike(pattern, escape=_LIKE_ESCAPE),
+                    content_expr.ilike(pattern, escape=_LIKE_ESCAPE),
                 )
+            return or_(
+                title_expr.like(pattern, escape=_LIKE_ESCAPE),
+                content_expr.like(pattern, escape=_LIKE_ESCAPE),
             )
+
+        if positive:
+            if q_mode_norm == "and":
+                for token in positive:
+                    where_clauses.append(_match_clause(token))
+            else:
+                where_clauses.append(or_(*[_match_clause(token) for token in positive]))
+
+        for token in excludes:
+            if not isinstance(token, str) or not token.strip():
+                continue
+            where_clauses.append(~_match_clause(token))
 
     join_condition = and_(
         Diary.account_id == PairedRelationship.account_id,
@@ -218,6 +388,7 @@ async def query_diaries(
     diaries = await db.scalars(items_query)
     diaries = list(diaries.all())
 
+    match_terms_for_preview = positive
     items = [
         DiaryListItemResponse(
             id=d.id,
@@ -229,8 +400,12 @@ async def query_diaries(
             created_at=d.created_at,
             updated_at=d.updated_at,
             title=d.title,
-            content_preview=_build_preview(d.content, preview_len),
-            word_count_no_ws=_count_no_whitespace(d.content),
+            content_preview=(
+                _build_match_snippet(d.content, preview_len, match_terms_for_preview)
+                if include_preview
+                else None
+            ),
+            word_count_no_ws=_count_no_whitespace(d.content) if include_stats else 0,
             weather=d.weather,
             mood=d.mood,
             space=d.space,
@@ -244,6 +419,14 @@ async def query_diaries(
         limit=limit,
         offset=offset,
         has_more=(offset + len(items) < total),
+        took_ms=int((time.perf_counter() - started) * 1000),
+        normalized={
+            "mode": q_mode_norm,
+            "syntax": q_syntax_norm,
+            "terms": terms,
+            "phrases": phrases,
+            "excludes": excludes,
+        },
         items=items,
     )
 

@@ -17,6 +17,17 @@ function normalizeApiPrefix(value) {
   return v.startsWith('/') ? v : `/${v}`
 }
 
+function normalizeBackendProxyHost(value) {
+  const v = String(value ?? '').trim()
+  if (!v) return '127.0.0.1'
+
+  // 说明：
+  // - 0.0.0.0 / :: 通常用于“服务端监听所有网卡”，但作为“客户端连接目标”并不合理；
+  // - 前端 dev server（Vite proxy）应当连接到一个可访问的具体地址（通常是 127.0.0.1）。
+  if (v === '0.0.0.0' || v === '::') return '127.0.0.1'
+  return v
+}
+
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   // 统一从仓库根目录读取 .env（避免 `cd frontend` 导致默认只在 frontend/ 下找 .env）
@@ -24,7 +35,7 @@ export default defineConfig(({ mode }) => {
 
   const frontendPort = toInt(env.FRONTEND_PORT, 31011)
   const backendPort = toInt(env.BACKEND_PORT, 31012)
-  const backendHost = env.BACKEND_HOST || 'localhost'
+  const backendHost = normalizeBackendProxyHost(env.BACKEND_PROXY_HOST || env.BACKEND_HOST)
   const apiPrefix = normalizeApiPrefix(env.API_PREFIX)
 
   return {

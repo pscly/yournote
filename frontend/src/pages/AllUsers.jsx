@@ -7,18 +7,17 @@ import {
   List,
   Row,
   Space,
-  Spin,
   Statistic,
   Tabs,
   Tag,
   Tooltip,
   Typography,
-  message,
   theme as antdTheme,
 } from 'antd';
-import { useNavigate } from 'react-router-dom';       
+import { useNavigate } from 'react-router-dom';
 import { accountAPI, userAPI } from '../services/api';
 import Page from '../components/Page';
+import PageState from '../components/PageState';
 import { formatBeijingDateTime, parseServerDate } from '../utils/time';
 
 const { Title, Text } = Typography;
@@ -58,6 +57,7 @@ export default function AllUsers() {
   const [unpairedMains, setUnpairedMains] = useState([]);
   const [historyPaired, setHistoryPaired] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     loadData();
@@ -66,6 +66,7 @@ export default function AllUsers() {
   const loadData = async () => {
     try {
       setLoading(true);
+      setError(null);
       const [usersRes, accountsRes] = await Promise.all([
         userAPI.list(200),
         accountAPI.list(),
@@ -157,8 +158,12 @@ export default function AllUsers() {
       setActivePairs(nextActivePairs);
       setUnpairedMains(nextUnpairedMains);
       setHistoryPaired(nextHistory);
-    } catch (error) {
-      message.error('加载失败: ' + error.message);
+    } catch (e) {
+      setUsers([]);
+      setActivePairs([]);
+      setUnpairedMains([]);
+      setHistoryPaired([]);
+      setError(e);
     } finally {
       setLoading(false);
     }
@@ -187,194 +192,183 @@ export default function AllUsers() {
 
   const pairedCount = pairedUserIds.size;
 
-  if (loading) {
-    return (
-      <Page>
-        <Title level={3} style={{ marginTop: 0 }}>
-          所有用户
-        </Title>
-        <div style={{ textAlign: 'center', padding: '50px' }}>
-          <Spin size="large" />
-        </div>
-      </Page>
-    );
-  }
-
   return (
     <Page>
       <Title level={3} style={{ marginTop: 0 }}>
         所有用户
       </Title>
 
-      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-        <Col xs={24} md={8}>
-          <Card>
-            <Statistic title="用户总数" value={users.length} />
-          </Card>
-        </Col>
-        <Col xs={24} md={8}>
-          <Card>
-            <Statistic title="当前配对用户数" value={pairedCount} />
-          </Card>
-        </Col>
-        <Col xs={24} md={8}>
-          <Card>
-            <Statistic title="提示" value="配对视图更清晰" />
-          </Card>
-        </Col>
-      </Row>
+      <PageState loading={loading} error={error} onRetry={loadData}>
+        <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+          <Col xs={24} md={8}>
+            <Card>
+              <Statistic title="用户总数" value={users.length} />
+            </Card>
+          </Col>
+          <Col xs={24} md={8}>
+            <Card>
+              <Statistic title="当前配对用户数" value={pairedCount} />
+            </Card>
+          </Col>
+          <Col xs={24} md={8}>
+            <Card>
+              <Statistic title="提示" value="配对视图更清晰" />
+            </Card>
+          </Col>
+        </Row>
 
-      <Tabs
-        items={[
-          {
-            key: 'paired',
-            label: '配对视图',
-            children: (
-              <Space direction="vertical" size={16} style={{ width: '100%' }}>
-                <Card title="当前配对关系" styles={{ body: { padding: 12 } }}>
-                  <List
-                    dataSource={activePairs}
-                    locale={{ emptyText: '暂无当前配对关系' }}
-                    renderItem={(item) => (
-                      <List.Item style={{ paddingLeft: 0, paddingRight: 0 }}>
-                        <Space wrap>
+        <Tabs
+          items={[
+            {
+              key: 'paired',
+              label: '配对视图',
+              children: (
+                <Space direction="vertical" size={16} style={{ width: '100%' }}>
+                  <Card title="当前配对关系" styles={{ body: { padding: 12 } }}>
+                    <List
+                      dataSource={activePairs}
+                      locale={{ emptyText: '暂无当前配对关系' }}
+                      renderItem={(item) => (
+                        <List.Item style={{ paddingLeft: 0, paddingRight: 0 }}>
+                          <Space wrap>
+                            <Tag
+                              color="blue"
+                              style={{ cursor: item?.mainUser?.id ? 'pointer' : 'default' }}
+                              onClick={() => item?.mainUser?.id && navigate(`/user/${item.mainUser.id}`)}
+                            >
+                              {formatUserLabel(item?.mainUser)}
+                            </Tag>
+                            <span>-</span>
+                            <Tag
+                              color="magenta"
+                              style={{ cursor: item?.pairedUser?.id ? 'pointer' : 'default' }}
+                              onClick={() => item?.pairedUser?.id && navigate(`/user/${item.pairedUser.id}`)}
+                            >
+                              {formatUserLabel(item?.pairedUser)}
+                            </Tag>
+                            {item?.pairedTime && (
+                              <Tag color="geekblue">配对 {formatShortTime(item.pairedTime) || '-'}</Tag>
+                            )}
+                          </Space>
+                        </List.Item>
+                      )}
+                    />
+                  </Card>
+
+                  <Card title="其他主账号（当前未配对）" styles={{ body: { padding: 12 } }}>
+                    {unpairedMains.length === 0 ? (
+                      <Text type="secondary">暂无</Text>
+                    ) : (
+                      <Space wrap>
+                        {unpairedMains.map((item) => (
                           <Tag
-                            color="blue"
+                            key={item.accountId}
                             style={{ cursor: item?.mainUser?.id ? 'pointer' : 'default' }}
                             onClick={() => item?.mainUser?.id && navigate(`/user/${item.mainUser.id}`)}
                           >
                             {formatUserLabel(item?.mainUser)}
                           </Tag>
-                          <span>-</span>
-                          <Tag
-                            color="magenta"
-                            style={{ cursor: item?.pairedUser?.id ? 'pointer' : 'default' }}
-                            onClick={() => item?.pairedUser?.id && navigate(`/user/${item.pairedUser.id}`)}
-                          >
-                            {formatUserLabel(item?.pairedUser)}
-                          </Tag>
-                          {item?.pairedTime && (
-                            <Tag color="geekblue">配对 {formatShortTime(item.pairedTime) || '-'}</Tag>
-                          )}
-                        </Space>
-                      </List.Item>
+                        ))}
+                      </Space>
                     )}
-                  />
-                </Card>
+                  </Card>
 
-                <Card title="其他主账号（当前未配对）" styles={{ body: { padding: 12 } }}>
-                  {unpairedMains.length === 0 ? (
-                    <Text type="secondary">暂无</Text>
-                  ) : (
-                    <Space wrap>
-                      {unpairedMains.map((item) => (
-                        <Tag
-                          key={item.accountId}
-                          style={{ cursor: item?.mainUser?.id ? 'pointer' : 'default' }}
-                          onClick={() => item?.mainUser?.id && navigate(`/user/${item.mainUser.id}`)}
-                        >
-                          {formatUserLabel(item?.mainUser)}
-                        </Tag>
-                      ))}
-                    </Space>
-                  )}
-                </Card>
-
-                <Card title="其他历史被配对账号" styles={{ body: { padding: 12 } }}>
-                  {historyPaired.length === 0 ? (
-                    <Text type="secondary">暂无</Text>
-                  ) : (
-                    <Space wrap>
-                      {historyPaired.map((item) => {
-                        const pairedId = item?.pairedUser?.id;
-                        const tipMain = item?.mainUser ? formatUserLabel(item.mainUser) : '未知主账号';
-                        const tipTime = formatShortTime(item?.pairedTime) || '-';
-                        const tip = `曾被 ${tipMain} 配对（${tipTime}）`;
-                        return (
-                          <Tooltip key={pairedId || `${tipMain}-${tipTime}`} title={tip}>
-                            <Tag
-                              style={{ cursor: pairedId ? 'pointer' : 'default' }}
-                              onClick={() => pairedId && navigate(`/user/${pairedId}`)}
-                            >
-                              {formatUserLabel(item?.pairedUser)}
-                            </Tag>
-                          </Tooltip>
-                        );
-                      })}
-                    </Space>
-                  )}
-                </Card>
-              </Space>
-            ),
-          },
-          {
-            key: 'all',
-            label: '全部用户',
-            children: (
-              <Row gutter={[16, 16]}>
-                {users.map((user) => {
-                  const isPaired = pairedUserIds.has(user.id);
-                  const pairedSource = pairedSourcesByUserId?.[user.id] || null;
-                  const card = (
-                    <Card
-                      hoverable
-                      onClick={() => navigate(`/user/${user.id}`)}
-                      styles={{ body: { textAlign: 'center' } }}
-                    >
-                      <Avatar
-                        size={56}
-                        style={{
-                          backgroundColor: isPaired ? token.magenta6 : token.colorPrimary,
-                          marginBottom: 12,
-                        }}
+                  <Card title="其他历史被配对账号" styles={{ body: { padding: 12 } }}>
+                    {historyPaired.length === 0 ? (
+                      <Text type="secondary">暂无</Text>
+                    ) : (
+                      <Space wrap>
+                        {historyPaired.map((item) => {
+                          const pairedId = item?.pairedUser?.id;
+                          const tipMain = item?.mainUser ? formatUserLabel(item.mainUser) : '未知主账号';
+                          const tipTime = formatShortTime(item?.pairedTime) || '-';
+                          const tip = `曾被 ${tipMain} 配对（${tipTime}）`;
+                          return (
+                            <Tooltip key={pairedId || `${tipMain}-${tipTime}`} title={tip}>
+                              <Tag
+                                style={{ cursor: pairedId ? 'pointer' : 'default' }}
+                                onClick={() => pairedId && navigate(`/user/${pairedId}`)}
+                              >
+                                {formatUserLabel(item?.pairedUser)}
+                              </Tag>
+                            </Tooltip>
+                          );
+                        })}
+                      </Space>
+                    )}
+                  </Card>
+                </Space>
+              ),
+            },
+            {
+              key: 'all',
+              label: '全部用户',
+              children: (
+                <Row gutter={[16, 16]}>
+                  {users.map((user) => {
+                    const isPaired = pairedUserIds.has(user.id);
+                    const pairedSource = pairedSourcesByUserId?.[user.id] || null;
+                    const card = (
+                      <Card
+                        hoverable
+                        onClick={() => navigate(`/user/${user.id}`)}
+                        styles={{ body: { textAlign: 'center' } }}
                       >
-                        {getAvatarText(user.name)}
-                      </Avatar>
-                      <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>
-                        {user.name || '未命名'}
-                      </div>
-                      <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
-                        Nideriji ID: {user.nideriji_userid}
-                      </Text>
-                      <Text type="secondary" style={{ marginTop: 8, display: 'block' }}>
-                        记录数：{user.diary_count ?? 0}
-                      </Text>
-                      {isPaired && pairedSource && (
-                        <div style={{ marginTop: 10 }}>
-                          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
-                            匹配主账号：
-                          </Text>
-                          <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: 6 }}>
-                            <Tag
-                              key={`${pairedSource.accountId || 'a'}-${pairedSource.mainUserId || 'u'}`}
-                              color="geekblue"
-                            >
-                              {pairedSource.mainUserName}
-                              {pairedSource.mainUserNiderijiUserid ? `（${pairedSource.mainUserNiderijiUserid}）` : ''}
-                            </Tag>
-                          </div>
+                        <Avatar
+                          size={56}
+                          style={{
+                            backgroundColor: isPaired ? token.magenta6 : token.colorPrimary,
+                            marginBottom: 12,
+                          }}
+                        >
+                          {getAvatarText(user.name)}
+                        </Avatar>
+                        <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>
+                          {user.name || '未命名'}
                         </div>
-                      )}
-                    </Card>
-                  );
+                        <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
+                          Nideriji ID: {user.nideriji_userid}
+                        </Text>
+                        <Text type="secondary" style={{ marginTop: 8, display: 'block' }}>
+                          记录数：{user.diary_count ?? 0}
+                        </Text>
+                        {isPaired && pairedSource && (
+                          <div style={{ marginTop: 10 }}>
+                            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
+                              匹配主账号：
+                            </Text>
+                            <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: 6 }}>
+                              <Tag
+                                key={`${pairedSource.accountId || 'a'}-${pairedSource.mainUserId || 'u'}`}
+                                color="geekblue"
+                              >
+                                {pairedSource.mainUserName}
+                                {pairedSource.mainUserNiderijiUserid ? `（${pairedSource.mainUserNiderijiUserid}）` : ''}
+                              </Tag>
+                            </div>
+                          </div>
+                        )}
+                      </Card>
+                    );
 
-                  return (
-                    <Col key={user.id} xs={24} sm={12} md={8} lg={6}>
-                      {isPaired ? (
-                        <Badge.Ribbon text="配对用户" color="magenta">
-                          {card}
-                        </Badge.Ribbon>
-                      ) : (
-                        card
-                      )}
-                    </Col>
-                  );
-                })}
-              </Row>
-            ),
-          },
-        ]}
-      />
+                    return (
+                      <Col key={user.id} xs={24} sm={12} md={8} lg={6}>
+                        {isPaired ? (
+                          <Badge.Ribbon text="配对用户" color="magenta">
+                            {card}
+                          </Badge.Ribbon>
+                        ) : (
+                          card
+                        )}
+                      </Col>
+                    );
+                  })}
+                </Row>
+              ),
+            },
+          ]}
+        />
+      </PageState>
     </Page>
   );
 }

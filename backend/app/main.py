@@ -47,12 +47,12 @@ def _read_app_version() -> str:
         repo_root = Path(__file__).resolve().parents[2]
         pyproject = repo_root / "pyproject.toml"
         if not pyproject.exists():
-            return "0.7.0"
+            return "0.7.1"
         data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
         version = ((data.get("project") or {}).get("version") or "").strip()
-        return version or "0.7.0"
+        return version or "0.7.1"
     except Exception:
-        return "0.7.0"
+        return "0.7.1"
 
 
 APP_VERSION = _read_app_version()

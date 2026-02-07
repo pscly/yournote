@@ -78,5 +78,32 @@ test.describe('发布日记：草稿自动保存', () => {
     // 成功后应出现“已保存”文案（安静提示，不刷 message.success）
     await expect(page.getByText(/自动保存：已保存/)).toBeVisible({ timeout: 12000 });
   });
-});
 
+  test('连续输入时也会触发保底保存（避免一直输入导致防抖不触发）', async ({ page }) => {
+    // 缩短保底间隔，避免用例等待 30s
+    await page.addInitScript(() => {
+      globalThis.__YOUNOTE_E2E_PUBLISH_DRAFT_FORCE_MS__ = 800;
+    });
+
+    await mockPublishPageApis(page);
+
+    await page.goto('/publish');
+    await ensureAccess(page);
+
+    const textarea = page.locator('textarea').first();
+    await textarea.click();
+
+    const putPromise = page.waitForRequest(
+      (req) => req.method() === 'PUT' && req.url().includes('/api/publish-diaries/draft/'),
+      { timeout: 8000 },
+    );
+
+    // 通过“持续输入”来确保 5s 防抖不会触发，但保底保存会触发
+    await textarea.fill('连续输入保底保存测试');
+    await page.keyboard.type('1234567890abcdef', { delay: 120 });
+
+    const req = await putPromise;
+    const raw = req.postData() || '';
+    expect(raw).toContain('连续输入保底保存测试');
+  });
+});

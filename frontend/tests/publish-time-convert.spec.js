@@ -58,28 +58,33 @@ const mockPublishPageApis = async (page) => {
 };
 
 test.describe('发布日记：时间转换', () => {
-  test('应能把 > HH:MM:SS 转成 [HH:MM:SS] 并支持撤销', async ({ page }) => {
+  test('应能把 > HH:MM / > HH:MM:SS 转成方括号并支持撤销', async ({ page }) => {
     await mockPublishPageApis(page);
     await page.goto('/publish');
     await ensureAccess(page);
 
     const textarea = page.locator('textarea').first();
     const input = [
-      '今天 > 12:34:56 继续',
+      '今天 > 12:34 继续',
+      '再来一个 > 12:34:56',
       '还有 >01:02:03',
+      '以及 > 01:02',
       '以及 a>12:34:56 不应转换',
+      '以及 a>12:34 不应转换',
     ].join('\n');
 
     await textarea.fill(input);
     await page.getByRole('button', { name: '时间转换' }).click();
 
     const after = await textarea.inputValue();
+    expect(after).toContain('[12:34]');
     expect(after).toContain('[12:34:56]');
     expect(after).toContain('[01:02:03]');
+    expect(after).toContain('[01:02]');
     expect(after).toContain('a>12:34:56');
+    expect(after).toContain('a>12:34');
 
     await page.getByRole('button', { name: '撤销转换' }).click();
     await expect(textarea).toHaveValue(input);
   });
 });
-

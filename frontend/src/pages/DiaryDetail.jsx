@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
+  Alert,
   BackTop,
   Button,
   Card,
@@ -33,6 +34,7 @@ import {
   SmileOutlined,
 } from '@ant-design/icons';
 import { diaryAPI, diaryHistoryAPI, userAPI } from '../services/api';
+import PageState from '../components/PageState';
 import { downloadText, formatExportTimestamp, safeFilenamePart } from '../utils/download';
 import { getErrorMessage } from '../utils/errorMessage';
 import { formatBeijingDateTime, formatBeijingDateTimeFromTs, parseServerDate } from '../utils/time';
@@ -59,11 +61,20 @@ export default function DiaryDetail() {
   const [history, setHistory] = useState([]);
   const [showMatched, setShowMatched] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [pageError, setPageError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [pairedUserId, setPairedUserId] = useState(null);
   const [pairUsers, setPairUsers] = useState({ main: null, matched: null });
+  const [pairLoading, setPairLoading] = useState(false);
+  const [pairError, setPairError] = useState('');
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+
+  const [listLoading, setListLoading] = useState(false);
+  const [listError, setListError] = useState('');
+
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState('');
 
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [exportIncludeMain, setExportIncludeMain] = useState(true);
@@ -127,6 +138,7 @@ export default function DiaryDetail() {
   const loadData = async () => {
     try {
       setLoading(true);
+      setPageError('');
       const diaryRes = await diaryAPI.get(id);
       const currentDiary = diaryRes.data;
       setDiary(currentDiary);
@@ -140,7 +152,16 @@ export default function DiaryDetail() {
         loadHistory(),
       ]);
     } catch (error) {
-      message.error('加载失败：' + getErrorMessage(error));
+      setDiary(null);
+      setDiaryList([]);
+      setHistory([]);
+      setShowMatched(false);
+      setPairedUserId(null);
+      setPairUsers({ main: null, matched: null });
+      setListError('');
+      setPairError('');
+      setHistoryError('');
+      setPageError(getErrorMessage(error));
     } finally {
       setLoading(false);
     }
@@ -167,6 +188,8 @@ export default function DiaryDetail() {
   };
 
   const loadMyDiaries = async (userId = null) => {
+    setListLoading(true);
+    setListError('');
     try {
       const uid = userId || diary.user_id;
       const listRes = await diaryAPI.list({ user_id: uid, limit: 100 });
@@ -174,12 +197,17 @@ export default function DiaryDetail() {
         getDiaryTimestamp(b) - getDiaryTimestamp(a)
       ));
       setDiaryList(sorted);
-    } catch {
-      console.error('加载记录列表失败');
+    } catch (error) {
+      setDiaryList([]);
+      setListError(getErrorMessage(error));
+    } finally {
+      setListLoading(false);
     }
   };
 
   const loadPairedUser = async (accountId, currentUserId) => {
+    setPairLoading(true);
+    setPairError('');
     try {
       const res = await userAPI.paired(accountId);
       const relationships = res.data || [];
@@ -200,8 +228,13 @@ export default function DiaryDetail() {
         ? matchedRel.paired_user.id
         : matchedRel.user.id;
       setPairedUserId(otherUserId);
-    } catch {
-      console.error('加载配对用户失败');
+    } catch (error) {
+      setPairError(getErrorMessage(error));
+      setPairedUserId(null);
+      setPairUsers({ main: null, matched: null });
+      setShowMatched(false);
+    } finally {
+      setPairLoading(false);
     }
   };
 
@@ -218,6 +251,8 @@ export default function DiaryDetail() {
       return;
     }
 
+    setListLoading(true);
+    setListError('');
     try {
       const results = await Promise.all(
         userIds.map((uid) => diaryAPI.list({ user_id: uid, limit: 100 }))
@@ -236,16 +271,24 @@ export default function DiaryDetail() {
 
       setDiaryList(merged);
     } catch (error) {
-      message.error('加载匹配记录失败：' + getErrorMessage(error));
+      setDiaryList([]);
+      setListError(getErrorMessage(error));
+    } finally {
+      setListLoading(false);
     }
   };
 
   const loadHistory = async () => {
+    setHistoryLoading(true);
+    setHistoryError('');
     try {
       const historyRes = await diaryHistoryAPI.list(id);
       setHistory(historyRes.data);
-    } catch {
+    } catch (error) {
       setHistory([]);
+      setHistoryError(getErrorMessage(error));
+    } finally {
+      setHistoryLoading(false);
     }
   };
 
@@ -647,6 +690,44 @@ export default function DiaryDetail() {
     );
   }
 
+  if (pageError) {
+    return (
+      <div style={{ minHeight: `calc(100vh - ${APP_HEADER_HEIGHT})`, padding: 16 }}>
+        <PageState error={pageError} onRetry={loadData} />
+      </div>
+    );
+  }
+
+  if (!diary) {
+    return (
+      <div style={{ minHeight: `calc(100vh - ${APP_HEADER_HEIGHT})`, padding: 16 }}>
+        <PageState empty emptyText="记录不存在或已被删除" />
+      </div>
+    );
+  }
+
+  const reloadDiaryList = () => {
+    if (!diary) return;
+
+    const hasPair = !!(pairUsers?.main?.id && pairUsers?.matched?.id);
+    if (showMatched && (hasPair || pairedUserId)) {
+      loadMatchedDiaries();
+      return;
+    }
+
+    loadMyDiaries(diary.user_id);
+  };
+
+  const reloadPairUsers = () => {
+    if (!diary?.account_id || !diary?.user_id) return;
+    loadPairedUser(diary.account_id, diary.user_id);
+  };
+
+  const reloadHistory = () => {
+    if (!diary?.id) return;
+    loadHistory();
+  };
+
   const DiaryListContent = () => (
     <div style={{
       height: '100%',
@@ -665,10 +746,37 @@ export default function DiaryDetail() {
             <Switch
               checked={showMatched}
               onChange={setShowMatched}
-              disabled={!(pairUsers?.main?.id && pairUsers?.matched?.id)}
+              disabled={pairLoading || !!pairError || !(pairUsers?.main?.id && pairUsers?.matched?.id)}
             />
             <span style={{ marginLeft: 8, fontSize: '14px' }}>显示匹配记录</span>
           </div>
+          {pairLoading && (
+            <div style={{ fontSize: 12, color: token.colorTextSecondary }}>
+              配对信息加载中…
+            </div>
+          )}
+          {!!pairError && (
+            <Alert
+              type="error"
+              showIcon
+              message="配对信息加载失败"
+              description={(
+                <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                  <div style={{ color: token.colorTextSecondary, fontSize: 12 }}>
+                    {pairError}
+                  </div>
+                  <Button size="small" onClick={reloadPairUsers} disabled={pairLoading}>
+                    重试
+                  </Button>
+                </Space>
+              )}
+            />
+          )}
+          {!pairLoading && !pairError && !(pairUsers?.main?.id && pairUsers?.matched?.id) && (
+            <div style={{ fontSize: 12, color: token.colorTextSecondary }}>
+              当前账号暂无配对信息（无法显示匹配记录）。
+            </div>
+          )}
           <Button onClick={openExportModal} block>
             导出…
           </Button>
@@ -688,49 +796,57 @@ export default function DiaryDetail() {
       </div>
 
       <div ref={diaryListScrollRef} style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
-        <List
-          dataSource={diaryList}
-          renderItem={(item) => {
-            const modifiedText = formatBeijingDateTimeFromTs(item?.ts);
-            const wordCount = getDiaryWordStats(item)?.content?.no_whitespace ?? 0;
-            const isActive = !!(currentDiaryId && item?.id === currentDiaryId);
+        <PageState
+          loading={listLoading}
+          error={listError}
+          empty={!listLoading && !listError && (diaryList || []).length === 0}
+          emptyText={showMatched ? '暂无匹配记录' : '暂无记录'}
+          onRetry={reloadDiaryList}
+        >
+          <List
+            dataSource={diaryList}
+            renderItem={(item) => {
+              const modifiedText = formatBeijingDateTimeFromTs(item?.ts);
+              const wordCount = getDiaryWordStats(item)?.content?.no_whitespace ?? 0;
+              const isActive = !!(currentDiaryId && item?.id === currentDiaryId);
 
-            return (
-              <div
-                ref={(el) => {
-                  if (isActive) activeDiaryItemRef.current = el;
-                }}
-              >
-                <Card
-                  hoverable
-                  onClick={() => {
-                    navigate(`/diary/${item.id}`);
-                    if (isMobile) setDrawerVisible(false);
+              return (
+                <div
+                  ref={(el) => {
+                    if (isActive) activeDiaryItemRef.current = el;
                   }}
-                  style={{
-                    marginBottom: 12,
-                    borderLeft: `4px solid ${getBorderColor(item)}`,
-                    background: isActive ? getActiveBgColor(item) : token.colorBgContainer,
-                    cursor: 'pointer',
-                  }}
-                  bodyStyle={{ padding: '12px 16px' }}
                 >
-                  <div style={{ fontWeight: 500, marginBottom: 4, fontSize: '14px' }}>
-                    {item.title || '无标题'}
-                  </div>
-                  <div style={{ fontSize: '12px', color: token.colorTextSecondary }}>
-                    <CalendarOutlined style={{ marginRight: 4 }} />
-                    {item.created_date}
-                  </div>
-                  <div style={{ fontSize: '12px', color: token.colorTextSecondary, marginTop: 4 }}>
-                    <ClockCircleOutlined style={{ marginRight: 4 }} />
-                    最后修改 {modifiedText} · {wordCount} 字
-                  </div>
-                </Card>
-              </div>
-            );
-          }}
-        />
+                  <Card
+                    hoverable
+                    onClick={() => {
+                      navigate(`/diary/${item.id}`);
+                      if (isMobile) setDrawerVisible(false);
+                    }}
+                    style={{
+                      marginBottom: 12,
+                      borderLeft: `4px solid ${getBorderColor(item)}`,
+                      background: isActive ? getActiveBgColor(item) : token.colorBgContainer,
+                      cursor: 'pointer',
+                    }}
+                    bodyStyle={{ padding: '12px 16px' }}
+                  >
+                    <div style={{ fontWeight: 500, marginBottom: 4, fontSize: '14px' }}>
+                      {item.title || '无标题'}
+                    </div>
+                    <div style={{ fontSize: '12px', color: token.colorTextSecondary }}>
+                      <CalendarOutlined style={{ marginRight: 4 }} />
+                      {item.created_date}
+                    </div>
+                    <div style={{ fontSize: '12px', color: token.colorTextSecondary, marginTop: 4 }}>
+                      <ClockCircleOutlined style={{ marginRight: 4 }} />
+                      最后修改 {modifiedText} · {wordCount} 字
+                    </div>
+                  </Card>
+                </div>
+              );
+            }}
+          />
+        </PageState>
       </div>
     </div>
   );
@@ -844,7 +960,7 @@ export default function DiaryDetail() {
             </div>
           </Card>
 
-          {history.length > 0 && (
+          {(historyLoading || historyError || history.length > 0) && (
             <Card
               title={
                 <Space>
@@ -858,22 +974,30 @@ export default function DiaryDetail() {
                 borderRadius: 8
               }}
             >
-              <Timeline>
-                {history.map(h => (
-                  <Timeline.Item key={h.id} color="blue">
-                    <div style={{ fontSize: '12px', color: token.colorTextSecondary, marginBottom: 8 }}>
-                      {formatBeijingDateTime(h.recorded_at)}
-                    </div>
-                    <Card
-                      size="small"
-                      style={{ background: token.colorFillAlter, border: 'none' }}
-                    >
-                      <div style={{ fontWeight: 500, marginBottom: 4 }}>{h.title}</div>
-                      <div style={{ fontSize: '14px', color: token.colorText, whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{h.content}</div>
-                    </Card>
-                  </Timeline.Item>
-                ))}
-              </Timeline>
+              <PageState
+                loading={historyLoading}
+                error={historyError}
+                empty={!historyLoading && !historyError && history.length === 0}
+                emptyText="暂无修改历史"
+                onRetry={reloadHistory}
+              >
+                <Timeline>
+                  {history.map(h => (
+                    <Timeline.Item key={h.id} color="blue">
+                      <div style={{ fontSize: '12px', color: token.colorTextSecondary, marginBottom: 8 }}>
+                        {formatBeijingDateTime(h.recorded_at)}
+                      </div>
+                      <Card
+                        size="small"
+                        style={{ background: token.colorFillAlter, border: 'none' }}
+                      >
+                        <div style={{ fontWeight: 500, marginBottom: 4 }}>{h.title}</div>
+                        <div style={{ fontSize: '14px', color: token.colorText, whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{h.content}</div>
+                      </Card>
+                    </Timeline.Item>
+                  ))}
+                </Timeline>
+              </PageState>
             </Card>
           )}
 

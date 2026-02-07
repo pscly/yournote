@@ -12,6 +12,16 @@ const LAST_SELECTION_KEY = 'yournote_publish_diary_last_account_ids';
 const DAILY_LATEST_PREVIEW_SETTINGS_KEY = 'yournote_publish_diary_daily_latest_preview_settings_v1';
 const DEFAULT_PUBLISH_CONCURRENCY = 5;
 const AUTO_SAVE_DEBOUNCE_MS = 5000;
+const AUTO_SAVE_FORCE_MS = (() => {
+  // 说明：
+  // - 正常产品语义：连续输入时，每 30 秒也会“保底保存”一次草稿，避免长时间不落盘。
+  // - E2E 测试语义：允许通过全局变量把 30s 缩短为更小值，避免用例等待太久。
+  //   使用方式：在页面脚本加载前注入 `globalThis.__YOUNOTE_E2E_PUBLISH_DRAFT_FORCE_MS__ = 800`
+  const raw = globalThis?.__YOUNOTE_E2E_PUBLISH_DRAFT_FORCE_MS__;
+  const n = Number(raw);
+  if (Number.isFinite(n) && n > 0) return n;
+  return 30000;
+})();
 
 function readLocalLastSelection() {
   try {
@@ -95,11 +105,11 @@ async function getDefaultSelectionFromLastRun(accountList) {
 function convertQuotedTimesToBracket(value) {
   const text = String(value ?? '');
   let count = 0;
-  // 规则：把正文中 “> 12:34:56” 这样的时间标记转换为 “[12:34:56]”
+  // 规则：把正文中 “> 12:34” / “> 12:34:56” 这样的时间标记转换为 “[12:34]” / “[12:34:56]”
   // - 支持“任意位置”，但要求 `>` 前为行首或空白，避免误伤 a>12:34:56
   // - 分/秒严格限制 00-59；小时允许 1-2 位
   const out = text.replace(
-    /(^|\s)>\s*(\d{1,2}:[0-5]\d:[0-5]\d)/gm,
+    /(^|\s)>\s*((?:\d|[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?)/gm,
     (_match, prefix, time) => {
       count += 1;
       return `${prefix}[${time}]`;
@@ -188,9 +198,11 @@ export default function PublishDiary() {
   const currentDateRef = useRef(date);
   const currentContentRef = useRef(content);
   const autoSaveTimerRef = useRef(null);
+  const autoSaveForceTimerRef = useRef(null);
   const draftSavePromiseRef = useRef(null);
   const lastSavedContentRef = useRef('');
   const dirtyRef = useRef(false);
+  const dirtySinceTsRef = useRef(0);
   const lastContentBeforeTimeConvertRef = useRef('');
 
   const [autoSaveUi, setAutoSaveUi] = useState({ status: 'idle', error: '' }); // idle|pending|saving|saved|error
@@ -262,13 +274,17 @@ export default function PublishDiary() {
         clearTimeout(autoSaveTimerRef.current);
         autoSaveTimerRef.current = null;
       }
+      if (autoSaveForceTimerRef.current) {
+        clearTimeout(autoSaveForceTimerRef.current);
+        autoSaveForceTimerRef.current = null;
+      }
     };
   }, []);
 
   const draftStatusText = useMemo(() => {
     const base = draftUpdatedAt ? `草稿更新时间：${formatBeijingDateTime(draftUpdatedAt)}` : '草稿尚未保存';
 
-    let autosave = '自动保存已开启（停顿 5 秒保存）';
+    let autosave = '自动保存已开启（停顿 5 秒保存；连续输入每 30 秒也会保存一次）';
     if (autoSaveUi?.status === 'pending') autosave = '自动保存：等待输入结束…';
     else if (autoSaveUi?.status === 'saving') autosave = '自动保存中…';
     else if (autoSaveUi?.status === 'saved') autosave = '自动保存：已保存';
@@ -279,6 +295,8 @@ export default function PublishDiary() {
 
     return `${base} · ${autosave}`;
   }, [autoSaveUi?.error, autoSaveUi?.status, draftUpdatedAt]);
+
+  const hasUnsavedChanges = String(content ?? '') !== String(lastSavedContentRef.current ?? '');
 
   const accountOptions = useMemo(() => {
     return (accounts || []).map(a => {
@@ -401,6 +419,13 @@ export default function PublishDiary() {
     }
   }, []);
 
+  const clearAutoSaveForceTimer = useCallback(() => {
+    if (autoSaveForceTimerRef.current) {
+      clearTimeout(autoSaveForceTimerRef.current);
+      autoSaveForceTimerRef.current = null;
+    }
+  }, []);
+
   const saveDraftInternal = async (targetDate, contentValue, { silent = false, reason = '' } = {}) => {
     const d = String(targetDate || '').trim();
     if (!d) return { ok: false, skipped: true, reason: 'no_date' };
@@ -411,6 +436,7 @@ export default function PublishDiary() {
     }
 
     clearAutoSaveTimer();
+    clearAutoSaveForceTimer();
 
     const payloadContent = String(contentValue ?? '');
     const promise = (async () => {
@@ -425,19 +451,34 @@ export default function PublishDiary() {
         const res = await publishDiaryAPI.saveDraft(d, { content: payloadContent });
         const updatedAt = res?.data?.updated_at ?? null;
 
+        let stillDirty = false;
+
         // 只更新“当前编辑日期”的 UI/refs，避免切换日期后老请求覆盖新日期显示
         if (currentDateRef.current === d) {
           setDraftUpdatedAt(updatedAt);
           lastSavedContentRef.current = payloadContent;
-          dirtyRef.current = false;
+
+          const latestText = String(currentContentRef.current ?? '');
+          stillDirty = latestText !== payloadContent;
+          dirtyRef.current = stillDirty;
+          dirtySinceTsRef.current = stillDirty ? Date.now() : 0;
         }
 
         if (silent) {
           if (currentDateRef.current === d) {
-            setAutoSaveUi({ status: 'saved', error: '' });
+            setAutoSaveUi(stillDirty ? { status: 'pending', error: '' } : { status: 'saved', error: '' });
+
+            // 若保存时用户仍在继续编辑：继续按规则调度下一次保存，避免 UI 停在“已保存”但实际仍有未落盘内容
+            if (stillDirty) {
+              setTimeout(() => scheduleAutoSave('post_save'), 0);
+            }
           }
         } else {
           message.success('草稿已保存');
+          if (currentDateRef.current === d && stillDirty) {
+            setAutoSaveUi({ status: 'pending', error: '' });
+            setTimeout(() => scheduleAutoSave('post_save'), 0);
+          }
         }
 
         return { ok: true, updatedAt, reason };
@@ -476,12 +517,15 @@ export default function PublishDiary() {
     const currentText = String(currentContentRef.current ?? '');
     if (currentText === lastSavedContentRef.current) {
       dirtyRef.current = false;
+      dirtySinceTsRef.current = 0;
       setAutoSaveUi((prev) => (prev?.status === 'error' ? prev : { status: 'idle', error: '' }));
       clearAutoSaveTimer();
+      clearAutoSaveForceTimer();
       return;
     }
 
     dirtyRef.current = true;
+    if (!dirtySinceTsRef.current) dirtySinceTsRef.current = Date.now();
     setAutoSaveUi({ status: 'pending', error: '' });
 
     clearAutoSaveTimer();
@@ -492,6 +536,7 @@ export default function PublishDiary() {
       const textToSave = String(currentContentRef.current ?? '');
       if (textToSave === lastSavedContentRef.current) {
         dirtyRef.current = false;
+        dirtySinceTsRef.current = 0;
         setAutoSaveUi((prev) => (prev?.status === 'error' ? prev : { status: 'idle', error: '' }));
         return;
       }
@@ -499,6 +544,39 @@ export default function PublishDiary() {
       // 防抖：停顿 5 秒后保存一次
       saveDraftInternal(dateToSave, textToSave, { silent: true, reason });
     }, AUTO_SAVE_DEBOUNCE_MS);
+
+    // 保底：连续输入时，每 30 秒也保存一次（避免一直在输入导致“防抖”永远不触发）
+    if (!autoSaveForceTimerRef.current && !draftSavePromiseRef.current) {
+      const base = dirtySinceTsRef.current || Date.now();
+      const delay = Math.max(0, base + AUTO_SAVE_FORCE_MS - Date.now());
+
+      autoSaveForceTimerRef.current = setTimeout(() => {
+        autoSaveForceTimerRef.current = null;
+
+        const dateToSave = String(currentDateRef.current || '').trim();
+        if (!dateToSave) return;
+
+        const textToSave = String(currentContentRef.current ?? '');
+        if (textToSave === lastSavedContentRef.current) {
+          dirtyRef.current = false;
+          dirtySinceTsRef.current = 0;
+          setAutoSaveUi((prev) => (prev?.status === 'error' ? prev : { status: 'idle', error: '' }));
+          return;
+        }
+
+        saveDraftInternal(dateToSave, textToSave, { silent: true, reason: `force_${reason}` });
+      }, delay);
+    }
+  };
+
+  const retryAutoSave = () => {
+    const d = String(currentDateRef.current || '').trim();
+    if (!d) return;
+
+    const text = String(currentContentRef.current ?? '');
+    if (text === lastSavedContentRef.current) return;
+
+    saveDraftInternal(d, text, { silent: true, reason: 'retry' });
   };
 
   const requestDateChange = async (nextDate) => {
@@ -508,6 +586,7 @@ export default function PublishDiary() {
 
     // 先清理定时器，避免切换日期时“旧内容”被延迟写入
     clearAutoSaveTimer();
+    clearAutoSaveForceTimer();
 
     // 若当前日期草稿有未保存更改：先自动保存，避免切换日期后被 loadDraft 覆盖导致丢内容
     const currentText = String(currentContentRef.current ?? '');
@@ -523,6 +602,7 @@ export default function PublishDiary() {
     // 切换日期会触发 loadDraft 覆盖正文，因此清理“一键撤销”状态
     lastContentBeforeTimeConvertRef.current = '';
     setCanUndoTimeConvert(false);
+    dirtySinceTsRef.current = 0;
     currentDateRef.current = next;
     setDate(next);
   };
@@ -530,6 +610,7 @@ export default function PublishDiary() {
   const loadDraft = useCallback(async (targetDate) => {
     if (!targetDate) return;
     clearAutoSaveTimer();
+    clearAutoSaveForceTimer();
     setDraftLoading(true);
     try {
       const res = await publishDiaryAPI.getDraft(targetDate);
@@ -538,6 +619,7 @@ export default function PublishDiary() {
       currentContentRef.current = nextContent;
       lastSavedContentRef.current = nextContent;
       dirtyRef.current = false;
+      dirtySinceTsRef.current = 0;
       setAutoSaveUi({ status: 'idle', error: '' });
       setDraftUpdatedAt(res?.data?.updated_at ?? null);
     } catch (error) {
@@ -546,12 +628,13 @@ export default function PublishDiary() {
       currentContentRef.current = '';
       lastSavedContentRef.current = '';
       dirtyRef.current = false;
+      dirtySinceTsRef.current = 0;
       setAutoSaveUi({ status: 'idle', error: '' });
       setDraftUpdatedAt(null);
     } finally {
       setDraftLoading(false);
     }
-  }, [clearAutoSaveTimer]);
+  }, [clearAutoSaveForceTimer, clearAutoSaveTimer]);
 
   const saveDraft = async () => {
     if (!date) {
@@ -581,7 +664,7 @@ export default function PublishDiary() {
     const before = String(currentContentRef.current ?? content);
     const { text: after, count } = convertQuotedTimesToBracket(before);
     if (!count) {
-      message.info('未发现可转换的时间标记（示例：> 12:34:56）');
+      message.info('未发现可转换的时间标记（示例：> 12:34 或 > 12:34:56）');
       return;
     }
 
@@ -1282,9 +1365,21 @@ export default function PublishDiary() {
                         >
                           重新加载草稿
                         </Button>
-                        <Text type="secondary">
-                          {draftStatusText}
-                        </Text>
+                        <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                          <Text type="secondary">
+                            {draftStatusText}
+                          </Text>
+                          {autoSaveUi?.status === 'error' && hasUnsavedChanges && (
+                            <Button
+                              size="small"
+                              onClick={retryAutoSave}
+                              disabled={draftLoading || savingDraft || autoSavingDraft || publishing}
+                              block
+                            >
+                              重试自动保存
+                            </Button>
+                          )}
+                        </Space>
                       </Space>
                     ) : (
                       <Space wrap>
@@ -1303,6 +1398,15 @@ export default function PublishDiary() {
                         <Text type="secondary">
                           {draftStatusText}
                         </Text>
+                        {autoSaveUi?.status === 'error' && hasUnsavedChanges && (
+                          <Button
+                            size="small"
+                            onClick={retryAutoSave}
+                            disabled={draftLoading || savingDraft || autoSavingDraft || publishing}
+                          >
+                            重试自动保存
+                          </Button>
+                        )}
                       </Space>
                     )}
                   </Card>
@@ -1329,7 +1433,7 @@ export default function PublishDiary() {
                         >
                           保存草稿
                         </Button>
-                        <Tooltip title="把正文中的 “> 12:34:56” 一键转换为 “[12:34:56]”">
+                        <Tooltip title="把正文中的 “> 12:34 / > 12:34:56” 一键转换为 “[12:34] / [12:34:56]”">
                           <Button
                             icon={<ClockCircleOutlined />}
                             onClick={handleTimeConvert}
@@ -1362,7 +1466,7 @@ export default function PublishDiary() {
                         <Button onClick={() => loadRuns(date)} loading={runsLoading} block={isMobile}>刷新历史</Button>
                       </Space>
                       <Text type="secondary">
-                        小技巧：输入 <Text code>{'> 12:34:56'}</Text> 后点“时间转换”可变成 <Text code>{'[12:34:56]'}</Text>；停止输入约 5 秒会自动保存草稿。
+                        小技巧：输入 <Text code>{'> 12:34'}</Text> 或 <Text code>{'> 12:34:56'}</Text> 后点“时间转换”可变成 <Text code>{'[12:34]'}</Text> / <Text code>{'[12:34:56]'}</Text>；停止输入约 5 秒会自动保存草稿，连续输入每 30 秒也会保底保存一次。
                       </Text>
                     </Space>
                   </Card>

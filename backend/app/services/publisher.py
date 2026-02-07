@@ -13,8 +13,10 @@ from typing import Any
 
 import httpx
 
+from ..config import settings
 from ..models import Account
 from .collector import CollectorService
+from .http_client import request_with_retry
 
 
 class DiaryPublisherService:
@@ -23,7 +25,12 @@ class DiaryPublisherService:
     def __init__(self, collector: CollectorService):
         self.collector = collector
 
+    def _nideriji_origin(self) -> str:
+        base = (getattr(settings, "nideriji_api_base_url", None) or "https://nideriji.cn").strip().rstrip("/")
+        return base or "https://nideriji.cn"
+
     def _build_headers(self, auth_token: str) -> dict[str, str]:
+        origin = self._nideriji_origin()
         return {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -31,19 +38,31 @@ class DiaryPublisherService:
             ),
             "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
             "auth": auth_token,
-            "origin": "https://nideriji.cn",
-            "referer": "https://nideriji.cn/w/write",
+            "origin": origin,
+            "referer": f"{origin}/w/write",
         }
 
     async def write_diary(self, *, auth_token: str, date: str, content: str) -> dict[str, Any]:
         """直接用 token 写入/更新日记（不落库、不做 token 刷新）。"""
-        url = "https://nideriji.cn/api/write/"
+        origin = self._nideriji_origin()
+        url = f"{origin}/api/write/"
         payload = {"content": content, "date": date}
-        async with httpx.AsyncClient(timeout=self._REQUEST_TIMEOUT_SECONDS) as client:
-            resp = await client.post(
-                url,
+        async with httpx.AsyncClient(
+            timeout=self._REQUEST_TIMEOUT_SECONDS,
+            trust_env=bool(getattr(settings, "nideriji_http_trust_env", True)),
+        ) as client:
+            resp = await request_with_retry(
+                client=client,
+                method="POST",
+                url=url,
                 data=payload,
                 headers=self._build_headers(auth_token),
+                max_attempts=int(getattr(settings, "nideriji_http_max_attempts", 3) or 3),
+                backoff_seconds=float(getattr(settings, "nideriji_http_retry_backoff_seconds", 0.5) or 0.5),
+                max_backoff_seconds=float(
+                    getattr(settings, "nideriji_http_retry_max_backoff_seconds", 5.0) or 5.0
+                ),
+                jitter_ratio=float(getattr(settings, "nideriji_http_retry_jitter_ratio", 0.1) or 0.1),
             )
         resp.raise_for_status()
         data: Any = resp.json()

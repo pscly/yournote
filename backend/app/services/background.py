@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from .. import database
 from ..models import Account, PublishDiaryRun, PublishDiaryRunItem
+from ..utils.errors import safe_str
 from .collector import CollectorService
 from .publisher import DiaryPublisherService
 
@@ -17,6 +18,15 @@ logger = logging.getLogger(__name__)
 
 # 运行中的发布任务（进程内防重）。注意：进程重启后不会保留。
 _publish_run_tasks: dict[int, asyncio.Task] = {}
+
+
+def _retry_suffix(exc: BaseException) -> str:
+    attempts = getattr(exc, "yournote_attempts", None)
+    try:
+        attempts_i = int(attempts)
+    except Exception:
+        attempts_i = 0
+    return f"（已重试 {attempts_i} 次）" if attempts_i > 1 else ""
 
 
 def _parse_int_list_json(value: str | None) -> list[int]:
@@ -110,17 +120,18 @@ async def _publish_one_account_in_background(*, run_id: int, account_id: int, fo
             status_code = getattr(getattr(e, "response", None), "status_code", None)
             item.status = "failed"
             item.error_message = (
-                f"HTTPError: {e}" + (f" (HTTP {status_code})" if isinstance(status_code, int) else "")
+                f"HTTPError: {safe_str(e, max_len=400)}"
+                + (f" (HTTP {status_code})" if isinstance(status_code, int) else "")
             )
-        except httpx.TimeoutException:
+        except httpx.TimeoutException as e:
             item.status = "failed"
-            item.error_message = "发布超时（上游无响应）"
+            item.error_message = f"发布超时（上游无响应{_retry_suffix(e)}）"
         except httpx.RequestError as e:
             item.status = "failed"
-            item.error_message = f"网络异常: {e}"
+            item.error_message = f"网络异常{_retry_suffix(e)}: {safe_str(e, max_len=400)}"
         except Exception as e:
             item.status = "failed"
-            item.error_message = f"发布异常: {e}"
+            item.error_message = f"发布异常: {safe_str(e, max_len=400)}"
 
         # 失败时保持 nideriji_diary_id/response_json 为 None，避免复用旧成功数据造成误读
         if (item.status or "") != "success":

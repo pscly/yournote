@@ -30,10 +30,21 @@ from ..models import (
     SyncLog,
     User,
 )
+from ..utils.errors import safe_str
+from .http_client import request_with_retry
 from .image_cache import ImageCacheService
 
 _ACCOUNT_SYNC_LOCKS: dict[int, asyncio.Lock] = {}
 logger = logging.getLogger(__name__)
+
+
+def _retry_suffix(exc: BaseException) -> str:
+    attempts = getattr(exc, "yournote_attempts", None)
+    try:
+        attempts_i = int(attempts)
+    except Exception:
+        attempts_i = 0
+    return f"（已重试 {attempts_i} 次）" if attempts_i > 1 else ""
 
 
 class CollectorService:
@@ -47,7 +58,12 @@ class CollectorService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
+    def _nideriji_origin(self) -> str:
+        base = (getattr(settings, "nideriji_api_base_url", None) or "https://nideriji.cn").strip().rstrip("/")
+        return base or "https://nideriji.cn"
+
     def _build_headers(self, auth_token: str) -> dict[str, str]:
+        origin = self._nideriji_origin()
         return {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -55,20 +71,21 @@ class CollectorService:
             ),
             "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
             "auth": auth_token,
-            "origin": "https://nideriji.cn",
-            "referer": "https://nideriji.cn/w/",
+            "origin": origin,
+            "referer": f"{origin}/w/",
         }
 
     def _build_login_headers(self) -> dict[str, str]:
         # 登录接口是传统表单提交，保持最小必要 header 即可。
+        origin = self._nideriji_origin()
         return {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36"
             ),
             "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
-            "origin": "https://nideriji.cn",
-            "referer": "https://nideriji.cn/w/login",
+            "origin": origin,
+            "referer": f"{origin}/w/login",
         }
 
     async def login_nideriji(self, email: str, password: str) -> str:
@@ -76,13 +93,25 @@ class CollectorService:
 
         返回形如：`token <jwt>`
         """
-        url = "https://nideriji.cn/api/login/"
+        origin = self._nideriji_origin()
+        url = f"{origin}/api/login/"
         payload = {"email": email, "password": password}
-        async with httpx.AsyncClient(timeout=self._LOGIN_TIMEOUT_SECONDS) as client:
-            resp = await client.post(
-                url,
+        async with httpx.AsyncClient(
+            timeout=self._LOGIN_TIMEOUT_SECONDS,
+            trust_env=bool(getattr(settings, "nideriji_http_trust_env", True)),
+        ) as client:
+            resp = await request_with_retry(
+                client=client,
+                method="POST",
+                url=url,
                 data=payload,
                 headers=self._build_login_headers(),
+                max_attempts=int(getattr(settings, "nideriji_http_max_attempts", 3) or 3),
+                backoff_seconds=float(getattr(settings, "nideriji_http_retry_backoff_seconds", 0.5) or 0.5),
+                max_backoff_seconds=float(
+                    getattr(settings, "nideriji_http_retry_max_backoff_seconds", 5.0) or 5.0
+                ),
+                jitter_ratio=float(getattr(settings, "nideriji_http_retry_jitter_ratio", 0.1) or 0.1),
             )
         resp.raise_for_status()
         data: Any = resp.json()
@@ -181,12 +210,24 @@ class CollectorService:
 
     async def fetch_nideriji_data(self, auth_token: str) -> dict:
         """从 nideriji API 获取数据"""
-        url = "https://nideriji.cn/api/v2/sync/"
+        origin = self._nideriji_origin()
+        url = f"{origin}/api/v2/sync/"
         headers = self._build_headers(auth_token)
-        async with httpx.AsyncClient(timeout=self._REQUEST_TIMEOUT_SECONDS) as client:
-            response = await client.post(
-                url,
+        async with httpx.AsyncClient(
+            timeout=self._REQUEST_TIMEOUT_SECONDS,
+            trust_env=bool(getattr(settings, "nideriji_http_trust_env", True)),
+        ) as client:
+            response = await request_with_retry(
+                client=client,
+                method="POST",
+                url=url,
                 headers=headers,
+                max_attempts=int(getattr(settings, "nideriji_http_max_attempts", 3) or 3),
+                backoff_seconds=float(getattr(settings, "nideriji_http_retry_backoff_seconds", 0.5) or 0.5),
+                max_backoff_seconds=float(
+                    getattr(settings, "nideriji_http_retry_max_backoff_seconds", 5.0) or 5.0
+                ),
+                jitter_ratio=float(getattr(settings, "nideriji_http_retry_jitter_ratio", 0.1) or 0.1),
             )
         response.raise_for_status()
         return response.json()
@@ -233,19 +274,31 @@ class CollectorService:
         if not diary_ids:
             return {}
 
-        url = f"https://nideriji.cn/api/diary/all_by_ids/{diary_owner_userid}/"
+        origin = self._nideriji_origin()
+        url = f"{origin}/api/diary/all_by_ids/{diary_owner_userid}/"
         headers = self._build_headers(auth_token)
 
         # 接口支持一次传多个 id（字符串），这里做分批，避免过长的 form body。
         results: dict[int, dict[str, Any]] = {}
-        async with httpx.AsyncClient(timeout=self._REQUEST_TIMEOUT_SECONDS) as client:
+        async with httpx.AsyncClient(
+            timeout=self._REQUEST_TIMEOUT_SECONDS,
+            trust_env=bool(getattr(settings, "nideriji_http_trust_env", True)),
+        ) as client:
             for start in range(0, len(diary_ids), self._DETAIL_FETCH_BATCH_SIZE):
                 batch = diary_ids[start : start + self._DETAIL_FETCH_BATCH_SIZE]
                 payload = {"diary_ids": ",".join(str(diary_id) for diary_id in batch)}
-                resp = await client.post(
-                    url,
+                resp = await request_with_retry(
+                    client=client,
+                    method="POST",
+                    url=url,
                     data=payload,
                     headers=headers,
+                    max_attempts=int(getattr(settings, "nideriji_http_max_attempts", 3) or 3),
+                    backoff_seconds=float(getattr(settings, "nideriji_http_retry_backoff_seconds", 0.5) or 0.5),
+                    max_backoff_seconds=float(
+                        getattr(settings, "nideriji_http_retry_max_backoff_seconds", 5.0) or 5.0
+                    ),
+                    jitter_ratio=float(getattr(settings, "nideriji_http_retry_jitter_ratio", 0.1) or 0.1),
                 )
                 resp.raise_for_status()
                 data: Any = resp.json()
@@ -568,12 +621,19 @@ class CollectorService:
                     'paired_diaries_count': paired_diaries_count
                 }
             except Exception as e:
+                # 同步日志是“给人看的”，错误信息尽量短且可读（避免把内部堆栈写进去）
+                if isinstance(e, httpx.TimeoutException):
+                    msg = f"同步超时（上游无响应{_retry_suffix(e)}）"
+                elif isinstance(e, httpx.RequestError):
+                    msg = f"网络异常{_retry_suffix(e)}: {safe_str(e, max_len=400)}"
+                else:
+                    msg = safe_str(e, max_len=400)
                 await self._finish_sync_log(
                     log,
                     status='failed',
                     diaries_count=0,
                     paired_diaries_count=0,
-                    error_message=str(e),
+                    error_message=msg,
                 )
                 await self.db.commit()
                 raise

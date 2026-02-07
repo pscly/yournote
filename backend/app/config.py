@@ -147,6 +147,21 @@ class Settings(BaseSettings):
     # 上游图片接口 base url
     nideriji_image_base_url: str = "https://f.nideriji.cn/api/image"
 
+    # Nideriji 上游接口（发布/同步等）
+    # - 统一收口，便于未来上游域名变更或临时切换
+    nideriji_api_base_url: str = "https://nideriji.cn"
+
+    # 上游网络抖动容错（只对网络类异常重试，不对业务性 HTTP 状态码盲目重试）
+    # - 默认“中等”档：最多 3 次尝试；指数退避 base=0.5s（约 0.5/1/2s）+ 少量抖动
+    nideriji_http_max_attempts: int = 3
+    nideriji_http_retry_backoff_seconds: float = 0.5
+    nideriji_http_retry_max_backoff_seconds: float = 5.0
+    nideriji_http_retry_jitter_ratio: float = 0.1
+
+    # 是否信任系统环境变量中的代理配置（HTTP(S)_PROXY/NO_PROXY 等）
+    # - 默认 True：保持与 httpx 默认行为一致
+    # - 若怀疑代理干扰，可在 .env 中设为 false（NIDERIJI_HTTP_TRUST_ENV=false）
+    nideriji_http_trust_env: bool = True
     @model_validator(mode="after")
     def _build_database_url_if_missing(self) -> "Settings":
         if self.database_url and self.database_url.strip():

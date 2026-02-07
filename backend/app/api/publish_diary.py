@@ -80,6 +80,14 @@ def _count_no_whitespace(text: str | None) -> int:
         return 0
     return len(_WS_RE.sub("", str(text)))
 
+def _retry_suffix(exc: BaseException) -> str:
+    attempts = getattr(exc, "yournote_attempts", None)
+    try:
+        attempts_i = int(attempts)
+    except Exception:
+        attempts_i = 0
+    return f"（已重试 {attempts_i} 次）" if attempts_i > 1 else ""
+
 
 async def _build_run_list_items(
     runs: list[PublishDiaryRun],
@@ -458,12 +466,12 @@ async def publish_one(
             f"HTTPError: {safe_str(e, max_len=400)}"
             + (f" (HTTP {status_code})" if isinstance(status_code, int) else "")
         )
-    except httpx.TimeoutException:
+    except httpx.TimeoutException as e:
         item.status = "failed"
-        item.error_message = "发布超时（上游无响应）"
+        item.error_message = f"发布超时（上游无响应{_retry_suffix(e)}）"
     except httpx.RequestError as e:
         item.status = "failed"
-        item.error_message = f"网络异常: {safe_str(e, max_len=400)}"
+        item.error_message = f"网络异常{_retry_suffix(e)}: {safe_str(e, max_len=400)}"
     except Exception as e:
         item.status = "failed"
         item.error_message = f"发布异常: {safe_str(e, max_len=400)}"
@@ -556,12 +564,12 @@ async def publish(body: PublishDiaryRequest, db: AsyncSession = Depends(get_db))
                 f"HTTPError: {safe_str(e, max_len=400)}"
                 + (f" (HTTP {status_code})" if isinstance(status_code, int) else "")
             )
-        except httpx.TimeoutException:
+        except httpx.TimeoutException as e:
             item.status = "failed"
-            item.error_message = "发布超时（上游无响应）"
+            item.error_message = f"发布超时（上游无响应{_retry_suffix(e)}）"
         except httpx.RequestError as e:
             item.status = "failed"
-            item.error_message = f"网络异常: {safe_str(e, max_len=400)}"
+            item.error_message = f"网络异常{_retry_suffix(e)}: {safe_str(e, max_len=400)}"
         except Exception as e:
             item.status = "failed"
             item.error_message = f"发布异常: {safe_str(e, max_len=400)}"

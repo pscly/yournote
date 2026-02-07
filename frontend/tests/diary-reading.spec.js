@@ -26,13 +26,30 @@ test.describe('记录列表 - 移动端阅读模式', () => {
     await ensureAccess(page);
 
     await expect(page.getByRole('heading', { name: '记录列表', level: 3 })).toBeVisible();
-    await expect(page.getByText('视图', { exact: true })).toBeVisible();
+
+    // 移动端“视图（列表/阅读）”可能在筛选抽屉里，先确保抽屉已打开（或已可见）
+    const viewLabel = page.getByText('视图', { exact: true });
+    if (!(await viewLabel.isVisible())) {
+      const filterBtn = page.getByRole('button', { name: /筛\s*选/ }).first();
+      if (await filterBtn.isVisible()) {
+        await filterBtn.click();
+        await page.waitForTimeout(300);
+      }
+    }
+    await expect(viewLabel).toBeVisible();
 
     // 默认移动端应更偏向阅读模式：若当前不是，也允许用户切换到“阅读”
     const viewRead = page.locator('.ant-segmented-item').filter({ hasText: '阅读' }).first();
     if (await viewRead.isVisible()) {
       await viewRead.click();
       await page.waitForTimeout(400);
+    }
+
+    // 若打开了筛选抽屉，关闭一下避免遮挡列表操作
+    const drawerClose = page.locator('.ant-drawer-close').first();
+    if (await drawerClose.isVisible()) {
+      await drawerClose.click();
+      await page.waitForTimeout(200);
     }
 
     // 若没有数据，跳过（避免依赖固定测试数据）
@@ -48,4 +65,3 @@ test.describe('记录列表 - 移动端阅读模式', () => {
     await expect(page).toHaveURL(/\/diaries/);
   });
 });
-

@@ -33,6 +33,6 @@ test.describe('新增配对记录历史页', () => {
     const dateInput = page.locator('input[type="date"]').first();
     await expect(dateInput).toBeVisible();
 
-    await expect(page.getByText('包含停用账号', { exact: true })).toBeVisible();
+    await expect(page.getByText('包含停用账号').first()).toBeVisible();
   });
 });

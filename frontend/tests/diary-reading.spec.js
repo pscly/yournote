@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './testBase.js';
 
 const ensureAccess = async (page) => {
   const accessHeading = page.getByRole('heading', { name: '请输入访问密码', level: 3 });
@@ -54,14 +54,14 @@ test.describe('记录列表 - 移动端阅读模式', () => {
 
     // 若没有数据，跳过（避免依赖固定测试数据）
     await page.waitForTimeout(800);
-    const expandBtn = page.getByRole('button', { name: '展开阅读' }).first();
+    const expandBtn = page.getByRole('button', { name: /展\\s*开\\s*阅\\s*读/ }).first();
     if (!(await expandBtn.isVisible())) return;
 
     await expandBtn.click();
     await expect(page).toHaveURL(/\/diaries/);
-    await expect(page.getByRole('button', { name: '收起' }).first()).toBeVisible();
+    await expect(page.getByRole('button', { name: /收\\s*起/ }).first()).toBeVisible();
 
-    await page.getByRole('button', { name: '收起' }).first().click();
+    await page.getByRole('button', { name: /收\\s*起/ }).first().click();
     await expect(page).toHaveURL(/\/diaries/);
   });
 });

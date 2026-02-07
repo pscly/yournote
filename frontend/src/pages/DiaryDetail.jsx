@@ -671,7 +671,7 @@ export default function DiaryDetail() {
       message.success(`已导出：${sorted.length} 条（${formats.join(' / ').toUpperCase()}）`);
       setExportModalOpen(false);
     } catch (e) {
-      message.error(`导出失败：${e?.message || String(e)}`);
+      message.error(`导出失败：${getErrorMessage(e)}`);
     } finally {
       setExporting(false);
     }

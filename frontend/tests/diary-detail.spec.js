@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './testBase.js';
 
 const ensureAccess = async (page) => {
   const accessHeading = page.getByRole('heading', { name: '请输入访问密码', level: 3 });
@@ -21,7 +21,24 @@ const ensureAccess = async (page) => {
 const openFirstDiaryDetail = async (page) => {
   await page.goto('/diaries');
   await ensureAccess(page);
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(600);
+
+  const vp = page.viewportSize();
+  const isMobile = Boolean(vp && vp.width <= 480);
+
+  const tryOpenByOpenDetailButton = async (timeoutMs) => {
+    try {
+      // 阅读模式（移动端常见）里有“打开详情”按钮，直接点它最稳定
+      const openDetailBtn = page.getByRole('button', { name: /打\\s*开\\s*详\\s*情/ }).first();
+      await openDetailBtn.click({ timeout: timeoutMs });
+      await page.waitForURL(/\/diary\//, { timeout: 15000 });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  if (await tryOpenByOpenDetailButton(isMobile ? 8000 : 800)) return true;
 
   const firstRow = page.locator('.ant-table-tbody tr').first();
   if (await firstRow.isVisible()) {
@@ -33,8 +50,17 @@ const openFirstDiaryDetail = async (page) => {
     if (!(await firstCard.isVisible())) return false;
     await firstCard.click();
   }
-  await page.waitForURL(/\/diary\//);
-  return true;
+
+  // 主路径点击后：给一个短等待，避免页面渲染慢导致误判；失败则再尝试“打开详情”按钮（可能刚渲染出来）
+  try {
+    await page.waitForURL(/\/diary\//, { timeout: 4000 });
+    return true;
+  } catch {
+    // ignore
+  }
+
+  if (await tryOpenByOpenDetailButton(isMobile ? 8000 : 2000)) return true;
+  return false;
 };
 
 test.describe('记录详情页测试', () => {

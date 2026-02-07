@@ -929,8 +929,7 @@ export default function DiaryList() {
       const data = res?.data || null;
       setDetailById((prev) => ({ ...(prev || {}), [idNum]: data }));
     } catch (error) {
-      const msg = error?.message || '加载失败';
-      setDetailErrorById((prev) => ({ ...(prev || {}), [idNum]: String(msg) }));
+      setDetailErrorById((prev) => ({ ...(prev || {}), [idNum]: getErrorMessage(error) }));
     } finally {
       setDetailLoadingById((prev) => ({ ...(prev || {}), [idNum]: false }));
     }

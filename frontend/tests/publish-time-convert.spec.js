@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './testBase.js';
 
 const ensureAccess = async (page) => {
   const accessHeading = page.getByRole('heading', { name: '请输入访问密码', level: 3 });

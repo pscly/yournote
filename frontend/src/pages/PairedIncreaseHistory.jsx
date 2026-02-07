@@ -5,6 +5,7 @@ import { ArrowLeftOutlined, CalendarOutlined, HistoryOutlined } from '@ant-desig
 
 import { statsAPI } from '../services/api';
 import Page from '../components/Page';
+import { getErrorMessage } from '../utils/errorMessage';
 import { beijingDateStringToUtcRangeMs, formatBeijingDateTime, formatBeijingDateTimeFromTs, getBeijingDateString } from '../utils/time';
 import { getDiaryWordStats } from '../utils/wordCount';
 
@@ -64,7 +65,7 @@ export default function PairedIncreaseHistory() {
       setDiaries(list);
       setAuthorByUserId(map);
     } catch (error) {
-      message.error('加载新增配对记录历史失败: ' + (error?.message || '未知错误'));
+      message.error('加载新增配对记录历史失败：' + getErrorMessage(error));
       setCount(0);
       setDiaries([]);
       setAuthorByUserId({});

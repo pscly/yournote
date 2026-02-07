@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { Button, Card, Form, Input, Space, Typography, message } from 'antd';
 import { LockOutlined } from '@ant-design/icons';
 import { accessAPI } from '../services/api';
+import { getErrorMessage } from '../utils/errorMessage';
 import { sha256Hex } from '../utils/sha256';
 
 const { Title, Text } = Typography;
@@ -40,7 +41,7 @@ export default function AccessGate() {
         form.setFields([{ name: 'password', errors: ['访问密码错误'] }]);
         return;
       }
-      message.error(`登录失败：${detail || error?.message || '未知错误'}`);
+      message.error(`登录失败：${getErrorMessage(error)}`);
     } finally {
       setSubmitting(false);
     }

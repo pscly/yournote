@@ -48,6 +48,28 @@ cd frontend
 npm run dev
 ```
 
+## 在 Ubuntu / Linux 上一键启动（推荐）
+
+仓库根目录提供了 Linux 版的一键脚本（与 Windows 的 `run.bat/stop.bat` 并存）：
+
+```bash
+# 第一次使用需要赋予可执行权限
+chmod +x run.sh stop.sh
+
+# 一键启动（同一个终端内同时启动前后端，Ctrl+C 会尽量优雅退出）
+./run.sh
+```
+
+停止服务（另开终端执行）：
+
+```bash
+./stop.sh
+```
+
+说明：
+- 前端端口默认 `FRONTEND_PORT=31011`，后端端口默认 `BACKEND_PORT=31012`（可在根目录 `.env` 中修改）。
+- 前后端都会优先读取仓库根目录的 `.env`（无需手动 export 环境变量）。
+
 ## 在 Ubuntu / Linux 上启动（手动）
 
 说明：仓库内的 `run.bat`/`stop.bat` 面向 Windows；在 Ubuntu / Linux 上建议按下面方式手动启动。

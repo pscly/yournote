@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import httpx
 from datetime import datetime, timezone
@@ -9,12 +10,15 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..database import get_db
+from ..database import AsyncSessionLocal, get_db
 from ..models import Account, Diary, User
 from ..schemas import (
     AccountCreate,
     AccountMetaResponse,
     AccountResponse,
+    AccountValidateBatchItemResponse,
+    AccountValidateBatchRequest,
+    AccountValidateBatchResponse,
     TokenStatus,
     TokenValidateRequest,
 )
@@ -25,6 +29,9 @@ from ..utils.errors import exception_summary, safe_str
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
 logger = logging.getLogger(__name__)
+
+_VALIDATE_BATCH_MAX_IDS = 80
+_VALIDATE_BATCH_CONCURRENCY = 5
 
 
 def _normalize_auth_token(token_or_jwt: str) -> str:
@@ -330,6 +337,186 @@ async def validate_token(
 ):
     """远程校验任意 token（不落库）。"""
     return await _remote_validate_token(body.auth_token, db=db)
+
+
+async def _validate_one_account_in_new_session(account_id: int) -> AccountValidateBatchItemResponse:
+    """批量校验单账号：使用独立 Session，允许并发但限制并发数。"""
+    checked_at = datetime.now(timezone.utc)
+
+    async with AsyncSessionLocal() as session:
+        try:
+            result = await session.execute(select(Account).where(Account.id == account_id))
+            account = result.scalar_one_or_none()
+            if not account:
+                return AccountValidateBatchItemResponse(
+                    account_id=account_id,
+                    token_status=TokenStatus(
+                        is_valid=False,
+                        expired=True,
+                        expires_at=None,
+                        checked_at=checked_at,
+                        reason="账号不存在",
+                    ),
+                )
+
+            collector = CollectorService(session)
+
+            try:
+                # 若 token 失效且已保存账号密码，会自动重新登录刷新 token
+                await collector.fetch_nideriji_data_for_account(account)
+                await session.commit()
+                await session.refresh(account)
+                base = get_token_status(account.auth_token)
+                return AccountValidateBatchItemResponse(
+                    account_id=account_id,
+                    token_status=TokenStatus(
+                        is_valid=True,
+                        expired=bool(base.get("expired")),
+                        expires_at=base.get("expires_at"),
+                        checked_at=checked_at,
+                        reason=None,
+                    ),
+                )
+            except httpx.HTTPStatusError as e:
+                await session.rollback()
+                status_code = getattr(getattr(e, "response", None), "status_code", None)
+                reason = "服务端校验失败（token 无效或已失效）"
+                if isinstance(status_code, int):
+                    reason = f"{reason} (HTTP {status_code})"
+                base = get_token_status(account.auth_token)
+                return AccountValidateBatchItemResponse(
+                    account_id=account_id,
+                    token_status=TokenStatus(
+                        is_valid=False,
+                        expired=bool(base.get("expired")),
+                        expires_at=base.get("expires_at"),
+                        checked_at=checked_at,
+                        reason=reason,
+                    ),
+                )
+            except httpx.TimeoutException:
+                await session.rollback()
+                base = get_token_status(account.auth_token)
+                return AccountValidateBatchItemResponse(
+                    account_id=account_id,
+                    token_status=TokenStatus(
+                        is_valid=False,
+                        expired=bool(base.get("expired")),
+                        expires_at=base.get("expires_at"),
+                        checked_at=checked_at,
+                        reason="校验超时（上游无响应）",
+                    ),
+                )
+            except httpx.RequestError as e:
+                await session.rollback()
+                base = get_token_status(account.auth_token)
+                return AccountValidateBatchItemResponse(
+                    account_id=account_id,
+                    token_status=TokenStatus(
+                        is_valid=False,
+                        expired=bool(base.get("expired")),
+                        expires_at=base.get("expires_at"),
+                        checked_at=checked_at,
+                        reason=f"网络异常: {safe_str(e)}",
+                    ),
+                )
+            except Exception as e:
+                await session.rollback()
+                base = get_token_status(account.auth_token)
+                logger.exception("[ACCOUNTS] 批量校验异常 account_id=%s: %s", account_id, exception_summary(e))
+                return AccountValidateBatchItemResponse(
+                    account_id=account_id,
+                    token_status=TokenStatus(
+                        is_valid=False,
+                        expired=bool(base.get("expired")),
+                        expires_at=base.get("expires_at"),
+                        checked_at=checked_at,
+                        reason="校验异常",
+                    ),
+                )
+        except Exception as e:
+            try:
+                await session.rollback()
+            except Exception:
+                pass
+            logger.exception("[ACCOUNTS] 批量校验外层异常 account_id=%s: %s", account_id, exception_summary(e))
+            return AccountValidateBatchItemResponse(
+                account_id=account_id,
+                token_status=TokenStatus(
+                    is_valid=False,
+                    expired=True,
+                    expires_at=None,
+                    checked_at=checked_at,
+                    reason="校验异常",
+                ),
+            )
+
+
+@router.post("/validate-batch", response_model=AccountValidateBatchResponse)
+async def validate_account_tokens_batch(body: AccountValidateBatchRequest):
+    """批量远程校验账号 token（并尽量自动刷新 token）。
+
+    设计目标：
+    - 减少前端 N 次请求导致的抖动与失败；
+    - 服务端统一限制并发数，避免短时间内把上游接口打爆；
+    - 返回每个账号的 token_status，供前端批量刷新展示。
+    """
+    raw_ids = list(body.account_ids or [])
+    ids: list[int] = []
+    seen: set[int] = set()
+    for v in raw_ids:
+        try:
+            n = int(v)
+        except Exception:
+            continue
+        if n <= 0:
+            continue
+        if n in seen:
+            continue
+        seen.add(n)
+        ids.append(n)
+
+    if len(ids) > _VALIDATE_BATCH_MAX_IDS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"account_ids too long (max {_VALIDATE_BATCH_MAX_IDS})",
+        )
+
+    if not ids:
+        return AccountValidateBatchResponse(items=[])
+
+    sem = asyncio.Semaphore(_VALIDATE_BATCH_CONCURRENCY)
+
+    async def run_one(account_id: int) -> AccountValidateBatchItemResponse:
+        async with sem:
+            return await _validate_one_account_in_new_session(account_id)
+
+    results = await asyncio.gather(*(run_one(i) for i in ids), return_exceptions=True)
+
+    items: list[AccountValidateBatchItemResponse] = []
+    for account_id, res in zip(ids, results):
+        if isinstance(res, Exception):
+            logger.error(
+                "[ACCOUNTS] 批量校验任务失败 account_id=%s: %s",
+                account_id,
+                exception_summary(res),
+            )
+            items.append(
+                AccountValidateBatchItemResponse(
+                    account_id=account_id,
+                    token_status=TokenStatus(
+                        is_valid=False,
+                        expired=True,
+                        expires_at=None,
+                        checked_at=datetime.now(timezone.utc),
+                        reason="校验任务失败",
+                    ),
+                )
+            )
+            continue
+        items.append(res)
+
+    return AccountValidateBatchResponse(items=items)
 
 
 @router.post("/{account_id}/validate", response_model=TokenStatus)

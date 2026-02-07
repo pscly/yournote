@@ -4,6 +4,7 @@ import {
   Button,
   Card,
   Divider,
+  Drawer,
   Grid,
   Image,
   Input,
@@ -20,10 +21,11 @@ import {
   message,
   theme,
 } from 'antd';
-import { ReloadOutlined, SearchOutlined } from '@ant-design/icons';
+import { FilterOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { accountAPI, diaryAPI, userAPI } from '../services/api';
+import { getErrorMessage } from '../utils/errorMessage';
 import { getDiaryWordStats } from '../utils/wordCount';
 import { formatBeijingDateTimeFromTs } from '../utils/time';
 import Page from '../components/Page';
@@ -248,6 +250,7 @@ export default function DiaryList() {
   const [accounts, setAccounts] = useState([]);
   const [userById, setUserById] = useState({});
   const [initDone, setInitDone] = useState(false);
+  const [filtersDrawerOpen, setFiltersDrawerOpen] = useState(false);
 
   const [qInput, setQInput] = useState(initialUrlQ);
   const [q, setQ] = useState(initialUrlQ);
@@ -338,7 +341,7 @@ export default function DiaryList() {
       }
       setUserById(byId);
     } catch (error) {
-      message.error('初始化失败: ' + (error?.message || '未知错误'));
+      message.error('初始化失败：' + getErrorMessage(error));
     } finally {
       setInitDone(true);
     }
@@ -384,7 +387,7 @@ export default function DiaryList() {
       setTotal(0);
       setLastTookMs(null);
       setLastNormalized(null);
-      message.error('加载记录失败: ' + (error?.message || '未知错误'));
+      message.error('加载记录失败：' + getErrorMessage(error));
     } finally {
       if (loadSeqRef.current === seq) setLoading(false);
     }
@@ -1209,72 +1212,246 @@ export default function DiaryList() {
         记录列表
       </Title>
 
-      <Card style={{ marginBottom: 16 }}>
-        <Space direction="vertical" size={12} style={{ width: '100%' }}>
-          {noAccounts && (
-            <Alert
-              type="warning"
-              showIcon
-              message="暂无账号"
-              description={(
-                <Space wrap>
-                  <Text type="secondary">请先去“账号管理”添加账号并等待同步完成。</Text>
-                  <Button size="small" type="primary" onClick={() => navigate('/accounts')}>
-                    去账号管理
+      <div style={{ position: 'sticky', top: 'var(--app-header-height)', zIndex: 50 }}>
+        <Card style={{ marginBottom: 16 }}>
+          <Space direction="vertical" size={12} style={{ width: '100%' }}>
+            {noAccounts && (
+              <Alert
+                type="warning"
+                showIcon
+                message="暂无账号"
+                description={(
+                  <Space wrap>
+                    <Text type="secondary">请先去“账号管理”添加账号并等待同步完成。</Text>
+                    <Button size="small" type="primary" onClick={() => navigate('/accounts')}>
+                      去账号管理
+                    </Button>
+                  </Space>
+                )}
+              />
+            )}
+
+            {isMobile ? (
+              <>
+                <Input.Search
+                  allowClear
+                  ref={searchInputRef}
+                  value={qInput}
+                  placeholder="搜索标题/内容（空格多关键词，默认 AND）"
+                  onChange={(e) => setQInput(e.target.value)}
+                  onSearch={handleApplySearch}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') handleClearSearch();
+                  }}
+                  enterButton={<><SearchOutlined /> 搜索</>}
+                  style={{ width: '100%' }}
+                />
+
+                <Space wrap style={{ width: '100%' }}>
+                  <Segmented
+                    value={qMode}
+                    options={[
+                      { label: '全部命中', value: 'and' },
+                      { label: '任意命中', value: 'or' },
+                    ]}
+                    onChange={handleQModeChange}
+                    disabled={loading}
+                    style={{ width: '100%' }}
+                  />
+                  <Select
+                    value={qSyntax}
+                    onChange={handleQSyntaxChange}
+                    disabled={loading}
+                    style={{ width: '100%' }}
+                    options={[
+                      { label: '智能语法', value: 'smart' },
+                      { label: '纯文本', value: 'plain' },
+                    ]}
+                  />
+                </Space>
+
+                <Space wrap style={{ width: '100%' }}>
+                  <Button
+                    icon={<FilterOutlined />}
+                    onClick={() => setFiltersDrawerOpen(true)}
+                    disabled={loading}
+                    block
+                  >
+                    筛选
+                  </Button>
+                  <Button icon={<ReloadOutlined />} onClick={loadDiaries} disabled={loading} block>
+                    刷新
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      handleReset();
+                      setFiltersDrawerOpen(false);
+                    }}
+                    disabled={loading}
+                    block
+                  >
+                    重置条件
                   </Button>
                 </Space>
-              )}
-            />
-          )}
-          <Space wrap style={{ width: '100%' }}>
-            <Input.Search
-              allowClear
-              ref={searchInputRef}
-              value={qInput}
-              placeholder="搜索标题/内容（空格多关键词，默认 AND）"
-              onChange={(e) => setQInput(e.target.value)}
-              onSearch={handleApplySearch}
-              onKeyDown={(e) => {
-                if (e.key === 'Escape') handleClearSearch();
-              }}
-              enterButton={<><SearchOutlined /> 搜索</>}
-              style={{ flex: 1, minWidth: isMobile ? '100%' : 420 }}
-            />
-            <Segmented
-              value={qMode}
-              options={[
-                { label: '全部命中', value: 'and' },
-                { label: '任意命中', value: 'or' },
-              ]}
-              onChange={handleQModeChange}
-              disabled={loading}
-              style={{ minWidth: isMobile ? '100%' : 200 }}
-            />
-            <Select
-              value={qSyntax}
-              onChange={handleQSyntaxChange}
-              disabled={loading}
-              style={{ width: isMobile ? '100%' : 140 }}
-              options={[
-                { label: '智能语法', value: 'smart' },
-                { label: '纯文本', value: 'plain' },
-              ]}
-            />
-            <Button icon={<ReloadOutlined />} onClick={loadDiaries} disabled={loading} block={isMobile}>
-              刷新
-            </Button>
-            <Button onClick={handleReset} disabled={loading} block={isMobile}>
-              重置条件
-            </Button>
+
+                <Text type="secondary">
+                  {qSyntax === 'plain'
+                    ? '纯文本模式：不解析引号短语与 -排除；快捷键：按 / 聚焦搜索框，Esc 清空搜索。'
+                    : '提示：支持 "短语" 搜索、-关键词 排除；快捷键：按 / 聚焦搜索框，Esc 清空搜索。'}
+                </Text>
+
+                <Space wrap>
+                  {scopeTag}
+                  <Tag color="geekblue">共 {Number(total) || 0} 条</Tag>
+                  {typeof lastTookMs === 'number' && <Tag color="geekblue">耗时 {lastTookMs} ms</Tag>}
+                </Space>
+              </>
+            ) : (
+              <>
+                <Space wrap style={{ width: '100%' }}>
+                  <Input.Search
+                    allowClear
+                    ref={searchInputRef}
+                    value={qInput}
+                    placeholder="搜索标题/内容（空格多关键词，默认 AND）"
+                    onChange={(e) => setQInput(e.target.value)}
+                    onSearch={handleApplySearch}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') handleClearSearch();
+                    }}
+                    enterButton={<><SearchOutlined /> 搜索</>}
+                    style={{ flex: 1, minWidth: 420 }}
+                  />
+                  <Segmented
+                    value={qMode}
+                    options={[
+                      { label: '全部命中', value: 'and' },
+                      { label: '任意命中', value: 'or' },
+                    ]}
+                    onChange={handleQModeChange}
+                    disabled={loading}
+                    style={{ minWidth: 200 }}
+                  />
+                  <Select
+                    value={qSyntax}
+                    onChange={handleQSyntaxChange}
+                    disabled={loading}
+                    style={{ width: 140 }}
+                    options={[
+                      { label: '智能语法', value: 'smart' },
+                      { label: '纯文本', value: 'plain' },
+                    ]}
+                  />
+                  <Button icon={<ReloadOutlined />} onClick={loadDiaries} disabled={loading}>
+                    刷新
+                  </Button>
+                  <Button onClick={handleReset} disabled={loading}>
+                    重置条件
+                  </Button>
+                </Space>
+
+                <Text type="secondary">
+                  {qSyntax === 'plain'
+                    ? '纯文本模式：不解析引号短语与 -排除；快捷键：按 / 聚焦搜索框，Esc 清空搜索。'
+                    : '提示：支持 "短语" 搜索、-关键词 排除；快捷键：按 / 聚焦搜索框，Esc 清空搜索。'}
+                </Text>
+
+                <Space wrap direction="horizontal" style={{ width: '100%' }}>
+                  <Space wrap>
+                    <Text type="secondary">范围</Text>
+                    <Segmented
+                      value={scope}
+                      options={[
+                        { label: '仅配对用户', value: 'matched' },
+                        { label: '全部记录', value: 'all' },
+                      ]}
+                      onChange={handleScopeChange}
+                    />
+                  </Space>
+
+                  <Space wrap>
+                    <Text type="secondary">视图</Text>
+                    <Segmented
+                      value={viewMode}
+                      options={[
+                        { label: '列表', value: 'list' },
+                        { label: '阅读', value: 'read' },
+                      ]}
+                      onChange={handleViewModeChange}
+                      disabled={loading}
+                    />
+                    <Space size={6}>
+                      <Text type="secondary">字数</Text>
+                      <Switch checked={statsEnabled} onChange={handleStatsEnabledChange} disabled={loading} />
+                    </Space>
+                    {viewMode === 'read' && (
+                      <Space size={6}>
+                        <Text type="secondary">多条展开</Text>
+                        <Switch checked={multiExpand} onChange={handleMultiExpandChange} disabled={loading} />
+                      </Space>
+                    )}
+                  </Space>
+
+                  <Space wrap>
+                    <Text type="secondary">账号</Text>
+                    <Select
+                      style={{ width: 220 }}
+                      value={accountValue}
+                      onChange={handleAccountChange}
+                      options={accountOptions}
+                    />
+                  </Space>
+
+                  <Space wrap>
+                    <Text type="secondary">作者</Text>
+                    <Select
+                      showSearch
+                      optionFilterProp="label"
+                      style={{ width: 240 }}
+                      value={userValue}
+                      onChange={handleUserChange}
+                      options={userOptions}
+                    />
+                  </Space>
+                </Space>
+
+                <Space wrap direction="horizontal" style={{ width: '100%' }}>
+                  <Space wrap>
+                    <Text type="secondary">日期</Text>
+                    <Input type="date" value={dateFrom} onChange={handleDateFromChange} style={{ width: 160 }} />
+                    <Text type="secondary">到</Text>
+                    <Input type="date" value={dateTo} onChange={handleDateToChange} style={{ width: 160 }} />
+                  </Space>
+
+                  <Space wrap style={{ marginLeft: 'auto' }}>
+                    <Text type="secondary">排序</Text>
+                    <Select
+                      style={{ width: 160 }}
+                      value={sortValue}
+                      onChange={handleSortChange}
+                      options={sortOptions}
+                    />
+                    {scopeTag}
+                    <Tag color="geekblue">共 {Number(total) || 0} 条</Tag>
+                    {typeof lastTookMs === 'number' && <Tag color="geekblue">耗时 {lastTookMs} ms</Tag>}
+                  </Space>
+                </Space>
+              </>
+            )}
           </Space>
+        </Card>
+      </div>
 
-          <Text type="secondary">
-            {qSyntax === 'plain'
-              ? '纯文本模式：不解析引号短语与 -排除；快捷键：按 / 聚焦搜索框，Esc 清空搜索。'
-              : '提示：支持 "短语" 搜索、-关键词 排除；快捷键：按 / 聚焦搜索框，Esc 清空搜索。'}
-          </Text>
-
-          <Space wrap direction={isMobile ? 'vertical' : 'horizontal'} style={{ width: '100%' }}>
+      {isMobile && (
+        <Drawer
+          title="筛选条件"
+          placement="bottom"
+          open={filtersDrawerOpen}
+          onClose={() => setFiltersDrawerOpen(false)}
+          height="78%"
+          styles={{ body: { paddingBottom: 24 } }}
+        >
+          <Space direction="vertical" size={14} style={{ width: '100%' }}>
             <Space wrap>
               <Text type="secondary">范围</Text>
               <Segmented
@@ -1286,6 +1463,8 @@ export default function DiaryList() {
                 onChange={handleScopeChange}
               />
             </Space>
+
+            <Divider style={{ margin: '6px 0' }} />
 
             <Space wrap>
               <Text type="secondary">视图</Text>
@@ -1310,52 +1489,77 @@ export default function DiaryList() {
               )}
             </Space>
 
-            <Space wrap>
+            <Space wrap style={{ width: '100%' }}>
               <Text type="secondary">账号</Text>
               <Select
-                style={{ width: isMobile ? '100%' : 220 }}
+                style={{ flex: 1, minWidth: 200 }}
                 value={accountValue}
                 onChange={handleAccountChange}
                 options={accountOptions}
               />
             </Space>
 
-            <Space wrap>
+            <Space wrap style={{ width: '100%' }}>
               <Text type="secondary">作者</Text>
               <Select
                 showSearch
                 optionFilterProp="label"
-                style={{ width: isMobile ? '100%' : 240 }}
+                style={{ flex: 1, minWidth: 220 }}
                 value={userValue}
                 onChange={handleUserChange}
                 options={userOptions}
               />
             </Space>
-          </Space>
 
-          <Space wrap direction={isMobile ? 'vertical' : 'horizontal'} style={{ width: '100%' }}>
-            <Space wrap>
+            <Space wrap style={{ width: '100%' }}>
               <Text type="secondary">日期</Text>
-              <Input type="date" value={dateFrom} onChange={handleDateFromChange} style={{ width: isMobile ? '100%' : 160 }} />
+              <Input type="date" value={dateFrom} onChange={handleDateFromChange} style={{ flex: 1, minWidth: 140 }} />
               <Text type="secondary">到</Text>
-              <Input type="date" value={dateTo} onChange={handleDateToChange} style={{ width: isMobile ? '100%' : 160 }} />
+              <Input type="date" value={dateTo} onChange={handleDateToChange} style={{ flex: 1, minWidth: 140 }} />
             </Space>
 
-            <Space wrap style={{ marginLeft: isMobile ? 0 : 'auto' }}>
+            <Space wrap style={{ width: '100%' }}>
               <Text type="secondary">排序</Text>
               <Select
-                style={{ width: isMobile ? '100%' : 160 }}
+                style={{ flex: 1, minWidth: 180 }}
                 value={sortValue}
                 onChange={handleSortChange}
                 options={sortOptions}
               />
+            </Space>
+
+            <Space wrap>
               {scopeTag}
               <Tag color="geekblue">共 {Number(total) || 0} 条</Tag>
               {typeof lastTookMs === 'number' && <Tag color="geekblue">耗时 {lastTookMs} ms</Tag>}
             </Space>
+
+            <Space wrap style={{ width: '100%', justifyContent: 'flex-end' }}>
+              <Button
+                onClick={() => {
+                  handleClearSearch();
+                  setFiltersDrawerOpen(false);
+                }}
+                disabled={loading}
+              >
+                清空搜索
+              </Button>
+              <Button
+                onClick={() => {
+                  handleReset();
+                  setFiltersDrawerOpen(false);
+                }}
+                disabled={loading}
+              >
+                重置全部
+              </Button>
+              <Button type="primary" onClick={() => setFiltersDrawerOpen(false)}>
+                完成
+              </Button>
+            </Space>
           </Space>
-        </Space>
-      </Card>
+        </Drawer>
+      )}
 
       <Card>
         {viewMode === 'read' ? (

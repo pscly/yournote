@@ -34,6 +34,7 @@ import {
 } from '@ant-design/icons';
 import { diaryAPI, diaryHistoryAPI, userAPI } from '../services/api';
 import { downloadText, formatExportTimestamp, safeFilenamePart } from '../utils/download';
+import { getErrorMessage } from '../utils/errorMessage';
 import { formatBeijingDateTime, formatBeijingDateTimeFromTs, parseServerDate } from '../utils/time';
 import { getDiaryWordStats } from '../utils/wordCount';
 
@@ -138,8 +139,8 @@ export default function DiaryDetail() {
         loadPairedUser(currentDiary.account_id, currentDiary.user_id),
         loadHistory(),
       ]);
-    } catch {
-      message.error('加载失败');
+    } catch (error) {
+      message.error('加载失败：' + getErrorMessage(error));
     } finally {
       setLoading(false);
     }
@@ -234,8 +235,8 @@ export default function DiaryDetail() {
       ));
 
       setDiaryList(merged);
-    } catch {
-      message.error('加载匹配记录失败');
+    } catch (error) {
+      message.error('加载匹配记录失败：' + getErrorMessage(error));
     }
   };
 
@@ -244,7 +245,7 @@ export default function DiaryDetail() {
       const historyRes = await diaryHistoryAPI.list(id);
       setHistory(historyRes.data);
     } catch {
-      console.log('暂无历史记录');
+      setHistory([]);
     }
   };
 
@@ -289,8 +290,8 @@ export default function DiaryDetail() {
           ),
         });
       }
-    } catch {
-      message.error('刷新失败');
+    } catch (error) {
+      message.error('刷新失败：' + getErrorMessage(error));
     } finally {
       setRefreshing(false);
     }

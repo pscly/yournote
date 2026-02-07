@@ -3,6 +3,7 @@ import { Alert, Button, Card, Form, Grid, Input, List, Space, message, Modal, Ra
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import { accountAPI } from '../services/api';
 import { waitForLatestSyncLog } from '../utils/sync';
+import { getErrorMessage } from '../utils/errorMessage';
 import Page from '../components/Page';
 import { formatBeijingDateTime } from '../utils/time';
 
@@ -31,21 +32,27 @@ export default function AccountManage() {
     if (ids.length === 0) return;
 
     setCheckingIds(new Set(ids));
-    const results = await Promise.allSettled(ids.map(id => accountAPI.validate(id)));
+    try {
+      const res = await accountAPI.validateBatch({ account_ids: ids });
+      const items = Array.isArray(res?.data?.items) ? res.data.items : [];
 
-    const statusMap = new Map();
-    results.forEach((res, idx) => {
-      if (res.status === 'fulfilled') {
-        statusMap.set(ids[idx], res.value?.data);
-      }
-    });
+      const statusMap = new Map();
+      items.forEach((it) => {
+        const accountId = Number(it?.account_id);
+        if (!Number.isFinite(accountId) || accountId <= 0) return;
+        if (it?.token_status) statusMap.set(accountId, it.token_status);
+      });
 
-    setAccounts(prev => (prev || []).map(a => {
-      const tokenStatus = statusMap.get(a.id);
-      if (!tokenStatus) return a;
-      return { ...a, token_status: tokenStatus };
-    }));
-    setCheckingIds(new Set());
+      setAccounts(prev => (prev || []).map(a => {
+        const tokenStatus = statusMap.get(a.id);
+        if (!tokenStatus) return a;
+        return { ...a, token_status: tokenStatus };
+      }));
+    } catch (error) {
+      message.error('批量校验失败：' + getErrorMessage(error));
+    } finally {
+      setCheckingIds(new Set());
+    }
   }, []);
 
   const loadAccounts = useCallback(async () => {
@@ -55,7 +62,7 @@ export default function AccountManage() {
       setAccounts(res.data);
       validateAccounts(res.data);
     } catch (error) {
-      message.error('加载失败: ' + error.message);
+      message.error('加载失败：' + getErrorMessage(error));
     } finally {
       setLoading(false);
     }
@@ -153,7 +160,7 @@ export default function AccountManage() {
       message.success('删除成功！');
       loadAccounts();
     } catch (error) {
-      message.error('删除失败: ' + error.message);
+      message.error('删除失败：' + getErrorMessage(error));
     }
   };
 
@@ -197,7 +204,7 @@ export default function AccountManage() {
         }
       })();
     } catch (error) {
-      message.open({ key: msgKey, type: 'error', content: 'Token 更新失败: ' + error.message });
+      message.open({ key: msgKey, type: 'error', content: 'Token 更新失败：' + getErrorMessage(error) });
     }
   };
 

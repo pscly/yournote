@@ -73,6 +73,7 @@ export const accountAPI = {
   get: (id) => api.get(`/accounts/${id}`),
   delete: (id) => api.delete(`/accounts/${id}`),
   validate: (id) => api.post(`/accounts/${id}/validate`),
+  validateBatch: (data) => api.post('/accounts/validate-batch', data),
   validateToken: (data) => api.post('/accounts/validate-token', data),
   updateToken: (id, data) => api.put(`/accounts/${id}/token`, data),
 };
@@ -89,6 +90,7 @@ export const syncAPI = {
 // 仪表盘统计
 export const statsAPI = {
   overview: () => api.get('/stats/overview'),
+  dashboard: (params) => api.get('/stats/dashboard', { params }),
   pairedDiariesIncrease: (params) => api.get('/stats/paired-diaries/increase', { params }),
 };
 

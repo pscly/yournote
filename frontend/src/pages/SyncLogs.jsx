@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Button, Card, Grid, List, Select, Space, Table, Tag, Typography, message } from 'antd';
-import { ReloadOutlined } from '@ant-design/icons';
+import { Button, Card, Grid, List, Segmented, Select, Space, Table, Tag, Typography, message } from 'antd';
+import { ReloadOutlined, SyncOutlined } from '@ant-design/icons';
 import { accountAPI, syncAPI } from '../services/api';
+import { getErrorMessage } from '../utils/errorMessage';
+import { waitForLatestSyncLog } from '../utils/sync';
 import { formatBeijingDateTime } from '../utils/time';
 import Page from '../components/Page';
 
 const { Title } = Typography;
 
 const ALL_ACCOUNTS = '__all__';
+const VIEW_TIMELINE = 'timeline';
+const VIEW_ACCOUNTS = 'accounts';
 
 function formatTime(value) {
   if (!value) return '-';
@@ -30,13 +34,15 @@ export default function SyncLogs() {
   const [logs, setLogs] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [selectedAccount, setSelectedAccount] = useState(ALL_ACCOUNTS);
+  const [viewMode, setViewMode] = useState(VIEW_TIMELINE);
+  const [syncingAccountId, setSyncingAccountId] = useState(null);
 
   const loadAccounts = useCallback(async () => {
     try {
       const res = await accountAPI.list();
       setAccounts(res.data || []);
     } catch (e) {
-      message.error('加载账号失败: ' + e.message);
+      message.error('加载账号失败：' + getErrorMessage(e));
     }
   }, []);
 
@@ -47,17 +53,20 @@ export default function SyncLogs() {
         ? Number.parseInt(String(selectedAccount), 10)
         : null;
 
-      const res = await syncAPI.logs({
-        limit: 100,
+      const params = {
+        limit: viewMode === VIEW_ACCOUNTS ? 200 : 100,
         ...(accountId ? { account_id: accountId } : {}),
-      });
+      };
+      const res = viewMode === VIEW_ACCOUNTS
+        ? await syncAPI.logsLatest(params)
+        : await syncAPI.logs(params);
       setLogs(res.data || []);
     } catch (e) {
-      message.error('加载同步记录失败: ' + e.message);
+      message.error('加载同步记录失败：' + getErrorMessage(e));
     } finally {
       setLoading(false);
     }
-  }, [selectedAccount]);
+  }, [selectedAccount, viewMode]);
 
   useEffect(() => {
     loadAccounts();
@@ -76,6 +85,41 @@ export default function SyncLogs() {
       })),
     ];
   }, [accounts]);
+
+  const handleTriggerSync = useCallback(async (accountId) => {
+    const id = Number(accountId);
+    if (!Number.isFinite(id) || id <= 0) return;
+    const msgKey = `sync-${id}`;
+
+    try {
+      setSyncingAccountId(id);
+      const startedAt = Date.now();
+      message.open({ key: msgKey, type: 'loading', content: '正在同步中...', duration: 0 });
+      await syncAPI.trigger(id);
+
+      const log = await waitForLatestSyncLog(id, startedAt, { timeoutMs: 15000 });
+      if (log?.status === 'success') {
+        message.open({
+          key: msgKey,
+          type: 'success',
+          content: `同步完成：我的记录 ${log.diaries_count ?? '-'} 条，配对记录 ${log.paired_diaries_count ?? '-'} 条`,
+        });
+      } else if (log?.status === 'failed') {
+        message.open({
+          key: msgKey,
+          type: 'warning',
+          content: `同步失败：${log.error_message || '未知错误'}`,
+        });
+      } else {
+        message.open({ key: msgKey, type: 'success', content: '同步完成' });
+      }
+    } catch (error) {
+      message.open({ key: msgKey, type: 'error', content: '同步失败：' + getErrorMessage(error) });
+    } finally {
+      setSyncingAccountId(null);
+      loadLogs();
+    }
+  }, [loadLogs]);
 
   return (
     <Page>
@@ -97,6 +141,14 @@ export default function SyncLogs() {
             value={selectedAccount}
             onChange={setSelectedAccount}
             options={accountOptions}
+          />
+          <Segmented
+            value={viewMode}
+            onChange={setViewMode}
+            options={[
+              { label: '按时间', value: VIEW_TIMELINE },
+              { label: '按账号', value: VIEW_ACCOUNTS },
+            ]}
           />
           <Button icon={<ReloadOutlined />} onClick={loadLogs} block={isMobile}>
             刷新
@@ -141,6 +193,17 @@ export default function SyncLogs() {
                       无错误信息
                     </Typography.Text>
                   )}
+
+                  {(viewMode === VIEW_ACCOUNTS || log?.status === 'failed') && (
+                    <Button
+                      icon={<SyncOutlined />}
+                      onClick={() => handleTriggerSync(log?.account_id)}
+                      loading={syncingAccountId === log?.account_id}
+                      block
+                    >
+                      {log?.status === 'failed' ? '重试同步' : '立即同步'}
+                    </Button>
+                  )}
                 </Space>
               </Card>
             )}
@@ -159,6 +222,21 @@ export default function SyncLogs() {
               { title: '我的记录', dataIndex: 'diaries_count', key: 'diaries_count', width: 110, render: v => v ?? '-' },
               { title: '配对记录', dataIndex: 'paired_diaries_count', key: 'paired_diaries_count', width: 110, render: v => v ?? '-' },
               { title: '错误', dataIndex: 'error_message', key: 'error_message', ellipsis: true, render: v => v || '-' },
+              {
+                title: '操作',
+                key: 'actions',
+                width: 160,
+                render: (_, record) => (
+                  <Button
+                    size="small"
+                    icon={<SyncOutlined />}
+                    onClick={() => handleTriggerSync(record?.account_id)}
+                    loading={syncingAccountId === record?.account_id}
+                  >
+                    {record?.status === 'failed' ? '重试' : '同步'}
+                  </Button>
+                ),
+              },
             ]}
           />
         )}

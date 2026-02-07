@@ -59,6 +59,9 @@ credentials.json
 *.cache
 .pytest_cache/
 
+# Local run scripts (pid/temp)
+.run/
+
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb

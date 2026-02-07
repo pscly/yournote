@@ -116,6 +116,7 @@ async def log_http_request(
     status_code: int,
     duration_ms: int,
     error: str | None = None,
+    request_id: str | None = None,
 ) -> None:
     if not settings.access_log_enabled:
         return
@@ -127,6 +128,7 @@ async def log_http_request(
         [
             ("ts", _now_iso()),
             ("kind", "http"),
+            ("rid", request_id),
             ("method", request.method),
             ("path", request.url.path),
             ("query", query or None),
@@ -177,4 +179,3 @@ class AccessLogTimer:
 
     def elapsed_ms(self) -> int:
         return int((time.perf_counter() - self._start) * 1000)
-

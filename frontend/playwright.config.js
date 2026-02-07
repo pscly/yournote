@@ -46,7 +46,8 @@ export default defineConfig({
     screenshot: 'only-on-failure',
   },
   webServer: {
-    command: 'npm run dev',
+    // 测试环境（沙箱）下可能禁止绑定 0.0.0.0；这里显式用 127.0.0.1，避免 EPERM
+    command: 'npm run dev -- --host 127.0.0.1',
     url: baseURL,
     reuseExistingServer: true,
   },

@@ -60,3 +60,25 @@ class AccountMetaResponse(BaseModel):
     id: int
     nideriji_userid: int
     user_name: str | None = None
+
+
+class AccountValidateBatchRequest(BaseModel):
+    """批量校验账号 token 的请求。
+
+    说明：
+    - 用于前端“账号管理”页批量刷新 token 状态，减少 N 次请求带来的抖动。
+    - 服务端会按账号执行远程校验；若 token 失效且账号保存了密码，会自动重新登录刷新 token。
+    """
+
+    account_ids: list[int] = Field(default_factory=list, description="需要校验的账号 ID 列表")
+
+
+class AccountValidateBatchItemResponse(BaseModel):
+    account_id: int
+    token_status: TokenStatus
+
+
+class AccountValidateBatchResponse(BaseModel):
+    """批量校验响应：返回每个账号的 token_status。"""
+
+    items: list[AccountValidateBatchItemResponse] = Field(default_factory=list)

@@ -1,11 +1,18 @@
 """FastAPI application entry point"""
 import asyncio
 import logging
+import uuid
 from pathlib import Path
 import tomllib
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.exception_handlers import (
+    http_exception_handler as fastapi_http_exception_handler,
+    request_validation_exception_handler,
+)
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from .config import settings
@@ -40,12 +47,12 @@ def _read_app_version() -> str:
         repo_root = Path(__file__).resolve().parents[2]
         pyproject = repo_root / "pyproject.toml"
         if not pyproject.exists():
-            return "0.5.0"
+            return "0.6.0"
         data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
         version = ((data.get("project") or {}).get("version") or "").strip()
-        return version or "0.5.0"
+        return version or "0.6.0"
     except Exception:
-        return "0.5.0"
+        return "0.6.0"
 
 
 APP_VERSION = _read_app_version()
@@ -105,14 +112,85 @@ async def access_log_middleware(request: Request, call_next):
     finally:
         # 访问日志不应影响业务逻辑；任何写日志异常都吞掉
         try:
+            request_id = getattr(getattr(request, "state", None), "request_id", None)
             await log_http_request(
                 request,
                 status_code=status_code,
                 duration_ms=timer.elapsed_ms(),
                 error=error,
+                request_id=request_id,
             )
         except Exception:
             logger.debug("[ACCESS_LOG] Failed to write access log", exc_info=True)
+
+
+def _normalize_request_id(value: str | None) -> str | None:
+    """对外部传入的 request id 做一次简单归一化，避免日志注入/过长字符串。"""
+    if not value or not isinstance(value, str):
+        return None
+    s = value.strip()
+    if not s:
+        return None
+    if len(s) > 64:
+        return None
+    # 仅保留可读字符，避免控制字符污染日志/终端
+    if any(ord(ch) < 32 for ch in s):
+        return None
+    return s
+
+
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    """为每个请求生成/透传 X-Request-Id，并写入响应头。
+
+    说明：
+    - 便于把前端报错、后端日志、访问日志串起来；
+    - 若上游反向代理已生成 request id，可直接透传；
+    - 当发生异常时，会由 exception handler 补齐响应头（避免中间件拿不到 response）。
+    """
+    incoming = request.headers.get("x-request-id") or request.headers.get("x-correlation-id")
+    rid = _normalize_request_id(incoming) or uuid.uuid4().hex
+    request.state.request_id = rid
+
+    response = await call_next(request)
+    response.headers["X-Request-Id"] = rid
+    return response
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler_with_request_id(request: Request, exc: HTTPException):
+    response = await fastapi_http_exception_handler(request, exc)
+    rid = getattr(getattr(request, "state", None), "request_id", None)
+    if rid:
+        response.headers["X-Request-Id"] = rid
+    return response
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler_with_request_id(request: Request, exc: RequestValidationError):
+    response = await request_validation_exception_handler(request, exc)
+    rid = getattr(getattr(request, "state", None), "request_id", None)
+    if rid:
+        response.headers["X-Request-Id"] = rid
+    return response
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    rid = getattr(getattr(request, "state", None), "request_id", None)
+    logger.exception("[UNHANDLED] request_id=%s", rid or "-")
+
+    # 生产/对外默认不泄露内部异常细节；debug 时给一个可读摘要便于定位
+    detail = "INTERNAL_ERROR"
+    if settings.debug:
+        detail = exception_summary(exc, max_len=200)
+
+    payload: dict[str, object] = {"detail": detail}
+    if rid:
+        payload["request_id"] = rid
+
+    headers = {"X-Request-Id": rid} if rid else None
+    return JSONResponse(payload, status_code=500, headers=headers)
 
 # Register API routers
 app.include_router(accounts_router, prefix=settings.api_prefix)

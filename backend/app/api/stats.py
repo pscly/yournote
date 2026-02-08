@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import distinct, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import engine, get_db
@@ -62,6 +62,20 @@ def _build_account_response(
     )
 
 
+def _build_paired_relationship_exists_clause():
+    """构造“记录属于有效配对关系”的 EXISTS 条件。"""
+    return (
+        select(1)
+        .select_from(PairedRelationship)
+        .where(
+            PairedRelationship.account_id == Diary.account_id,
+            PairedRelationship.paired_user_id == Diary.user_id,
+            PairedRelationship.is_active.is_(True),
+        )
+        .exists()
+    )
+
+
 async def _get_latest_paired_diaries(
     *,
     db: AsyncSession,
@@ -69,24 +83,18 @@ async def _get_latest_paired_diaries(
     preview_len: int,
 ) -> StatsDashboardLatestPairedDiariesResponse:
     started = time.perf_counter()
-
-    join_condition = (
-        (Diary.account_id == PairedRelationship.account_id)
-        & (Diary.user_id == PairedRelationship.paired_user_id)
-    )
+    matched_exists = _build_paired_relationship_exists_clause()
 
     # 说明：
     # - 使用 PairedRelationship.paired_user_id 作为“被匹配用户”，与现有统计口径保持一致；
     # - 只取 active 关系 + active 账号（仪表盘默认只展示启用账号的数据）。
     query = (
         select(Diary)
-        .join(PairedRelationship, join_condition)
         .join(Account, Diary.account_id == Account.id)
         .where(
-            PairedRelationship.is_active.is_(True),
+            matched_exists,
             Account.is_active.is_(True),
         )
-        .distinct()
         # 排序：优先按 ts（最后修改）倒序；ts 为空的放后面；再按 created_date/id 保底稳定排序
         .order_by(
             Diary.ts.is_(None).asc(),
@@ -237,25 +245,17 @@ async def get_paired_diaries_increase(
         since_dt = since_dt_utc
         until_dt = until_dt_utc
 
-    join_condition = (
-        (Diary.account_id == PairedRelationship.account_id)
-        & (Diary.user_id == PairedRelationship.paired_user_id)
-    )
+    matched_exists = _build_paired_relationship_exists_clause()
 
     base_filters = [
-        PairedRelationship.is_active.is_(True),
         Diary.created_at.is_not(None),
         Diary.created_at >= since_dt,
+        matched_exists,
     ]
     if until_dt is not None:
         base_filters.append(Diary.created_at < until_dt)
 
-    count_query = (
-        select(func.count(distinct(Diary.id)))
-        .select_from(Diary)
-        .join(PairedRelationship, join_condition)
-        .where(*base_filters)
-    )
+    count_query = select(func.count()).select_from(Diary).where(*base_filters)
     if not include_inactive:
         count_query = (
             count_query.join(Account, Diary.account_id == Account.id)
@@ -265,9 +265,7 @@ async def get_paired_diaries_increase(
 
     diary_query = (
         select(Diary)
-        .join(PairedRelationship, join_condition)
         .where(*base_filters)
-        .distinct()
         .order_by(Diary.created_at.desc())
         .limit(limit)
     )

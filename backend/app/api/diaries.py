@@ -7,7 +7,7 @@ import time
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import and_, distinct, func, or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import engine, get_db
 from ..models import Account, Diary, PairedRelationship, User
@@ -333,17 +333,21 @@ async def query_diaries(
                 continue
             where_clauses.append(~_match_clause(token))
 
-    join_condition = and_(
-        Diary.account_id == PairedRelationship.account_id,
-        Diary.user_id == PairedRelationship.paired_user_id,
+    matched_exists_clause = (
+        select(1)
+        .select_from(PairedRelationship)
+        .where(
+            PairedRelationship.account_id == Diary.account_id,
+            PairedRelationship.paired_user_id == Diary.user_id,
+            PairedRelationship.is_active.is_(True),
+        )
+        .exists()
     )
 
+    if scope_norm == "matched":
+        where_clauses.append(matched_exists_clause)
+
     def _apply_joins(query):
-        if scope_norm == "matched":
-            query = (
-                query.join(PairedRelationship, join_condition)
-                .where(PairedRelationship.is_active.is_(True))
-            )
         if not include_inactive:
             query = (
                 query.join(Account, Diary.account_id == Account.id)
@@ -351,7 +355,7 @@ async def query_diaries(
             )
         return query
 
-    count_query = select(func.count(distinct(Diary.id))).select_from(Diary)
+    count_query = select(func.count()).select_from(Diary)
     count_query = _apply_joins(count_query).where(*where_clauses)
     total = int((await db.scalar(count_query)) or 0)
 
@@ -379,7 +383,6 @@ async def query_diaries(
     items_query = (
         _apply_joins(items_query)
         .where(*where_clauses)
-        .distinct()
         .order_by(*order_clauses)
         .limit(limit)
         .offset(offset)

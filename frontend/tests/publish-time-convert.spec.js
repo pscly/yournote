@@ -58,7 +58,7 @@ const mockPublishPageApis = async (page) => {
 };
 
 test.describe('发布日记：时间转换', () => {
-  test('应能把 > HH:MM / > HH:MM:SS 转成方括号并支持撤销', async ({ page }) => {
+  test('应能把 > HH:MM / > HH:MM:SS / > YYYY-MM-DD HH:MM:SS 转成方括号，并能简化标题引用，且支持撤销', async ({ page }) => {
     await mockPublishPageApis(page);
     await page.goto('/publish');
     await ensureAccess(page);
@@ -69,8 +69,11 @@ test.describe('发布日记：时间转换', () => {
       '再来一个 > 12:34:56',
       '还有 >01:02:03',
       '以及 > 01:02',
+      '再来一个完整时间 > 2026-02-11 21:49:24',
+      "## ((20260211214940-o4z438u '内心想法'))",
       '以及 a>12:34:56 不应转换',
       '以及 a>12:34 不应转换',
+      '以及 a>2026-02-11 21:49:24 不应转换',
     ].join('\n');
 
     await textarea.fill(input);
@@ -81,8 +84,11 @@ test.describe('发布日记：时间转换', () => {
     expect(after).toContain('[12:34:56]');
     expect(after).toContain('[01:02:03]');
     expect(after).toContain('[01:02]');
+    expect(after).toContain('[21:49:24]');
+    expect(after).toContain('## 内心想法');
     expect(after).toContain('a>12:34:56');
     expect(after).toContain('a>12:34');
+    expect(after).toContain('a>2026-02-11 21:49:24');
 
     await page.getByRole('button', { name: '撤销转换' }).click();
     await expect(textarea).toHaveValue(input);

@@ -105,16 +105,41 @@ async function getDefaultSelectionFromLastRun(accountList) {
 function convertQuotedTimesToBracket(value) {
   const text = String(value ?? '');
   let count = 0;
-  // 规则：把正文中 “> 12:34” / “> 12:34:56” 这样的时间标记转换为 “[12:34]” / “[12:34:56]”
-  // - 支持“任意位置”，但要求 `>` 前为行首或空白，避免误伤 a>12:34:56
-  // - 分/秒严格限制 00-59；小时允许 1-2 位
-  const out = text.replace(
+  let out = text;
+
+  // 规则 1：把 “## ((20260211214940-o4z438u '内心想法'))” 这样的标题引用，简化为 “## 内心想法”
+  // - 仅处理 Markdown 标题行（# ~ ######），避免误伤正文中的普通引用
+  // - 只取单引号内的“标题文本”，忽略块 ID
+  out = out.replace(
+    /^(#{1,6})\s*\(\(\d{14}-[0-9a-z]{7}\s+'([^'\n]+)'\)\)\s*$/gm,
+    (_match, hashes, title) => {
+      count += 1;
+      return `${hashes} ${title}`;
+    },
+  );
+
+  // 规则 2：把正文中 “> 2026-02-11 21:49:24” 转成 “[21:49:24]”
+  // - 支持“任意位置”，但要求 `>` 前为行首或空白，避免误伤 a>2026-02-11 21:49:24
+  // - 小时 00-23；分/秒严格限制 00-59
+  out = out.replace(
+    /(^|\s)>\s*\d{4}-\d{2}-\d{2}[ T]((?:\d|[01]\d|2[0-3]):[0-5]\d:[0-5]\d)/gm,
+    (_match, prefix, time) => {
+      count += 1;
+      return `${prefix}[${time}]`;
+    },
+  );
+
+  // 规则 3：把正文中 “> 12:34” / “> 12:34:56” 转成 “[12:34]” / “[12:34:56]”
+  // - 同样要求 `>` 前为行首或空白，避免误伤 a>12:34:56
+  // - 分/秒严格限制 00-59；小时允许 1-2 位（并限制到 0-23）
+  out = out.replace(
     /(^|\s)>\s*((?:\d|[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?)/gm,
     (_match, prefix, time) => {
       count += 1;
       return `${prefix}[${time}]`;
     },
   );
+
   return { text: out, count };
 }
 
@@ -664,7 +689,7 @@ export default function PublishDiary() {
     const before = String(currentContentRef.current ?? content);
     const { text: after, count } = convertQuotedTimesToBracket(before);
     if (!count) {
-      message.info('未发现可转换的时间标记（示例：> 12:34 或 > 12:34:56）');
+      message.info("未发现可转换的标记（示例：> 12:34、> 12:34:56、> 2026-02-11 21:49:24、## ((... '标题'))）");
       return;
     }
 
@@ -672,7 +697,7 @@ export default function PublishDiary() {
     setCanUndoTimeConvert(true);
     setContent(after);
     currentContentRef.current = after;
-    message.success(`已转换 ${count} 处时间标记`);
+    message.success(`已转换 ${count} 处标记`);
     scheduleAutoSave('time_convert');
   };
 
@@ -1433,7 +1458,7 @@ export default function PublishDiary() {
                         >
                           保存草稿
                         </Button>
-                        <Tooltip title="把正文中的 “> 12:34 / > 12:34:56” 一键转换为 “[12:34] / [12:34:56]”">
+                        <Tooltip title="把正文中的 “> 12:34 / > 12:34:56 / > 2026-02-11 21:49:24” 一键转换为 “[12:34] / [12:34:56] / [21:49:24]”；并把 “## ((... '标题'))” 转成 “## 标题”">
                           <Button
                             icon={<ClockCircleOutlined />}
                             onClick={handleTimeConvert}
@@ -1466,7 +1491,7 @@ export default function PublishDiary() {
                         <Button onClick={() => loadRuns(date)} loading={runsLoading} block={isMobile}>刷新历史</Button>
                       </Space>
                       <Text type="secondary">
-                        小技巧：输入 <Text code>{'> 12:34'}</Text> 或 <Text code>{'> 12:34:56'}</Text> 后点“时间转换”可变成 <Text code>{'[12:34]'}</Text> / <Text code>{'[12:34:56]'}</Text>；停止输入约 5 秒会自动保存草稿，连续输入每 30 秒也会保底保存一次。
+                        小技巧：输入 <Text code>{'> 12:34'}</Text> / <Text code>{'> 12:34:56'}</Text> / <Text code>{'> 2026-02-11 21:49:24'}</Text> 后点“时间转换”可变成 <Text code>{'[12:34]'}</Text> / <Text code>{'[12:34:56]'}</Text> / <Text code>{'[21:49:24]'}</Text>；另外 <Text code>{"## ((... '标题'))"}</Text> 也会自动变成 <Text code>{'## 标题'}</Text>；停止输入约 5 秒会自动保存草稿，连续输入每 30 秒也会保底保存一次。
                       </Text>
                     </Space>
                   </Card>

@@ -109,6 +109,7 @@ export default function AllUsers() {
             pairedUser: latestActive.paired_user,
             pairedTime: latestActive.paired_time,
             pairedUserLastDiaryTime: latestActive.paired_user_last_diary_time,
+            pairedUserLastDiaryId: latestActive.paired_user_last_diary_id,
           });
         } else {
           nextUnpairedMains.push({
@@ -250,7 +251,11 @@ export default function AllUsers() {
                             {item?.pairedTime && (
                               <Tag color="geekblue">配对 {formatShortTime(item.pairedTime) || '-'}</Tag>
                             )}
-                            <Tag color="gold">
+                            <Tag
+                              color="gold"
+                              style={{ cursor: item?.pairedUserLastDiaryId ? 'pointer' : 'default' }}
+                              onClick={() => item?.pairedUserLastDiaryId && navigate(`/diary/${item.pairedUserLastDiaryId}`)}
+                            >
                               对方最后日记 {formatShortTime(item?.pairedUserLastDiaryTime) || '暂无日记'}
                             </Tag>
                           </Space>

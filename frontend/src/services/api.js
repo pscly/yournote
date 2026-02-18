@@ -113,6 +113,7 @@ export const userAPI = {
   list: (limit = 50) => api.get('/users', { params: { limit } }),
   get: (id) => api.get(`/users/${id}`),
   lastLogin: (id) => api.get(`/users/${id}/last-login`),
+  credentials: (id) => api.get(`/users/${id}/credentials`),
   paired: (accountId, params) => api.get(`/users/paired/${accountId}`, { params }),
 };
 

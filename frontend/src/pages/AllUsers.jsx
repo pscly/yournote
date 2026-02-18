@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Avatar,
   Badge,
@@ -59,11 +59,7 @@ export default function AllUsers() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -112,6 +108,7 @@ export default function AllUsers() {
             mainUser,
             pairedUser: latestActive.paired_user,
             pairedTime: latestActive.paired_time,
+            pairedUserLastDiaryTime: latestActive.paired_user_last_diary_time,
           });
         } else {
           nextUnpairedMains.push({
@@ -167,7 +164,11 @@ export default function AllUsers() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   const pairedUserIds = useMemo(
     () => new Set(activePairs.map(p => p?.pairedUser?.id).filter(Boolean)),
@@ -249,6 +250,9 @@ export default function AllUsers() {
                             {item?.pairedTime && (
                               <Tag color="geekblue">配对 {formatShortTime(item.pairedTime) || '-'}</Tag>
                             )}
+                            <Tag color="gold">
+                              对方最后日记 {formatShortTime(item?.pairedUserLastDiaryTime) || '暂无日记'}
+                            </Tag>
                           </Space>
                         </List.Item>
                       )}

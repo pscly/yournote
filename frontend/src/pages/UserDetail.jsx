@@ -24,6 +24,8 @@ export default function UserDetail() {
   const [user, setUser] = useState(null);
   const [diaries, setDiaries] = useState([]);
   const [pairedRecord, setPairedRecord] = useState(null);
+  const [credentials, setCredentials] = useState(null);
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -99,6 +101,54 @@ export default function UserDetail() {
     loadData();
   }, [loadData]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    setShowPassword(false);
+    setCredentials(null);
+
+    if (!id) return () => { cancelled = true; };
+
+    const loadCredentials = async () => {
+      try {
+        const res = await userAPI.credentials(id);
+        if (cancelled) return;
+        setCredentials(res?.data || null);
+      } catch {
+        if (cancelled) return;
+        setCredentials({ has_account: false, email: null, password: null });
+      }
+    };
+
+    loadCredentials();
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  const renderPassword = () => {
+    if (!credentials) return '-';
+    if (!credentials.has_account) return '无账号凭据';
+
+    const password = credentials.password;
+    if (password == null || password === '') return '-';
+
+    return (
+      <Space size={8} wrap>
+        <Text>{showPassword ? password : '******'}</Text>
+        <Button
+          type="link"
+          size="small"
+          style={{ padding: 0, height: 'auto' }}
+          aria-pressed={showPassword}
+          onClick={() => setShowPassword(v => !v)}
+        >
+          {showPassword ? '隐藏密码' : '显示密码'}
+        </Button>
+      </Space>
+    );
+  };
+
   const columns = useMemo(() => {
     return [
       { title: '日期', dataIndex: 'created_date', key: 'date', width: 120 },    
@@ -161,6 +211,8 @@ export default function UserDetail() {
                   <Descriptions.Item label="记录数">{user.diary_count ?? 0}</Descriptions.Item>
                   <Descriptions.Item label="字数">{user.word_count ?? 0}</Descriptions.Item>
                   <Descriptions.Item label="最后登录">{formatDateTime(user.last_login_time)}</Descriptions.Item>
+                  <Descriptions.Item label="邮箱">{credentials?.email ? credentials.email : '-'}</Descriptions.Item>
+                  <Descriptions.Item label="密码">{renderPassword()}</Descriptions.Item>
                   <Descriptions.Item label="个性签名" span={isMobile ? 1 : 2}>
                     {user.description || '无'}
                   </Descriptions.Item>

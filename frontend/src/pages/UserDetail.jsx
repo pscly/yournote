@@ -78,6 +78,7 @@ export default function UserDetail() {
 
           const candidate = {
             accountId: account?.id,
+            accountEmail: account?.email,
             mainUser: p?.user || null,
             pairedTime: p?.paired_time,
           };
@@ -266,10 +267,27 @@ export default function UserDetail() {
                 <Card title="被配对记录">
                   <Descriptions column={isMobile ? 1 : 2} bordered size={isMobile ? 'small' : 'middle'}>
                     <Descriptions.Item label="主账号">
-                      <Tag color="geekblue">
+                      <Tag
+                        color="geekblue"
+                        title="点击查看主账号详情"
+                        style={{ cursor: pairedRecord?.mainUser?.id ? 'pointer' : 'default' }}
+                        onClick={() => pairedRecord?.mainUser?.id && navigate(`/user/${pairedRecord.mainUser.id}`)}
+                      >
                         {pairedRecord.mainUser?.name || '未命名'}
                         {pairedRecord.mainUser?.nideriji_userid ? `（${pairedRecord.mainUser.nideriji_userid}）` : ''}
                       </Tag>
+                    </Descriptions.Item>
+                    <Descriptions.Item label="主账号邮箱">
+                      {pairedRecord.accountEmail ? (
+                        <Typography.Link
+                          title="点击查看主账号详情"
+                          onClick={() => navigate(`/user/${pairedRecord.mainUser.id}`)}
+                        >
+                          {pairedRecord.accountEmail}
+                        </Typography.Link>
+                      ) : (
+                        '-'
+                      )}
                     </Descriptions.Item>
                     <Descriptions.Item label="配对时间">
                       {formatDateTime(pairedRecord.pairedTime)}

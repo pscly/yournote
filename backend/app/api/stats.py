@@ -5,18 +5,28 @@ from __future__ import annotations
 import re
 import time
 from datetime import datetime, timezone
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import engine, get_db
-from ..models import Account, Diary, PairedRelationship, SyncLog, User
+from ..models import (
+    Account,
+    Diary,
+    DiaryMsgCountEvent,
+    PairedRelationship,
+    SyncLog,
+    User,
+)
 from ..schemas import (
     AccountResponse,
     DiaryListItemResponse,
     StatsDashboardLatestPairedDiariesResponse,
     StatsDashboardResponse,
+    StatsMsgCountIncreaseItem,
+    StatsMsgCountIncreaseResponse,
     StatsOverviewResponse,
     StatsPairedDiariesIncreaseResponse,
     TokenStatus,
@@ -49,16 +59,17 @@ def _build_account_response(
     user_name: str | None,
     last_diary_ts: int | None,
 ) -> AccountResponse:
+    a_any: Any = account
     return AccountResponse(
-        id=account.id,
-        nideriji_userid=account.nideriji_userid,
+        id=a_any.id,
+        nideriji_userid=a_any.nideriji_userid,
         user_name=user_name,
-        email=account.email,
-        is_active=bool(account.is_active),
-        token_status=TokenStatus(**get_token_status(account.auth_token)),
+        email=a_any.email,
+        is_active=bool(a_any.is_active),
+        token_status=TokenStatus(**get_token_status(str(a_any.auth_token or ""))),
         last_diary_ts=last_diary_ts,
-        created_at=account.created_at,
-        updated_at=account.updated_at,
+        created_at=a_any.created_at,
+        updated_at=a_any.updated_at,
     )
 
 
@@ -111,39 +122,45 @@ async def _get_latest_paired_diaries(
     items: list[DiaryListItemResponse] = []
     user_ids: set[int] = set()
     for d in diaries:
-        if not d or d.id is None:
+        d_any: Any = d
+        if not d or getattr(d_any, "id", None) is None:
             continue
-        if not isinstance(d.nideriji_diary_id, int):
+        if not isinstance(getattr(d_any, "nideriji_diary_id", None), int):
             continue
-        if not isinstance(d.user_id, int):
+        if not isinstance(getattr(d_any, "user_id", None), int):
             continue
-        if not isinstance(d.account_id, int):
+        if not isinstance(getattr(d_any, "account_id", None), int):
             continue
 
-        user_ids.add(d.user_id)
+        user_ids.add(int(getattr(d_any, "user_id")))
         items.append(
             DiaryListItemResponse(
-                id=d.id,
-                nideriji_diary_id=d.nideriji_diary_id,
-                user_id=d.user_id,
-                account_id=d.account_id,
-                created_date=d.created_date,
-                ts=d.ts,
-                created_at=d.created_at,
-                updated_at=d.updated_at,
-                title=d.title,
-                content_preview=_build_preview(d.content, preview_len),
-                word_count_no_ws=_count_no_whitespace(d.content),
-                weather=d.weather,
-                mood=d.mood,
-                space=d.space,
+                id=int(getattr(d_any, "id")),
+                nideriji_diary_id=int(getattr(d_any, "nideriji_diary_id")),
+                user_id=int(getattr(d_any, "user_id")),
+                account_id=int(getattr(d_any, "account_id")),
+                created_date=getattr(d_any, "created_date", None),
+                ts=getattr(d_any, "ts", None),
+                created_at=getattr(d_any, "created_at", None),
+                updated_at=getattr(d_any, "updated_at", None),
+                title=getattr(d_any, "title", None),
+                content_preview=_build_preview(
+                    getattr(d_any, "content", None), preview_len
+                ),
+                word_count_no_ws=_count_no_whitespace(getattr(d_any, "content", None)),
+                msg_count=int(getattr(d_any, "msg_count", 0) or 0),
+                weather=getattr(d_any, "weather", None),
+                mood=getattr(d_any, "mood", None),
+                space=getattr(d_any, "space", None),
             )
         )
 
     authors: list[User] = []
     if user_ids:
-        authors = await db.scalars(select(User).where(User.id.in_(sorted(user_ids))))
-        authors = list(authors.all())
+        authors_result = await db.scalars(
+            select(User).where(User.id.in_(sorted(user_ids)))
+        )
+        authors = list(authors_result.all())
 
     took_ms = int((time.perf_counter() - started) * 1000)
     return StatsDashboardLatestPairedDiariesResponse(
@@ -151,7 +168,7 @@ async def _get_latest_paired_diaries(
         preview_len=int(preview_len),
         took_ms=took_ms,
         items=items,
-        authors=authors,
+        authors=cast(Any, authors),
     )
 
 
@@ -170,10 +187,18 @@ async def get_stats_overview(db: AsyncSession = Depends(get_db)):
     )
     total_users = await db.scalar(select(func.count()).select_from(User))
 
+    total_msg_count = await db.scalar(
+        select(
+            func.coalesce(func.sum(func.coalesce(Diary.msg_count, 0)), 0)
+        ).select_from(Diary)
+    )
+
     # 配对日记数量：为保证响应速度，这里使用“最新同步日志”中的 paired_diaries_count 进行汇总。
     # 注意：SyncLog 中的 diaries_count / paired_diaries_count 代表“当前总数”，不是“本次新增数”；
     # 这样二次/多次同步时也能稳定反映数据库规模，同时避免对 diaries 表做全表 join 计数导致超时。
-    active_account_ids = await db.scalars(select(Account.id).where(Account.is_active.is_(True)))
+    active_account_ids = await db.scalars(
+        select(Account.id).where(Account.is_active.is_(True))
+    )
     active_account_ids = list(active_account_ids.all())
 
     paired_diaries_count = 0
@@ -186,10 +211,15 @@ async def get_stats_overview(db: AsyncSession = Depends(get_db)):
         )
         seen_accounts: set[int] = set()
         for log in logs.all():
-            if log.account_id in seen_accounts:
+            log_any: Any = log
+            account_id = getattr(log_any, "account_id", None)
+            if not isinstance(account_id, int):
                 continue
-            seen_accounts.add(log.account_id)
-            n = log.paired_diaries_count
+
+            if account_id in seen_accounts:
+                continue
+            seen_accounts.add(account_id)
+            n = getattr(log_any, "paired_diaries_count", None)
             if isinstance(n, int):
                 paired_diaries_count += n
 
@@ -206,14 +236,19 @@ async def get_stats_overview(db: AsyncSession = Depends(get_db)):
         total_accounts=int(total_accounts or 0),
         total_users=int(total_users or 0),
         paired_diaries_count=int(paired_diaries_count or 0),
+        total_msg_count=int(total_msg_count or 0),
         last_sync_time=last_sync_time,
     )
 
 
-@router.get("/paired-diaries/increase", response_model=StatsPairedDiariesIncreaseResponse)
+@router.get(
+    "/paired-diaries/increase", response_model=StatsPairedDiariesIncreaseResponse
+)
 async def get_paired_diaries_increase(
     since_ms: int = Query(..., ge=1, description="统计起点（UTC 毫秒时间戳）"),
-    until_ms: int | None = Query(None, ge=1, description="统计终点（UTC 毫秒时间戳，左闭右开，不传则不设上限）"),
+    until_ms: int | None = Query(
+        None, ge=1, description="统计终点（UTC 毫秒时间戳，左闭右开，不传则不设上限）"
+    ),
     limit: int = Query(200, ge=1, le=1000, description="返回明细条数上限"),
     include_inactive: bool = Query(False, description="是否包含停用账号"),
     db: AsyncSession = Depends(get_db),
@@ -227,7 +262,9 @@ async def get_paired_diaries_increase(
     """
 
     if until_ms is not None and until_ms <= since_ms:
-        raise HTTPException(status_code=422, detail="until_ms must be greater than since_ms")
+        raise HTTPException(
+            status_code=422, detail="until_ms must be greater than since_ms"
+        )
 
     since_dt_utc = datetime.fromtimestamp(since_ms / 1000, tz=timezone.utc)
     until_dt_utc = None
@@ -257,9 +294,8 @@ async def get_paired_diaries_increase(
 
     count_query = select(func.count()).select_from(Diary).where(*base_filters)
     if not include_inactive:
-        count_query = (
-            count_query.join(Account, Diary.account_id == Account.id)
-            .where(Account.is_active.is_(True))
+        count_query = count_query.join(Account, Diary.account_id == Account.id).where(
+            Account.is_active.is_(True)
         )
     total_count = await db.scalar(count_query)
 
@@ -270,31 +306,145 @@ async def get_paired_diaries_increase(
         .limit(limit)
     )
     if not include_inactive:
-        diary_query = (
-            diary_query.join(Account, Diary.account_id == Account.id)
-            .where(Account.is_active.is_(True))
+        diary_query = diary_query.join(Account, Diary.account_id == Account.id).where(
+            Account.is_active.is_(True)
         )
     diaries = await db.scalars(diary_query)
     diaries = list(diaries.all())
 
-    user_ids = {d.user_id for d in diaries if d and isinstance(d.user_id, int)}
+    user_ids: set[int] = set()
+    for d in diaries:
+        d_any: Any = d
+        uid = getattr(d_any, "user_id", None)
+        if isinstance(uid, int):
+            user_ids.add(uid)
     authors: list[User] = []
     if user_ids:
-        authors = await db.scalars(select(User).where(User.id.in_(sorted(user_ids))))
-        authors = list(authors.all())
+        authors_result = await db.scalars(
+            select(User).where(User.id.in_(sorted(user_ids)))
+        )
+        authors = list(authors_result.all())
 
     return StatsPairedDiariesIncreaseResponse(
         count=int(total_count or 0),
-        diaries=diaries,
-        authors=authors,
+        diaries=cast(Any, diaries),
+        authors=cast(Any, authors),
         since_time=since_dt_utc,
     )
+
+
+@router.get("/msg-count/increase", response_model=StatsMsgCountIncreaseResponse)
+async def get_msg_count_increase(
+    since_ms: int = Query(..., ge=1, description="统计起点（UTC 毫秒时间戳）"),
+    until_ms: int | None = Query(
+        None, ge=1, description="统计终点（UTC 毫秒时间戳，左闭右开，不传则不设上限）"
+    ),
+    limit: int = Query(20, ge=1, le=1000, description="返回明细条数上限"),
+    db: AsyncSession = Depends(get_db),
+):
+    if until_ms is not None and until_ms <= since_ms:
+        raise HTTPException(
+            status_code=422, detail="until_ms must be greater than since_ms"
+        )
+
+    since_dt_utc = datetime.fromtimestamp(since_ms / 1000, tz=timezone.utc)
+    until_dt_utc = None
+    if until_ms is not None:
+        until_dt_utc = datetime.fromtimestamp(until_ms / 1000, tz=timezone.utc)
+
+    if engine.dialect.name == "sqlite":
+        since_dt = since_dt_utc.replace(tzinfo=None)
+        until_dt = until_dt_utc.replace(tzinfo=None) if until_dt_utc else None
+    else:
+        since_dt = since_dt_utc
+        until_dt = until_dt_utc
+
+    base_filters: list[Any] = [DiaryMsgCountEvent.recorded_at >= since_dt]
+    if until_dt is not None:
+        base_filters.append(DiaryMsgCountEvent.recorded_at < until_dt)
+
+    total_delta = await db.scalar(
+        select(func.coalesce(func.sum(DiaryMsgCountEvent.delta), 0))
+        .select_from(DiaryMsgCountEvent)
+        .where(*base_filters)
+    )
+
+    delta_sum = func.coalesce(func.sum(DiaryMsgCountEvent.delta), 0).label("delta")
+    last_event_at = func.max(DiaryMsgCountEvent.recorded_at).label("last_event_at")
+
+    query = (
+        select(
+            DiaryMsgCountEvent.account_id.label("account_id"),
+            DiaryMsgCountEvent.diary_id.label("diary_id"),
+            delta_sum,
+            last_event_at,
+            Diary.title.label("title"),
+            Diary.created_date.label("created_date"),
+            Diary.msg_count.label("msg_count"),
+            Account.email.label("account_email"),
+            User.name.label("account_user_name"),
+        )
+        .select_from(DiaryMsgCountEvent)
+        .join(
+            Diary,
+            (Diary.id == DiaryMsgCountEvent.diary_id)
+            & (Diary.account_id == DiaryMsgCountEvent.account_id),
+        )
+        .join(Account, Account.id == DiaryMsgCountEvent.account_id)
+        .outerjoin(User, User.nideriji_userid == Account.nideriji_userid)
+        .where(*base_filters)
+        .group_by(
+            DiaryMsgCountEvent.account_id,
+            DiaryMsgCountEvent.diary_id,
+            Diary.title,
+            Diary.created_date,
+            Diary.msg_count,
+            Account.email,
+            User.name,
+        )
+        .order_by(delta_sum.desc(), last_event_at.desc())
+        .limit(limit)
+    )
+
+    result = await db.execute(query)
+    items: list[StatsMsgCountIncreaseItem] = []
+    for row in result.all():
+        m: Any = getattr(row, "_mapping", row)
+        last_at = m.get("last_event_at") if hasattr(m, "get") else None
+        if last_at is not None and getattr(last_at, "tzinfo", None) is None:
+            last_at = last_at.replace(tzinfo=timezone.utc)
+
+        items.append(
+            StatsMsgCountIncreaseItem(
+                account_id=int(m.get("account_id") or 0),
+                diary_id=int(m.get("diary_id") or 0),
+                delta=int(m.get("delta") or 0),
+                account_email=m.get("account_email"),
+                account_user_name=m.get("account_user_name"),
+                title=m.get("title"),
+                created_date=m.get("created_date"),
+                msg_count=int(m.get("msg_count") or 0),
+                last_event_at=last_at,
+            )
+        )
+
+    resp = StatsMsgCountIncreaseResponse(
+        total_delta=int(total_delta or 0),
+        items=items,
+        since_time=since_dt_utc,
+        until_time=until_dt_utc,
+    )
+    resp_any: Any = resp
+    resp_any.limit = int(limit)
+    return resp
 
 
 @router.get("/dashboard", response_model=StatsDashboardResponse)
 async def get_dashboard(
     latest_limit: int = Query(50, ge=1, le=200, description="最近配对记录返回条数上限"),
-    latest_preview_len: int = Query(120, ge=0, le=1000, description="最近配对记录预览长度"),
+    latest_preview_len: int = Query(
+        120, ge=0, le=1000, description="最近配对记录预览长度"
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """仪表盘聚合数据：账号 + 概览 + 最近配对记录。
@@ -306,7 +456,9 @@ async def get_dashboard(
     overview = await get_stats_overview(db)
 
     # 账号列表（含 token 状态与最近记录时间戳）
-    result = await db.execute(select(Account).where(Account.is_active.is_(True)).order_by(Account.id.asc()))
+    result = await db.execute(
+        select(Account).where(Account.is_active.is_(True)).order_by(Account.id.asc())
+    )
     accounts = list(result.scalars().all())
 
     account_ids = [a.id for a in accounts if a and isinstance(a.id, int)]
@@ -318,29 +470,53 @@ async def get_dashboard(
             .group_by(Diary.account_id)
         )
         last_diary_ts_map = {
-            int(account_id): int(max_ts) for account_id, max_ts in ts_result.all() if max_ts is not None
+            int(account_id): int(max_ts)
+            for account_id, max_ts in ts_result.all()
+            if max_ts is not None
         }
 
-    nideriji_userids = [a.nideriji_userid for a in accounts if a and isinstance(a.nideriji_userid, int)]
+    nideriji_userids: list[int] = []
+    for a in accounts:
+        a_any: Any = a
+        uid = getattr(a_any, "nideriji_userid", None)
+        if isinstance(uid, int):
+            nideriji_userids.append(uid)
     user_map: dict[int, User] = {}
     if nideriji_userids:
-        users_result = await db.execute(select(User).where(User.nideriji_userid.in_(nideriji_userids)))
-        user_map = {u.nideriji_userid: u for u in users_result.scalars().all() if u and u.nideriji_userid is not None}
+        users_result = await db.execute(
+            select(User).where(User.nideriji_userid.in_(nideriji_userids))
+        )
+        users = list(users_result.scalars().all())
+        for u in users:
+            u_any: Any = u
+            k = getattr(u_any, "nideriji_userid", None)
+            if isinstance(k, int):
+                user_map[k] = u
 
     account_responses: list[AccountResponse] = []
     for a in accounts:
-        if not a or a.id is None:
+        a_any: Any = a
+        aid = getattr(a_any, "id", None)
+        if not a or aid is None:
             continue
-        user = user_map.get(a.nideriji_userid)
+        n_uid = getattr(a_any, "nideriji_userid", None)
+        user = user_map.get(int(n_uid)) if isinstance(n_uid, int) else None
+        user_any: Any = user
+        user_name_raw = getattr(user_any, "name", None) if user else None
+        user_name = user_name_raw if isinstance(user_name_raw, str) else None
         account_responses.append(
             _build_account_response(
                 a,
-                user_name=(user.name if user else None),
-                last_diary_ts=last_diary_ts_map.get(a.id),
+                user_name=user_name,
+                last_diary_ts=last_diary_ts_map.get(int(aid))
+                if isinstance(aid, int)
+                else None,
             )
         )
 
-    latest = await _get_latest_paired_diaries(db=db, limit=latest_limit, preview_len=latest_preview_len)
+    latest = await _get_latest_paired_diaries(
+        db=db, limit=latest_limit, preview_len=latest_preview_len
+    )
 
     return StatsDashboardResponse(
         overview=overview,

@@ -142,6 +142,18 @@ function escapeRegExp(text) {
   return String(text || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function getShownMsgCount(item) {
+  const n = Number(item?.msg_count);
+  const shown = Number.isFinite(n) ? n : 0;
+  return shown;
+}
+
+function getShownAccountIdText(item) {
+  const n = Number(item?.account_id);
+  const shown = Number.isFinite(n) ? n : null;
+  return shown ? String(shown) : '-';
+}
+
 function parseSmartQuery(raw, { maxPositive = 10, maxExcludes = 10 } = {}) {
   const s = String(raw ?? '').trim();
   if (!s) return { terms: [], phrases: [], excludes: [] };
@@ -1134,11 +1146,14 @@ export default function DiaryList() {
     return <>{out}</>;
   }, [highlightRegexSource, token.colorText, token.colorWarningBg]);
 
-  const columns = useMemo(() => [
-    { title: '日期', dataIndex: 'created_date', key: 'date', width: 120, render: (v) => v || '-' },
-    {
-      title: '修改时间',
-      dataIndex: 'ts',
+  const columns = useMemo(() => {
+    const showAccount = currentAccountId == null;
+
+    const cols = [
+      { title: '日期', dataIndex: 'created_date', key: 'date', width: 120, render: (v) => v || '-' },
+      {
+        title: '修改时间',
+        dataIndex: 'ts',
       key: 'modified_time',
       width: 190,
       render: (ts) => {
@@ -1147,23 +1162,35 @@ export default function DiaryList() {
         return <Tag color="purple">{text}</Tag>;
       },
     },
-    {
-      title: '作者',
-      dataIndex: 'user_id',
-      key: 'author',
-      width: 200,
-      render: (uid) => {
-        const u = userById?.[uid];
-        const name = u?.name || (uid ? `用户 ${uid}` : '未知');
-        const text = u?.nideriji_userid ? `${name}（${u.nideriji_userid}）` : name;
-        return <Tag color="magenta">{text}</Tag>;
+      {
+        title: '作者',
+        dataIndex: 'user_id',
+        key: 'author',
+        width: 200,
+        render: (uid) => {
+          const u = userById?.[uid];
+          const name = u?.name || (uid ? `用户 ${uid}` : '未知');
+          const text = u?.nideriji_userid ? `${name}（${u.nideriji_userid}）` : name;
+          return <Tag color="magenta">{text}</Tag>;
+        },
       },
-    },
-    {
-      title: '标题',
-      dataIndex: 'title',
-      key: 'title',
-      width: 240,
+      ...(showAccount ? [
+        {
+          title: '账号',
+          dataIndex: 'account_id',
+          key: 'account_id',
+          width: 90,
+          render: (_, record) => {
+            const text = getShownAccountIdText(record);
+            return <Tag color="gold" title={`账号 ${text}`}>A{text}</Tag>;
+          },
+        },
+      ] : []),
+      {
+        title: '标题',
+        dataIndex: 'title',
+        key: 'title',
+        width: 240,
       render: (v) => renderHighlighted(v || '-'),
       onCell: (record) => ({
         onClick: () => navigate(`/diary/${record.id}`),
@@ -1181,11 +1208,11 @@ export default function DiaryList() {
         style: { cursor: 'pointer', color: token.colorPrimary },
       }),
     },
-    {
-      title: '字数',
-      key: 'word_count',
-      width: 110,
-      align: 'right',
+      {
+        title: '字数',
+        key: 'word_count',
+        width: 110,
+        align: 'right',
       render: (_, record) => {
         if (!statsEnabled) return '-';
         const serverCount = Number(record?.word_count_no_ws);
@@ -1193,11 +1220,21 @@ export default function DiaryList() {
         const stats = getDiaryWordStats(record);
         const n = stats?.content?.no_whitespace ?? 0;
         return <Tag color="geekblue">{n} 字</Tag>;
+        },
       },
-    },
-    { title: '心情', dataIndex: 'mood', key: 'mood', width: 90, render: (m) => (m ? <Tag>{m}</Tag> : '-') },
-    { title: '天气', dataIndex: 'weather', key: 'weather', width: 90, render: (w) => (w ? <Tag color="blue">{w}</Tag> : '-') },
-  ], [navigate, userById, token, renderHighlighted, statsEnabled]);
+      {
+        title: '留言',
+        key: 'msg_count',
+        width: 110,
+        align: 'right',
+        render: (_, record) => <Tag color="volcano">留言 {getShownMsgCount(record)}</Tag>,
+      },
+      { title: '心情', dataIndex: 'mood', key: 'mood', width: 90, render: (m) => (m ? <Tag>{m}</Tag> : '-') },
+      { title: '天气', dataIndex: 'weather', key: 'weather', width: 90, render: (w) => (w ? <Tag color="blue">{w}</Tag> : '-') },
+    ];
+
+    return cols;
+  }, [navigate, userById, token, renderHighlighted, statsEnabled, currentAccountId]);
 
   const noAccounts = initDone && (accounts?.length || 0) === 0;
 
@@ -1589,9 +1626,13 @@ export default function DiaryList() {
                 >
                   <Space direction="vertical" size={10} style={{ width: '100%' }}>
                     <Space wrap size={8}>
+                      {currentAccountId == null && (
+                        <Tag color="gold" title={`账号 ${getShownAccountIdText(item)}`}>A{getShownAccountIdText(item)}</Tag>
+                      )}
                       <Tag color="magenta">{authorText}</Tag>
                       <Tag color="blue">{item.created_date || '未知日期'}</Tag>
                       {modifiedText !== '-' && <Tag color="purple">修改 {modifiedText}</Tag>}
+                      <Tag color="volcano">留言 {getShownMsgCount(item)}</Tag>
                       {statsEnabled && <Tag color="geekblue">{wordCount} 字</Tag>}
                       {item.mood && <Tag>{item.mood}</Tag>}
                       {item.weather && <Tag color="cyan">{item.weather}</Tag>}
@@ -1702,9 +1743,13 @@ export default function DiaryList() {
                 >
                   <Space direction="vertical" size={8} style={{ width: '100%' }}>
                     <Space wrap size={8}>
+                      {currentAccountId == null && (
+                        <Tag color="gold" title={`账号 ${getShownAccountIdText(item)}`}>A{getShownAccountIdText(item)}</Tag>
+                      )}
                       <Tag color="magenta">{authorText}</Tag>
                       <Tag color="blue">{item.created_date || '未知日期'}</Tag>
                       {modifiedText !== '-' && <Tag color="purple">修改 {modifiedText}</Tag>}
+                      <Tag color="volcano">留言 {getShownMsgCount(item)}</Tag>
                       {statsEnabled && <Tag color="geekblue">{wordCount} 字</Tag>}
                       {item.mood && <Tag>{item.mood}</Tag>}
                       {item.weather && <Tag color="cyan">{item.weather}</Tag>}

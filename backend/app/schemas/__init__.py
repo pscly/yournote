@@ -8,7 +8,12 @@ from .account import (
     TokenStatus,
     TokenValidateRequest,
 )
-from .diary import DiaryAttachments, DiaryDetailResponse, DiaryImageAttachment, DiaryResponse
+from .diary import (
+    DiaryAttachments,
+    DiaryDetailResponse,
+    DiaryImageAttachment,
+    DiaryResponse,
+)
 from .diary_query import DiaryListItemResponse, DiaryQueryNormalized, DiaryQueryResponse
 from .diary_refresh import DiaryRefreshInfo, DiaryRefreshResponse
 from .publish_diary import (
@@ -26,6 +31,8 @@ from .publish_diary import (
 from .stats import (
     StatsDashboardLatestPairedDiariesResponse,
     StatsDashboardResponse,
+    StatsMsgCountIncreaseItem,
+    StatsMsgCountIncreaseResponse,
     StatsOverviewResponse,
     StatsPairedDiariesIncreaseResponse,
 )
@@ -56,6 +63,8 @@ __all__ = [
     "StatsPairedDiariesIncreaseResponse",
     "StatsDashboardLatestPairedDiariesResponse",
     "StatsDashboardResponse",
+    "StatsMsgCountIncreaseItem",
+    "StatsMsgCountIncreaseResponse",
     "PublishDiaryDraftResponse",
     "PublishDiaryDraftUpsertRequest",
     "PublishDiaryPublishOneRequest",

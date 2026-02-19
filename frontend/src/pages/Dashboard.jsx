@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button, Card, Col, Drawer, Grid, List, Row, Segmented, Space, Spin, Statistic, Table, Tag, Typography, message } from 'antd';
-import { BookOutlined, DownOutlined, SyncOutlined, TeamOutlined, UpOutlined, UserOutlined } from '@ant-design/icons';
+import { BookOutlined, DownOutlined, MessageOutlined, SyncOutlined, TeamOutlined, UpOutlined, UserOutlined } from '@ant-design/icons';
 import { statsAPI, syncAPI } from '../services/api';
 import { getErrorMessage } from '../utils/errorMessage';
 import { waitForLatestSyncLog } from '../utils/sync';
 import { useNavigate } from 'react-router-dom';
-import { formatBeijingDateTime, formatBeijingDateTimeFromTs } from '../utils/time';
+import { beijingDateStringToUtcRangeMs, formatBeijingDateTime, formatBeijingDateTimeFromTs, getBeijingDateString } from '../utils/time';
 import { getDiaryWordStats } from '../utils/wordCount';
 import Page from '../components/Page';
 import PageState from '../components/PageState';
@@ -16,6 +16,7 @@ const { Title, Text } = Typography;
 const DASHBOARD_ACCOUNTS_COLLAPSED_KEY = 'yournote.dashboard.accountsCollapsed.v2';
 // 仪表盘“新增配对记录”统计窗口（可切换，避免只按记录日期导致漏算“今天才解锁的旧记录”）
 const DASHBOARD_PAIRED_INCREASE_WINDOW_KEY = 'yournote.dashboard.pairedIncreaseWindow.v1';
+const DASHBOARD_MSG_COUNT_INCREASE_LIMIT = 20;
 
 function readBoolStorage(key) {
   try {
@@ -55,6 +56,18 @@ function writeStringStorage(key, value) {
   }
 }
 
+function getShownMsgCount(item) {
+  const n = Number(item?.msg_count);
+  const shown = Number.isFinite(n) ? n : 0;
+  return shown;
+}
+
+function getShownAccountIdText(item) {
+  const n = Number(item?.account_id);
+  const shown = Number.isFinite(n) ? n : null;
+  return shown ? String(shown) : '-';
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const screens = Grid.useBreakpoint();
@@ -74,6 +87,7 @@ export default function Dashboard() {
     totalAccounts: 0,
     totalUsers: 0,
     pairedDiaries: 0,
+    totalMsgCount: 0,
   });
   const [pairedIncreaseWindow, setPairedIncreaseWindow] = useState(() => {
     const stored = readStringStorage(DASHBOARD_PAIRED_INCREASE_WINDOW_KEY);
@@ -84,15 +98,19 @@ export default function Dashboard() {
   const [pairedIncreaseCount, setPairedIncreaseCount] = useState(0);
   const [pairedIncreaseDiaries, setPairedIncreaseDiaries] = useState([]);
   const [pairedIncreaseAuthorByUserId, setPairedIncreaseAuthorByUserId] = useState({});
+
+  const [msgCountIncreaseLoading, setMsgCountIncreaseLoading] = useState(false);
+  const [msgCountTodayIncrease, setMsgCountTodayIncrease] = useState(0);
+  const [msgCountIncreaseItems, setMsgCountIncreaseItems] = useState([]);
   const [latestLoading, setLatestLoading] = useState(false);
   const [latestDiaries, setLatestDiaries] = useState([]);
   const [latestAuthorByUserId, setLatestAuthorByUserId] = useState({});   
-  const todayText = new Intl.DateTimeFormat('zh-CN', {
-    timeZone: 'Asia/Shanghai',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date()).replace(/\//g, '-');
+  const todayText = getBeijingDateString(0);
+
+  const msgCountSinceMs = useMemo(() => {
+    const { since_ms } = beijingDateStringToUtcRangeMs(todayText);
+    return since_ms || 0;
+  }, [todayText]);
 
   const pairedIncreaseSinceMs = useMemo(() => {
     const [yy, mm, dd] = String(todayText).split('-').map(Number);
@@ -164,6 +182,35 @@ export default function Dashboard() {
     }
   }, [pairedIncreaseSinceMs]);
 
+  const loadMsgCountIncrease = useCallback(async () => {
+    if (!msgCountSinceMs) {
+      setMsgCountTodayIncrease(0);
+      setMsgCountIncreaseItems([]);
+      return;
+    }
+
+    setMsgCountIncreaseLoading(true);
+    try {
+      const res = await statsAPI.msgCountIncrease({
+        since_ms: msgCountSinceMs,
+        limit: DASHBOARD_MSG_COUNT_INCREASE_LIMIT,
+      });
+      const data = res?.data || {};
+
+      const totalDeltaNum = Number(data?.total_delta);
+      setMsgCountTodayIncrease(Number.isFinite(totalDeltaNum) ? totalDeltaNum : 0);
+
+      const items = Array.isArray(data?.items) ? data.items : [];
+      setMsgCountIncreaseItems(items.slice(0, DASHBOARD_MSG_COUNT_INCREASE_LIMIT));
+    } catch (error) {
+      setMsgCountTodayIncrease(0);
+      setMsgCountIncreaseItems([]);
+      message.error('加载今日新增留言失败：' + getErrorMessage(error));
+    } finally {
+      setMsgCountIncreaseLoading(false);
+    }
+  }, [msgCountSinceMs]);
+
   const loadLatestPairedDiaries = useCallback(async () => {
     if (accounts.length === 0) {
       setLatestDiaries([]);
@@ -218,6 +265,7 @@ export default function Dashboard() {
         totalAccounts: overview.total_accounts ?? accountList.length,
         totalUsers: overview.total_users ?? 0,
         pairedDiaries: overview.paired_diaries_count ?? 0,
+        totalMsgCount: overview.total_msg_count ?? 0,
       });
 
       const latest = data?.latest_paired_diaries || {};
@@ -235,7 +283,7 @@ export default function Dashboard() {
       setLatestDiaries(items);
     } catch (error) {
       setAccounts([]);
-      setStats({ totalAccounts: 0, totalUsers: 0, pairedDiaries: 0 });
+      setStats({ totalAccounts: 0, totalUsers: 0, pairedDiaries: 0, totalMsgCount: 0 });
       setLatestDiaries([]);
       setLatestAuthorByUserId({});
       setPageError(error);
@@ -251,6 +299,10 @@ export default function Dashboard() {
   useEffect(() => {
     loadPairedIncrease();
   }, [loadPairedIncrease]);
+
+  useEffect(() => {
+    loadMsgCountIncrease();
+  }, [loadMsgCountIncrease]);
 
   const toggleAccountsCollapsed = useCallback(() => {
     setAccountsCollapsed((prev) => {
@@ -286,7 +338,7 @@ export default function Dashboard() {
         message.open({ key: msgKey, type: 'success', content: '更新完成' });
       }
 
-      await Promise.all([loadData(), loadPairedIncrease()]);
+      await Promise.all([loadData(), loadPairedIncrease(), loadMsgCountIncrease()]);
     } catch (error) {
       message.open({ key: msgKey, type: 'error', content: '更新失败：' + getErrorMessage(error) });
     } finally {
@@ -303,21 +355,21 @@ export default function Dashboard() {
       <PageState
         loading={loading}
         error={pageError}
-        onRetry={() => { loadData(); loadPairedIncrease(); }}
+        onRetry={() => { loadData(); loadPairedIncrease(); loadMsgCountIncrease(); }}
       >
         <>
           <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-            <Col xs={12} md={8}>
+            <Col xs={12} md={6}>
               <Card hoverable onClick={() => navigate('/accounts')} style={{ cursor: 'pointer' }}>
                 <Statistic title="账号数量" value={stats.totalAccounts} prefix={<UserOutlined />} />
               </Card>
             </Col>
-            <Col xs={12} md={8}>
+            <Col xs={12} md={6}>
               <Card hoverable onClick={() => navigate('/users')} style={{ cursor: 'pointer' }}>
                 <Statistic title="用户数量" value={stats.totalUsers} prefix={<TeamOutlined />} />
               </Card>
             </Col>
-            <Col xs={12} md={8}>
+            <Col xs={12} md={6}>
               <Card hoverable onClick={() => navigate('/diaries')} style={{ cursor: 'pointer' }}>
                 <Statistic title="配对记录数" value={stats.pairedDiaries} prefix={<BookOutlined />} />
                 <Space size={8} style={{ marginTop: 8 }} onClick={(e) => e.stopPropagation()} wrap>
@@ -355,13 +407,77 @@ export default function Dashboard() {
                 </Space>
               </Card>
             </Col>
+
+            <Col xs={12} md={6}>
+              <Card hoverable style={{ cursor: 'default' }}>
+                <div data-testid="msg-count-panel">
+                  <Statistic
+                    title="留言数量"
+                    value={stats.totalMsgCount}
+                    prefix={<MessageOutlined />}
+                    formatter={(value) => (
+                      <span data-testid="msg-count-total">{value}</span>
+                    )}
+                  />
+
+                  <Space size={8} style={{ marginTop: 8 }} wrap>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      今日新增
+                    </Text>
+                    <Text data-testid="msg-count-today-increase" style={{ fontSize: 12 }}>
+                      +{Number(msgCountTodayIncrease) || 0}
+                    </Text>
+                    {msgCountIncreaseLoading && <Spin size="small" />}
+                  </Space>
+
+                  <div style={{ marginTop: 8, maxHeight: 160, overflowY: 'auto' }}>
+                    <List
+                      size="small"
+                      dataSource={msgCountIncreaseItems}
+                      loading={msgCountIncreaseLoading}
+                      locale={{ emptyText: '暂无增长' }}
+                      renderItem={(item, index) => {
+                        const diaryId = item?.diary_id ?? item?.diaryId ?? item?.id;
+                        const clickable = Boolean(diaryId);
+
+                        const deltaNum = Number(item?.delta);
+                        const deltaShown = Number.isFinite(deltaNum) ? deltaNum : 0;
+
+                        const title = item?.diary_title || item?.title;
+                        const createdDate = item?.created_date || item?.diary_created_date;
+                        const middleText = title || createdDate || (diaryId ? `#Diary ${diaryId}` : '未知日记');
+
+                        return (
+                          <List.Item
+                            key={`${item?.account_id ?? 'acc'}-${diaryId ?? index}`}
+                            style={{
+                              cursor: clickable ? 'pointer' : 'default',
+                              paddingLeft: 0,
+                              paddingRight: 0,
+                            }}
+                            onClick={() => {
+                              if (!diaryId) return;
+                              navigate(`/diary/${diaryId}`);
+                            }}
+                          >
+                            <Text data-testid={`msg-count-top-item-${index}`} style={{ fontSize: 12 }}>
+                              A{getShownAccountIdText(item)} · {middleText} · +{deltaShown}
+                            </Text>
+                          </List.Item>
+                        );
+                      }}
+                    />
+                  </div>
+                </div>
+              </Card>
+            </Col>
           </Row>
 
           <Card
             title="账号列表"
             extra={
               <Space size={8}>
-                <Button onClick={() => { loadData(); loadPairedIncrease(); }} disabled={loading}>
+                <Button onClick={() => { loadData(); loadPairedIncrease(); loadMsgCountIncrease(); }} disabled={loading}>
                   刷新
                 </Button>
                 <Button
@@ -397,7 +513,7 @@ export default function Dashboard() {
                       })();
 
                       return (
-                        <Card style={{ marginBottom: 12 }} bodyStyle={{ padding: 14 }}>
+                        <Card style={{ marginBottom: 12 }}>
                           <Space direction="vertical" size={10} style={{ width: '100%' }}>
                             <Space wrap>
                               <Tag color="blue">{r?.nideriji_userid ?? '-'}</Tag>
@@ -532,10 +648,12 @@ export default function Dashboard() {
                     <List.Item.Meta
                       title={
                         <Space wrap size={8}>
+                          <Tag color="gold" title={`账号 ${getShownAccountIdText(item)}`}>A{getShownAccountIdText(item)}</Tag>
                           <Tag color="magenta">{authorText}</Tag>
                           <Tag color="blue">{item?.created_date || '-'}</Tag>
                           {updatedAtText && <Tag color="purple">更新 {updatedAtText}</Tag>}
                           <Tag color="geekblue">{wordCount} 字</Tag>
+                          <Tag color="volcano">留言 {getShownMsgCount(item)}</Tag>
                           <span style={{ fontWeight: 500 }}>{item?.title || '无标题'}</span>
                         </Space>
                       }
@@ -629,11 +747,13 @@ export default function Dashboard() {
                 <List.Item.Meta
                   title={
                     <Space wrap size={8}>
+                      <Tag color="gold" title={`账号 ${getShownAccountIdText(item)}`}>A{getShownAccountIdText(item)}</Tag>
                       <Tag color="magenta">{authorText}</Tag>
                       <Tag color="blue">{item?.created_date || '-'}</Tag>
                       {showInsertedAt && <Tag color="cyan">入库 {insertedAtText}</Tag>}
                       {updatedAtText && <Tag color="purple">更新 {updatedAtText}</Tag>}
                       <Tag color="geekblue">{wordCount} 字</Tag>
+                      <Tag color="volcano">留言 {getShownMsgCount(item)}</Tag>
                       <span style={{ fontWeight: 500 }}>{item?.title || '无标题'}</span>
                     </Space>
                   }

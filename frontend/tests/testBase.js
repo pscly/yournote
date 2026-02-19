@@ -68,6 +68,7 @@ function getSampleDiaryListItem() {
     title: '测试标题',
     content_preview: '这是一个用于 E2E 的稳定测试记录预览。',
     word_count_no_ws: 16,
+    msg_count: 7,
     weather: null,
     mood: null,
     space: null,
@@ -91,6 +92,7 @@ function getSampleDiaryDetail() {
     weather: null,
     mood: null,
     space: null,
+    msg_count: 7,
     ts: SAMPLE_TS_MS,
     created_at: SAMPLE_NOW_ISO,
     updated_at: SAMPLE_NOW_ISO,
@@ -131,6 +133,7 @@ function buildStatsDashboardResponse(url) {
       total_accounts: 1,
       total_users: 1,
       paired_diaries_count: 0,
+      total_msg_count: 7,
       last_sync_time: SAMPLE_NOW_ISO,
     },
     accounts: [getSampleAccount()],
@@ -141,6 +144,36 @@ function buildStatsDashboardResponse(url) {
       items: [],
       authors: [],
     },
+  };
+}
+
+function buildMsgCountIncreaseResponse(url) {
+  const limit = Math.max(1, Number(url.searchParams.get('limit') || 20));
+  const sinceMs = Number(url.searchParams.get('since_ms') || '');
+  const untilMs = Number(url.searchParams.get('until_ms') || '');
+
+  const sinceTime = Number.isFinite(sinceMs) ? new Date(sinceMs).toISOString() : SAMPLE_NOW_ISO;
+  const untilTime = Number.isFinite(untilMs) ? new Date(untilMs).toISOString() : null;
+
+  const items = [
+    {
+      account_id: 1,
+      diary_id: 1,
+      delta: 3,
+      title: '测试标题',
+      created_date: SAMPLE_DATE,
+      msg_count: 7,
+      account_user_name: '测试用户',
+      last_event_at: SAMPLE_NOW_ISO,
+    },
+  ];
+
+  return {
+    total_delta: 3,
+    limit,
+    items: items.slice(0, limit),
+    since_time: sinceTime,
+    until_time: untilTime,
   };
 }
 
@@ -278,12 +311,17 @@ export const test = base.extend({
             total_accounts: 1,
             total_users: 1,
             paired_diaries_count: 0,
+            total_msg_count: 7,
             last_sync_time: SAMPLE_NOW_ISO,
           }));
           return;
         }
         if (path === '/api/stats/dashboard' && method === 'GET') {
           await route.fulfill(jsonResponse(buildStatsDashboardResponse(url)));
+          return;
+        }
+        if (path === '/api/stats/msg-count/increase' && method === 'GET') {
+          await route.fulfill(jsonResponse(buildMsgCountIncreaseResponse(url)));
           return;
         }
         if (path === '/api/stats/paired-diaries/increase' && method === 'GET') {

@@ -92,6 +92,7 @@ export const statsAPI = {
   overview: () => api.get('/stats/overview'),
   dashboard: (params) => api.get('/stats/dashboard', { params }),
   pairedDiariesIncrease: (params) => api.get('/stats/paired-diaries/increase', { params }),
+  msgCountIncrease: (params) => api.get('/stats/msg-count/increase', { params }),
 };
 
 // 记录查询

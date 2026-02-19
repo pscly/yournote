@@ -26,6 +26,7 @@ class DiaryListItemResponse(BaseModel):
     title: str | None = None
     content_preview: str | None = None
     word_count_no_ws: int = 0
+    msg_count: int = 0
 
     weather: str | None = None
     mood: str | None = None

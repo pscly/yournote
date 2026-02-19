@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Alert,
@@ -93,105 +93,38 @@ export default function DiaryDetail() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // 说明：这里仅希望在 id 变化时触发加载；不把 loadData 放进依赖，避免函数重建导致重复拉取
-  useEffect(() => {
-    loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  const getShownMsgCount = useCallback((item) => {
+    const n = Number(item?.msg_count);
+    const shown = Number.isFinite(n) ? n : 0;
+    return shown;
+  }, []);
 
-  // 说明：此处仅关注 showMatched / diary / pairUsers 切换逻辑，避免函数重建导致重复拉取
-  useEffect(() => {
-    if (!diary) return;
-
-    const hasPair = !!(pairUsers?.main?.id && pairUsers?.matched?.id);
-    if (showMatched && (hasPair || pairedUserId)) {
-      loadMatchedDiaries();
-      return;
-    }
-
-    loadMyDiaries();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showMatched, diary, pairedUserId, pairUsers]);
-
-  // 记录详情切换时，让左侧/抽屉列表自动定位到“当前记录”位置，避免每次从顶部开始翻。
-  useEffect(() => {
-    if (!currentDiaryId) return;
-
-    const t = setTimeout(() => {
-      const el = activeDiaryItemRef.current;
-      if (!el) return;
-
-      const container = diaryListScrollRef.current;
-      if (container) {
-        const c = container.getBoundingClientRect();
-        const e = el.getBoundingClientRect();
-        const inView = e.top >= c.top && e.bottom <= c.bottom;
-        if (inView) return;
-      }
-
-      el.scrollIntoView({ block: 'center', inline: 'nearest' });
-    }, 0);
-
-    return () => clearTimeout(t);
-  }, [currentDiaryId, diaryList, showMatched, drawerVisible]);
-
-  const loadData = async () => {
-    try {
-      setLoading(true);
-      setPageError('');
-      const diaryRes = await diaryAPI.get(id);
-      const currentDiary = diaryRes.data;
-      setDiary(currentDiary);
-
-      setPairedUserId(null);
-      setPairUsers({ main: null, matched: null });
-
-      await Promise.all([
-        loadMyDiaries(currentDiary.user_id),
-        loadPairedUser(currentDiary.account_id, currentDiary.user_id),
-        loadHistory(),
-      ]);
-    } catch (error) {
-      setDiary(null);
-      setDiaryList([]);
-      setHistory([]);
-      setShowMatched(false);
-      setPairedUserId(null);
-      setPairUsers({ main: null, matched: null });
-      setListError('');
-      setPairError('');
-      setHistoryError('');
-      setPageError(getErrorMessage(error));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const getDiaryTimestamp = (item) => {
-    // 说明：
-    // - 后端（尤其是 SQLite）可能返回不带时区的 datetime 字符串；
-    // - 直接 new Date(...) 会把它当作本地时间解析，导致排序/展示偏移；
-    // - 这里统一按 parseServerDate 的规则解析（无时区视为 UTC）。
+  const getDiaryTimestamp = useCallback((item) => {
     const raw = item?.created_date || item?.created_time;
     const d = parseServerDate(raw);
     if (d) return d.getTime();
     const fallback = new Date(raw);
     if (Number.isNaN(fallback.getTime())) return 0;
     return fallback.getTime();
-  };
+  }, []);
 
-  const getDiaryTimestampForExport = (item) => {
+  const getDiaryTimestampForExport = useCallback((item) => {
     const raw = item?.created_time || item?.created_date;
     const d = parseServerDate(raw);
     if (!d) return 0;
     return d.getTime();
-  };
+  }, []);
 
-  const loadMyDiaries = async (userId = null) => {
+  const loadMyDiaries = useCallback(async (userId) => {
     setListLoading(true);
     setListError('');
     try {
-      const uid = userId || diary.user_id;
+      const uid = Number(userId);
+      if (!Number.isFinite(uid) || uid <= 0) {
+        setDiaryList([]);
+        return;
+      }
+
       const listRes = await diaryAPI.list({ user_id: uid, limit: 100 });
       const sorted = (listRes.data || []).slice().sort((a, b) => (
         getDiaryTimestamp(b) - getDiaryTimestamp(a)
@@ -203,9 +136,9 @@ export default function DiaryDetail() {
     } finally {
       setListLoading(false);
     }
-  };
+  }, [getDiaryTimestamp]);
 
-  const loadPairedUser = async (accountId, currentUserId) => {
+  const loadPairedUser = useCallback(async (accountId, currentUserId) => {
     setPairLoading(true);
     setPairError('');
     try {
@@ -236,9 +169,9 @@ export default function DiaryDetail() {
     } finally {
       setPairLoading(false);
     }
-  };
+  }, []);
 
-  const loadMatchedDiaries = async () => {
+  const loadMatchedDiaries = useCallback(async () => {
     const ids = new Set();
     if (pairUsers?.main?.id) ids.add(pairUsers.main.id);
     if (pairUsers?.matched?.id) ids.add(pairUsers.matched.id);
@@ -247,7 +180,7 @@ export default function DiaryDetail() {
 
     const userIds = Array.from(ids).filter(Boolean);
     if (userIds.length <= 1) {
-      await loadMyDiaries(userIds[0] || diary.user_id);
+      await loadMyDiaries(userIds[0] || diary?.user_id);
       return;
     }
 
@@ -276,13 +209,13 @@ export default function DiaryDetail() {
     } finally {
       setListLoading(false);
     }
-  };
+  }, [pairUsers, diary, pairedUserId, loadMyDiaries, getDiaryTimestamp]);
 
-  const loadHistory = async () => {
+  const loadHistory = useCallback(async (diaryId) => {
     setHistoryLoading(true);
     setHistoryError('');
     try {
-      const historyRes = await diaryHistoryAPI.list(id);
+      const historyRes = await diaryHistoryAPI.list(diaryId);
       setHistory(historyRes.data);
     } catch (error) {
       setHistory([]);
@@ -290,7 +223,78 @@ export default function DiaryDetail() {
     } finally {
       setHistoryLoading(false);
     }
-  };
+  }, []);
+
+  const loadData = useCallback(async () => {
+    try {
+      setLoading(true);
+      setPageError('');
+      const diaryRes = await diaryAPI.get(id);
+      const currentDiary = diaryRes.data;
+      setDiary(currentDiary);
+
+      setPairedUserId(null);
+      setPairUsers({ main: null, matched: null });
+
+      await Promise.all([
+        loadMyDiaries(currentDiary.user_id),
+        loadPairedUser(currentDiary.account_id, currentDiary.user_id),
+        loadHistory(currentDiary?.id ?? id),
+      ]);
+    } catch (error) {
+      setDiary(null);
+      setDiaryList([]);
+      setHistory([]);
+      setShowMatched(false);
+      setPairedUserId(null);
+      setPairUsers({ main: null, matched: null });
+      setListError('');
+      setPairError('');
+      setHistoryError('');
+      setPageError(getErrorMessage(error));
+    } finally {
+      setLoading(false);
+    }
+  }, [id, loadHistory, loadMyDiaries, loadPairedUser]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  useEffect(() => {
+    if (!diary) return;
+
+    const hasPair = !!(pairUsers?.main?.id && pairUsers?.matched?.id);
+    if (showMatched && (hasPair || pairedUserId)) {
+      loadMatchedDiaries();
+      return;
+    }
+
+    loadMyDiaries(diary.user_id);
+  }, [showMatched, diary, pairUsers, pairedUserId, loadMatchedDiaries, loadMyDiaries]);
+
+  useEffect(() => {
+    if (!currentDiaryId) return;
+    if (!Array.isArray(diaryList) || diaryList.length === 0) return;
+    if (isMobile && !drawerVisible) return;
+
+    const t = setTimeout(() => {
+      const el = activeDiaryItemRef.current;
+      if (!el) return;
+
+      const container = diaryListScrollRef.current;
+      if (container) {
+        const c = container.getBoundingClientRect();
+        const e = el.getBoundingClientRect();
+        const inView = e.top >= c.top && e.bottom <= c.bottom;
+        if (inView) return;
+      }
+
+      el.scrollIntoView({ block: 'center', inline: 'nearest' });
+    }, 0);
+
+    return () => clearTimeout(t);
+  }, [currentDiaryId, diaryList, isMobile, drawerVisible]);
 
   const refreshDiary = async () => {
     try {
@@ -381,6 +385,10 @@ export default function DiaryDetail() {
   const [failedImageIds, setFailedImageIds] = useState({});
   useEffect(() => {
     // 切换记录时清空图片失败状态，避免复用旧的 error 状态
+    if (diary?.id == null) {
+      setFailedImageIds({});
+      return;
+    }
     setFailedImageIds({});
   }, [diary?.id]);
 
@@ -396,7 +404,9 @@ export default function DiaryDetail() {
     let lastIndex = 0;
     let match;
 
-    while ((match = re.exec(text)) !== null) {
+    for (;;) {
+      match = re.exec(text);
+      if (match === null) break;
       const start = match.index;
       const end = start + match[0].length;
       if (start > lastIndex) {
@@ -840,6 +850,14 @@ export default function DiaryDetail() {
                     <div style={{ fontSize: '12px', color: token.colorTextSecondary, marginTop: 4 }}>
                       <ClockCircleOutlined style={{ marginRight: 4 }} />
                       最后修改 {modifiedText} · {wordCount} 字
+                      <Tag
+                        color="gold"
+                        data-testid="diary-list-account-tag"
+                        style={{ marginLeft: 8, marginInlineEnd: 0 }}
+                      >
+                        A{item?.account_id ?? '-'}
+                      </Tag>
+                      <Tag color="volcano" style={{ marginLeft: 8, marginInlineEnd: 0 }}>留言 {getShownMsgCount(item)}</Tag>
                     </div>
                   </Card>
                 </div>
@@ -922,6 +940,13 @@ export default function DiaryDetail() {
                 <Tag icon={<CalendarOutlined />} color="blue" style={{ padding: isMobile ? '2px 10px' : '4px 12px', fontSize: isMobile ? '13px' : '14px' }}>
                   {diary.created_date}
                 </Tag>
+                <Tag
+                  color="gold"
+                  data-testid="diary-account-tag"
+                  style={{ padding: isMobile ? '2px 10px' : '4px 12px', fontSize: isMobile ? '13px' : '14px' }}
+                >
+                  账号 A{diary?.account_id ?? '-'}
+                </Tag>
                 {diary.mood && (
                   <Tag icon={<SmileOutlined />} color="orange" style={{ padding: isMobile ? '2px 10px' : '4px 12px', fontSize: isMobile ? '13px' : '14px' }}>
                     {diary.mood}
@@ -937,6 +962,9 @@ export default function DiaryDetail() {
                 </Tag>
                 <Tag color="geekblue" style={{ padding: isMobile ? '2px 10px' : '4px 12px', fontSize: isMobile ? '13px' : '14px' }}>
                   字数：{contentWordCount} 字
+                </Tag>
+                <Tag color="volcano" style={{ padding: isMobile ? '2px 10px' : '4px 12px', fontSize: isMobile ? '13px' : '14px' }}>
+                  留言 {getShownMsgCount(diary)}
                 </Tag>
               </Space>
 
@@ -1232,6 +1260,7 @@ export default function DiaryDetail() {
                             </div>
                             <div style={{ fontSize: 12, color: token.colorTextSecondary }}>
                               <Tag color={color} style={{ marginRight: 6 }}>{getUsernameForExport(item)}</Tag>
+                              <Tag color="volcano" style={{ marginRight: 6, marginInlineEnd: 6 }}>留言 {getShownMsgCount(item)}</Tag>
                               <span>{item?.created_date || '-'}</span>
                             </div>
                           </div>

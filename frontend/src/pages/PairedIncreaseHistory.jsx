@@ -13,6 +13,18 @@ const { Title, Text } = Typography;
 
 const HISTORY_LIMIT = 300;
 
+function getShownMsgCount(item) {
+  const n = Number(item?.msg_count);
+  const shown = Number.isFinite(n) ? n : 0;
+  return shown;
+}
+
+function getShownAccountIdText(item) {
+  const n = Number(item?.account_id);
+  const shown = Number.isFinite(n) ? n : null;
+  return shown ? String(shown) : '-';
+}
+
 export default function PairedIncreaseHistory() {
   const navigate = useNavigate();
   const screens = Grid.useBreakpoint();
@@ -186,11 +198,13 @@ export default function PairedIncreaseHistory() {
                   <List.Item.Meta
                     title={(
                       <Space wrap size={8}>
+                        <Tag color="gold" title={`账号 ${getShownAccountIdText(item)}`}>A{getShownAccountIdText(item)}</Tag>
                         <Tag color="magenta">{authorText}</Tag>
                         <Tag color="blue">{item?.created_date || '-'}</Tag>
                         {showInsertedAt && <Tag color="cyan">入库 {insertedAtText}</Tag>}
                         {updatedAtText && <Tag color="purple">更新 {updatedAtText}</Tag>}
                         <Tag color="geekblue">{wordCount} 字</Tag>
+                        <Tag color="volcano">留言 {getShownMsgCount(item)}</Tag>
                         <span style={{ fontWeight: 500 }}>{item?.title || '无标题'}</span>
                       </Space>
                     )}

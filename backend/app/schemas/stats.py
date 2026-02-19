@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
@@ -14,6 +14,7 @@ class StatsOverviewResponse(BaseModel):
     total_accounts: int
     total_users: int
     paired_diaries_count: int
+    total_msg_count: int
     last_sync_time: datetime | None = None
 
 
@@ -52,3 +53,28 @@ class StatsDashboardResponse(BaseModel):
     overview: StatsOverviewResponse
     accounts: list[AccountResponse] = Field(default_factory=list)
     latest_paired_diaries: StatsDashboardLatestPairedDiariesResponse | None = None
+
+
+class StatsMsgCountIncreaseItem(BaseModel):
+    """窗口内留言数增量明细（按 account_id + diary_id 聚合）。"""
+
+    account_id: int
+    diary_id: int
+    delta: int
+
+    account_email: str | None = None
+    account_user_name: str | None = None
+    title: str | None = None
+    created_date: date | None = None
+    msg_count: int = 0
+    last_event_at: datetime | None = None
+
+
+class StatsMsgCountIncreaseResponse(BaseModel):
+    """窗口聚合：留言数增量合计 + 明细列表。"""
+
+    total_delta: int
+    limit: int = 20
+    items: list[StatsMsgCountIncreaseItem] = Field(default_factory=list)
+    since_time: datetime
+    until_time: datetime | None = None

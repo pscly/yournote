@@ -17,6 +17,7 @@ class DiaryAttachments(BaseModel):
 
 class DiaryResponse(BaseModel):
     """日记响应模型"""
+
     id: int
     nideriji_diary_id: int
     user_id: int
@@ -29,6 +30,7 @@ class DiaryResponse(BaseModel):
     mood: str | None
     space: str | None
     ts: int | None
+    msg_count: int = 0
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

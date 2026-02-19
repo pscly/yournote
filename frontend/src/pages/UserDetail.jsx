@@ -15,6 +15,18 @@ function formatDateTime(value) {
   return text === '-' ? '未知' : text;
 }
 
+function getShownMsgCount(item) {
+  const n = Number(item?.msg_count);
+  const shown = Number.isFinite(n) ? n : 0;
+  return shown;
+}
+
+function getShownAccountIdText(item) {
+  const n = Number(item?.account_id);
+  const shown = Number.isFinite(n) ? n : '-';
+  return shown;
+}
+
 export default function UserDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -28,6 +40,15 @@ export default function UserDetail() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  const showAccountInDiaryList = useMemo(() => {
+    const ids = new Set();
+    (diaries || []).forEach((d) => {
+      const n = Number(d?.account_id);
+      if (Number.isFinite(n) && n > 0) ids.add(n);
+    });
+    return ids.size > 1;
+  }, [diaries]);
 
   const loadPairedRecord = useCallback(async (currentUserId) => {
     if (!currentUserId || Number.isNaN(currentUserId)) return null;
@@ -150,8 +171,22 @@ export default function UserDetail() {
   };
 
   const columns = useMemo(() => {
-    return [
-      { title: '日期', dataIndex: 'created_date', key: 'date', width: 120 },    
+    const cols = [
+      { title: '日期', dataIndex: 'created_date', key: 'date', width: 120 },
+      ...(showAccountInDiaryList ? [
+        {
+          title: '账号',
+          key: 'account_id',
+          width: 90,
+          align: 'center',
+          render: (_, record) => {
+            const text = getShownAccountIdText(record);
+            return (
+              <Tag color="gold" title={`账号 ${text}`}>A{text}</Tag>
+            );
+          },
+        },
+      ] : []),
       { title: '标题', dataIndex: 'title', key: 'title', width: 220, render: (v) => v || '-' },
       {
         title: '内容',
@@ -175,9 +210,17 @@ export default function UserDetail() {
           return <Tag color="geekblue">{n} 字</Tag>;
         },
       },
+      {
+        title: '留言',
+        key: 'msg_count',
+        width: 110,
+        align: 'right',
+        render: (_, record) => <Tag color="volcano">留言 {getShownMsgCount(record)}</Tag>,
+      },
       { title: '心情', dataIndex: 'mood', key: 'mood', width: 90, render: (m) => (m ? <Tag>{m}</Tag> : '-') },
     ];
-  }, [navigate, token]);
+    return cols;
+  }, [navigate, token, showAccountInDiaryList]);
 
   return (
     <Page>
@@ -246,19 +289,23 @@ export default function UserDetail() {
                   <List
                     dataSource={diaries}
                     locale={{ emptyText: '暂无记录' }}
-                    renderItem={(item) => (
-                      <Card
-                        hoverable
-                        style={{ marginBottom: 12 }}
-                        onClick={() => navigate(`/diary/${item.id}`)}
-                        bodyStyle={{ padding: 14 }}
-                      >
-                        <Space direction="vertical" size={8} style={{ width: '100%' }}>
-                          <Space wrap size={8}>
-                            <Tag color="blue">{item.created_date || '未知日期'}</Tag>
-                            <Tag color="geekblue">{getDiaryWordStats(item).content.no_whitespace} 字</Tag>
-                            {item.mood && <Tag>{item.mood}</Tag>}
-                          </Space>
+                  renderItem={(item) => (
+                    <Card
+                      hoverable
+                      style={{ marginBottom: 12 }}
+                      onClick={() => navigate(`/diary/${item.id}`)}
+                      bodyStyle={{ padding: 14 }}
+                    >
+                      <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                        <Space wrap size={8}>
+                          {showAccountInDiaryList && (
+                            <Tag color="gold" title={`账号 ${getShownAccountIdText(item)}`}>A{getShownAccountIdText(item)}</Tag>
+                          )}
+                          <Tag color="blue">{item.created_date || '未知日期'}</Tag>
+                          <Tag color="geekblue">{getDiaryWordStats(item).content.no_whitespace} 字</Tag>
+                          <Tag color="volcano">留言 {getShownMsgCount(item)}</Tag>
+                          {item.mood && <Tag>{item.mood}</Tag>}
+                        </Space>
                           <Text strong>{item.title || '无标题'}</Text>
                           <Paragraph style={{ margin: 0, color: token.colorTextSecondary }} ellipsis={{ rows: 2 }}>
                             {item.content || '-'}

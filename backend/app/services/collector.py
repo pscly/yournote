@@ -14,10 +14,10 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 import httpx
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
@@ -26,6 +26,7 @@ from ..models import (
     Diary,
     DiaryDetailFetch,
     DiaryHistory,
+    DiaryMsgCountEvent,
     PairedRelationship,
     SyncLog,
     User,
@@ -40,10 +41,13 @@ logger = logging.getLogger(__name__)
 
 def _retry_suffix(exc: BaseException) -> str:
     attempts = getattr(exc, "yournote_attempts", None)
-    try:
-        attempts_i = int(attempts)
-    except Exception:
+    if attempts is None:
         attempts_i = 0
+    else:
+        try:
+            attempts_i = int(attempts)
+        except Exception:
+            attempts_i = 0
     return f"（已重试 {attempts_i} 次）" if attempts_i > 1 else ""
 
 
@@ -59,15 +63,18 @@ class CollectorService:
         self.db = db
 
     def _nideriji_origin(self) -> str:
-        base = (getattr(settings, "nideriji_api_base_url", None) or "https://nideriji.cn").strip().rstrip("/")
+        base = (
+            (getattr(settings, "nideriji_api_base_url", None) or "https://nideriji.cn")
+            .strip()
+            .rstrip("/")
+        )
         return base or "https://nideriji.cn"
 
     def _build_headers(self, auth_token: str) -> dict[str, str]:
         origin = self._nideriji_origin()
         return {
             "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36"
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             ),
             "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
             "auth": auth_token,
@@ -80,8 +87,7 @@ class CollectorService:
         origin = self._nideriji_origin()
         return {
             "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36"
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             ),
             "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
             "origin": origin,
@@ -106,12 +112,19 @@ class CollectorService:
                 url=url,
                 data=payload,
                 headers=self._build_login_headers(),
-                max_attempts=int(getattr(settings, "nideriji_http_max_attempts", 3) or 3),
-                backoff_seconds=float(getattr(settings, "nideriji_http_retry_backoff_seconds", 0.5) or 0.5),
-                max_backoff_seconds=float(
-                    getattr(settings, "nideriji_http_retry_max_backoff_seconds", 5.0) or 5.0
+                max_attempts=int(
+                    getattr(settings, "nideriji_http_max_attempts", 3) or 3
                 ),
-                jitter_ratio=float(getattr(settings, "nideriji_http_retry_jitter_ratio", 0.1) or 0.1),
+                backoff_seconds=float(
+                    getattr(settings, "nideriji_http_retry_backoff_seconds", 0.5) or 0.5
+                ),
+                max_backoff_seconds=float(
+                    getattr(settings, "nideriji_http_retry_max_backoff_seconds", 5.0)
+                    or 5.0
+                ),
+                jitter_ratio=float(
+                    getattr(settings, "nideriji_http_retry_jitter_ratio", 0.1) or 0.1
+                ),
             )
         resp.raise_for_status()
         data: Any = resp.json()
@@ -143,6 +156,72 @@ class CollectorService:
             return True
         return self._content_len(content) < self._DETAIL_CONTENT_MIN_LEN
 
+    def _normalize_msg_count(self, value: Any) -> int:
+        try:
+            if value is None:
+                return 0
+            if isinstance(value, bool):
+                return int(value)
+            n = int(value)
+            return n if n >= 0 else 0
+        except Exception:
+            return 0
+
+    async def _cas_update_diary_msg_count(
+        self,
+        *,
+        diary: Diary,
+        account_id: int,
+        new_msg_count: int,
+        source: str,
+        sync_log_id: int | None,
+    ) -> bool:
+        diary_id = getattr(diary, "id", None)
+        if not isinstance(diary_id, int) or diary_id <= 0:
+            return False
+
+        old_is_null = getattr(diary, "msg_count", None) is None
+        old_msg_count = self._normalize_msg_count(getattr(diary, "msg_count", None))
+        new_msg_count_norm = self._normalize_msg_count(new_msg_count)
+
+        if (not old_is_null) and new_msg_count_norm == old_msg_count:
+            return False
+
+        where_msg_count = Diary.msg_count == old_msg_count
+        if old_msg_count == 0:
+            where_msg_count = or_(Diary.msg_count == 0, Diary.msg_count.is_(None))
+
+        stmt = (
+            update(Diary)
+            .where(
+                Diary.id == diary_id,
+                Diary.account_id == account_id,
+                where_msg_count,
+            )
+            .values(msg_count=new_msg_count_norm)
+            .execution_options(synchronize_session="fetch")
+        )
+        result = await self.db.execute(stmt)
+        rowcount = int(getattr(result, "rowcount", 0) or 0)
+        if rowcount != 1:
+            return False
+
+        delta = new_msg_count_norm - old_msg_count
+        if delta > 0:
+            self.db.add(
+                DiaryMsgCountEvent(
+                    account_id=account_id,
+                    diary_id=diary_id,
+                    sync_log_id=sync_log_id,
+                    old_msg_count=old_msg_count,
+                    new_msg_count=new_msg_count_norm,
+                    delta=delta,
+                    source=source,
+                )
+            )
+
+        return True
+
     async def _get_account_diary_totals(
         self,
         *,
@@ -168,13 +247,20 @@ class CollectorService:
         )
         return int(my_total or 0), int(paired_total or 0)
 
-    async def _get_detail_fetch_state_map(self, diary_db_ids: list[int]) -> dict[int, DiaryDetailFetch]:
+    async def _get_detail_fetch_state_map(
+        self, diary_db_ids: list[int]
+    ) -> dict[int, DiaryDetailFetch]:
         if not diary_db_ids:
             return {}
         result = await self.db.execute(
             select(DiaryDetailFetch).where(DiaryDetailFetch.diary_id.in_(diary_db_ids))
         )
-        return {row.diary_id: row for row in result.scalars().all()}
+        mapping: dict[int, DiaryDetailFetch] = {}
+        for row in result.scalars().all():
+            did = getattr(row, "diary_id", None)
+            if isinstance(did, int):
+                mapping[did] = row
+        return mapping
 
     async def _upsert_detail_fetch_state(
         self,
@@ -200,15 +286,16 @@ class CollectorService:
             )
             self.db.add(state)
 
-        state.nideriji_diary_id = diary.nideriji_diary_id
-        state.last_detail_at = now
-        state.last_detail_success = bool(success)
-        state.last_detail_is_short = bool(is_short) if success else False
-        state.last_detail_content_len = content_len
-        state.last_detail_error = error
-        state.attempts = (state.attempts or 0) + 1
+        setattr(state, "nideriji_diary_id", diary.nideriji_diary_id)
+        setattr(state, "last_detail_at", now)
+        setattr(state, "last_detail_success", bool(success))
+        setattr(state, "last_detail_is_short", bool(is_short) if success else False)
+        setattr(state, "last_detail_content_len", content_len)
+        setattr(state, "last_detail_error", error)
+        attempts = int(getattr(state, "attempts", 0) or 0)
+        setattr(state, "attempts", attempts + 1)
 
-    async def fetch_nideriji_data(self, auth_token: str) -> dict:
+    async def fetch_nideriji_data(self, auth_token: str) -> dict[str, Any]:
         """从 nideriji API 获取数据"""
         origin = self._nideriji_origin()
         url = f"{origin}/api/v2/sync/"
@@ -222,17 +309,24 @@ class CollectorService:
                 method="POST",
                 url=url,
                 headers=headers,
-                max_attempts=int(getattr(settings, "nideriji_http_max_attempts", 3) or 3),
-                backoff_seconds=float(getattr(settings, "nideriji_http_retry_backoff_seconds", 0.5) or 0.5),
-                max_backoff_seconds=float(
-                    getattr(settings, "nideriji_http_retry_max_backoff_seconds", 5.0) or 5.0
+                max_attempts=int(
+                    getattr(settings, "nideriji_http_max_attempts", 3) or 3
                 ),
-                jitter_ratio=float(getattr(settings, "nideriji_http_retry_jitter_ratio", 0.1) or 0.1),
+                backoff_seconds=float(
+                    getattr(settings, "nideriji_http_retry_backoff_seconds", 0.5) or 0.5
+                ),
+                max_backoff_seconds=float(
+                    getattr(settings, "nideriji_http_retry_max_backoff_seconds", 5.0)
+                    or 5.0
+                ),
+                jitter_ratio=float(
+                    getattr(settings, "nideriji_http_retry_jitter_ratio", 0.1) or 0.1
+                ),
             )
         response.raise_for_status()
         return response.json()
 
-    async def fetch_nideriji_data_for_account(self, account: Account) -> dict:
+    async def fetch_nideriji_data_for_account(self, account: Account) -> dict[str, Any]:
         """按账号获取 sync 数据，并在 token 失效时自动重新登录刷新 token。
 
         说明：
@@ -240,24 +334,36 @@ class CollectorService:
         - 成功后会把新 token 写回 account.auth_token（由调用方决定何时 commit）
         """
         try:
-            return await self.fetch_nideriji_data(account.auth_token)
+            auth_token = getattr(account, "auth_token", "")
+            if not isinstance(auth_token, str):
+                auth_token = str(auth_token)
+            return await self.fetch_nideriji_data(auth_token)
         except httpx.HTTPStatusError as e:
             status_code = getattr(getattr(e, "response", None), "status_code", None)
+            email_val = getattr(account, "email", None)
+            email: str | None = email_val if isinstance(email_val, str) else None
+            password_val = getattr(account, "login_password", None)
+            login_password: str | None = (
+                password_val if isinstance(password_val, str) else None
+            )
             can_relogin = (
                 isinstance(status_code, int)
                 and status_code in (401, 403)
-                and isinstance(account.email, str)
-                and account.email.strip()
-                and isinstance(getattr(account, "login_password", None), str)
-                and (account.login_password or "").strip()
+                and isinstance(email, str)
+                and email.strip()
+                and isinstance(login_password, str)
+                and login_password.strip()
             )
             if not can_relogin:
                 raise
 
-            new_token = await self.login_nideriji(account.email, account.login_password)
-            account.auth_token = new_token
+            if not email or not login_password:
+                raise
+
+            new_token = await self.login_nideriji(email, login_password)
+            setattr(account, "auth_token", new_token)
             await self.db.flush()
-            return await self.fetch_nideriji_data(account.auth_token)
+            return await self.fetch_nideriji_data(new_token)
 
     async def fetch_nideriji_diaries_by_ids(
         self,
@@ -293,12 +399,23 @@ class CollectorService:
                     url=url,
                     data=payload,
                     headers=headers,
-                    max_attempts=int(getattr(settings, "nideriji_http_max_attempts", 3) or 3),
-                    backoff_seconds=float(getattr(settings, "nideriji_http_retry_backoff_seconds", 0.5) or 0.5),
-                    max_backoff_seconds=float(
-                        getattr(settings, "nideriji_http_retry_max_backoff_seconds", 5.0) or 5.0
+                    max_attempts=int(
+                        getattr(settings, "nideriji_http_max_attempts", 3) or 3
                     ),
-                    jitter_ratio=float(getattr(settings, "nideriji_http_retry_jitter_ratio", 0.1) or 0.1),
+                    backoff_seconds=float(
+                        getattr(settings, "nideriji_http_retry_backoff_seconds", 0.5)
+                        or 0.5
+                    ),
+                    max_backoff_seconds=float(
+                        getattr(
+                            settings, "nideriji_http_retry_max_backoff_seconds", 5.0
+                        )
+                        or 5.0
+                    ),
+                    jitter_ratio=float(
+                        getattr(settings, "nideriji_http_retry_jitter_ratio", 0.1)
+                        or 0.1
+                    ),
                 )
                 resp.raise_for_status()
                 data: Any = resp.json()
@@ -322,7 +439,9 @@ class CollectorService:
 
         return results
 
-    def _merge_diary_data(self, base: dict[str, Any], detail: dict[str, Any]) -> dict[str, Any]:
+    def _merge_diary_data(
+        self, base: dict[str, Any], detail: dict[str, Any]
+    ) -> dict[str, Any]:
         """用详情数据补全/覆盖主接口返回的简略字段。"""
         merged = dict(base)
         for key in (
@@ -354,16 +473,21 @@ class CollectorService:
         diary = result.scalar_one_or_none()
         if not diary:
             raise ValueError(f"Diary {diary_id} not found")
+        diary_any: Any = cast(Any, diary)
 
-        result = await self.db.execute(select(Account).where(Account.id == diary.account_id))
+        result = await self.db.execute(
+            select(Account).where(Account.id == diary.account_id)
+        )
         account = result.scalar_one_or_none()
         if not account:
             raise ValueError(f"Account {diary.account_id} not found")
+        account_any: Any = cast(Any, account)
 
         result = await self.db.execute(select(User).where(User.id == diary.user_id))
         user = result.scalar_one_or_none()
         if not user:
             raise ValueError(f"User {diary.user_id} not found")
+        user_any: Any = cast(Any, user)
 
         refresh_info: dict[str, Any] = {
             "min_len_threshold": self._DETAIL_CONTENT_MIN_LEN,
@@ -381,7 +505,7 @@ class CollectorService:
             "skipped_reason": None,
         }
 
-        rdata = await self.fetch_nideriji_data_for_account(account)
+        rdata = await self.fetch_nideriji_data_for_account(account_any)
         all_diaries: list[dict[str, Any]] = []
         for key in ("diaries", "diaries_paired"):
             value = rdata.get(key)
@@ -389,19 +513,24 @@ class CollectorService:
                 all_diaries.extend([d for d in value if isinstance(d, dict)])
 
         matched = None
+        nideriji_diary_id = int(getattr(diary_any, "nideriji_diary_id", 0) or 0)
         for d in all_diaries:
-            if d.get("id") == diary.nideriji_diary_id:
+            if d.get("id") == nideriji_diary_id:
                 matched = d
                 break
 
         diary_data: dict[str, Any] | None = matched
         if diary_data:
             refresh_info["sync_found"] = True
-            refresh_info["sync_content_len"] = self._content_len(diary_data.get("content"))
+            refresh_info["sync_content_len"] = self._content_len(
+                diary_data.get("content")
+            )
             refresh_info["sync_is_simple"] = bool(diary_data.get("is_simple") == 1)
 
         should_try_detail = False
-        if diary_data and self._needs_detail_fetch(diary_data.get("content"), diary_data.get("is_simple")):
+        if diary_data and self._needs_detail_fetch(
+            diary_data.get("content"), diary_data.get("is_simple")
+        ):
             should_try_detail = True
         if not diary_data:
             # sync 没找到该日记：视为“不合适”，直接尝试详情接口
@@ -410,11 +539,11 @@ class CollectorService:
         if should_try_detail:
             refresh_info["used_all_by_ids"] = True
             details_by_id = await self.fetch_nideriji_diaries_by_ids(
-                auth_token=account.auth_token,
-                diary_owner_userid=user.nideriji_userid,
-                diary_ids=[diary.nideriji_diary_id],
+                auth_token=str(getattr(account_any, "auth_token", "") or ""),
+                diary_owner_userid=int(getattr(user_any, "nideriji_userid", 0) or 0),
+                diary_ids=[nideriji_diary_id],
             )
-            detail = details_by_id.get(diary.nideriji_diary_id)
+            detail = details_by_id.get(nideriji_diary_id)
             if detail:
                 refresh_info["all_by_ids_returned"] = True
                 if diary_data:
@@ -424,7 +553,9 @@ class CollectorService:
 
                 detail_content_len = self._content_len(diary_data.get("content"))
                 refresh_info["detail_content_len"] = detail_content_len
-                refresh_info["detail_is_short"] = detail_content_len < self._DETAIL_CONTENT_MIN_LEN
+                refresh_info["detail_is_short"] = (
+                    detail_content_len < self._DETAIL_CONTENT_MIN_LEN
+                )
 
                 await self._upsert_detail_fetch_state(
                     diary,
@@ -464,64 +595,104 @@ class CollectorService:
             new_mood_color = diary_data.get("mood_color")
             new_space = diary_data.get("space", "")
             new_is_simple = diary_data.get("is_simple", 0)
-            new_msg_count = diary_data.get("msg_count", 0)
+            new_msg_count = self._normalize_msg_count(diary_data.get("msg_count", 0))
             new_ts = diary_data.get("ts")
 
-            changed = any(
-                [
-                    diary.title != new_title,
-                    (diary.content or "") != new_content,
-                    diary.created_time != created_time,
-                    (diary.weather or "") != new_weather,
-                    (diary.mood or "") != new_mood,
-                    diary.mood_id != new_mood_id,
-                    diary.mood_color != new_mood_color,
-                    (diary.space or "") != new_space,
-                    diary.is_simple != new_is_simple,
-                    diary.msg_count != new_msg_count,
-                    diary.ts != new_ts,
-                ]
+            msg_updated = await self._cas_update_diary_msg_count(
+                diary=diary_any,
+                account_id=int(getattr(diary_any, "account_id", 0) or 0),
+                new_msg_count=new_msg_count,
+                source="refresh",
+                sync_log_id=None,
             )
 
             # 强制刷新也不允许“短内容”覆盖“完整内容”
             if (
                 self._content_len(new_content) < self._DETAIL_CONTENT_MIN_LEN
-                and self._content_len(diary.content) >= self._DETAIL_CONTENT_MIN_LEN
+                and self._content_len(getattr(diary_any, "content", None))
+                >= self._DETAIL_CONTENT_MIN_LEN
             ):
-                refresh_info["updated"] = False
-                refresh_info["update_source"] = None
-                refresh_info["skipped_reason"] = "短内容不会覆盖数据库中已存在的完整内容"
+                if msg_updated:
+                    refresh_info["updated"] = True
+                    if (
+                        refresh_info["used_all_by_ids"]
+                        and refresh_info["all_by_ids_returned"]
+                    ):
+                        refresh_info["update_source"] = "all_by_ids"
+                    elif refresh_info["sync_found"]:
+                        refresh_info["update_source"] = "sync"
+                    refresh_info["skipped_reason"] = (
+                        "短内容不会覆盖数据库中已存在的完整内容（已仅更新留言数）"
+                    )
+                else:
+                    refresh_info["updated"] = False
+                    refresh_info["update_source"] = None
+                    refresh_info["skipped_reason"] = (
+                        "短内容不会覆盖数据库中已存在的完整内容"
+                    )
                 return diary, refresh_info
 
-            if not changed:
-                refresh_info["updated"] = False
-                refresh_info["update_source"] = None
-                refresh_info["skipped_reason"] = "内容未发生变化"
+            changed_non_msg = any(
+                [
+                    getattr(diary_any, "title", None) != new_title,
+                    (getattr(diary_any, "content", "") or "") != new_content,
+                    getattr(diary_any, "created_time", None) != created_time,
+                    (getattr(diary_any, "weather", "") or "") != new_weather,
+                    (getattr(diary_any, "mood", "") or "") != new_mood,
+                    getattr(diary_any, "mood_id", None) != new_mood_id,
+                    getattr(diary_any, "mood_color", None) != new_mood_color,
+                    (getattr(diary_any, "space", "") or "") != new_space,
+                    getattr(diary_any, "is_simple", None) != new_is_simple,
+                    getattr(diary_any, "ts", None) != new_ts,
+                ]
+            )
+
+            if not changed_non_msg:
+                if msg_updated:
+                    refresh_info["updated"] = True
+                    if (
+                        refresh_info["used_all_by_ids"]
+                        and refresh_info["all_by_ids_returned"]
+                    ):
+                        refresh_info["update_source"] = "all_by_ids"
+                    elif refresh_info["sync_found"]:
+                        refresh_info["update_source"] = "sync"
+                    refresh_info["skipped_reason"] = "仅留言数发生变化"
+                else:
+                    refresh_info["updated"] = False
+                    refresh_info["update_source"] = None
+                    refresh_info["skipped_reason"] = "内容未发生变化"
                 return diary, refresh_info
 
-            if diary.content != new_content or diary.title != new_title:
+            old_content = getattr(diary_any, "content", None)
+            old_title = getattr(diary_any, "title", None)
+            old_content_text = old_content or ""
+            old_title_text = old_title or ""
+
+            if old_content_text != new_content or old_title_text != new_title:
                 history = DiaryHistory(
-                    diary_id=diary.id,
-                    nideriji_diary_id=diary.nideriji_diary_id,
-                    title=diary.title,
-                    content=diary.content,
-                    weather=diary.weather,
-                    mood=diary.mood,
-                    ts=diary.ts,
+                    diary_id=int(getattr(diary_any, "id", 0) or 0),
+                    nideriji_diary_id=int(
+                        getattr(diary_any, "nideriji_diary_id", 0) or 0
+                    ),
+                    title=old_title,
+                    content=old_content,
+                    weather=getattr(diary_any, "weather", None),
+                    mood=getattr(diary_any, "mood", None),
+                    ts=getattr(diary_any, "ts", None),
                 )
                 self.db.add(history)
 
-            diary.title = new_title
-            diary.content = new_content
-            diary.created_time = created_time
-            diary.weather = new_weather
-            diary.mood = new_mood
-            diary.mood_id = new_mood_id
-            diary.mood_color = new_mood_color
-            diary.space = new_space
-            diary.is_simple = new_is_simple
-            diary.msg_count = new_msg_count
-            diary.ts = new_ts
+            setattr(diary_any, "title", new_title)
+            setattr(diary_any, "content", new_content)
+            setattr(diary_any, "created_time", created_time)
+            setattr(diary_any, "weather", new_weather)
+            setattr(diary_any, "mood", new_mood)
+            setattr(diary_any, "mood_id", new_mood_id)
+            setattr(diary_any, "mood_color", new_mood_color)
+            setattr(diary_any, "space", new_space)
+            setattr(diary_any, "is_simple", new_is_simple)
+            setattr(diary_any, "ts", new_ts)
 
             # 判断本次更新来源（仅用于展示）
             if refresh_info["used_all_by_ids"] and refresh_info["all_by_ids_returned"]:
@@ -536,7 +707,7 @@ class CollectorService:
 
         return diary, refresh_info
 
-    async def sync_account(self, account_id: int) -> dict:
+    async def sync_account(self, account_id: int) -> dict[str, Any]:
         """同步单个账号的数据"""
         lock = _ACCOUNT_SYNC_LOCKS.get(account_id)
         if lock is None:
@@ -554,53 +725,66 @@ class CollectorService:
             log = await self._start_sync_log(account_id)
             # 先提交“running”日志，便于前端实时显示“正在更新中”。
             await self.db.commit()
+            sync_log_id = getattr(log, "id", None)
+            sync_log_id_int: int | None = (
+                sync_log_id if isinstance(sync_log_id, int) else None
+            )
 
             try:
                 rdata = await self.fetch_nideriji_data_for_account(account)
 
-                await self._save_user_info(rdata['user_config'], account_id)
+                await self._save_user_info(rdata["user_config"], account_id)
 
                 # 注意：_save_diaries 的返回值是“本次新增日记数”，并非“当前总数”。
                 # 仪表盘与同步日志展示需要的是“总数”，否则二次同步很容易显示为 0。
                 main_user = await self.db.scalar(
-                    select(User).where(User.nideriji_userid == rdata["user_config"]["userid"])
+                    select(User).where(
+                        User.nideriji_userid == rdata["user_config"]["userid"]
+                    )
                 )
 
-                if rdata['user_config'].get('paired_user_config'):
+                if rdata["user_config"].get("paired_user_config"):
                     await self._save_paired_user_info(
-                        rdata['user_config']['paired_user_config'],
-                        account_id
+                        rdata["user_config"]["paired_user_config"], account_id
                     )
 
                 _, prefetch_diary_ids_main = await self._save_diaries(
-                    rdata['diaries'],
+                    rdata["diaries"],
                     account_id,
-                    rdata['user_config']['userid'],
-                    account.auth_token,
+                    rdata["user_config"]["userid"],
+                    str(getattr(account, "auth_token", "") or ""),
+                    sync_log_id=sync_log_id_int,
                 )
 
                 prefetch_diary_ids: list[int] = list(prefetch_diary_ids_main or [])
-                if rdata.get('diaries_paired'):
-                    paired_user_id = rdata['user_config']['paired_user_config']['userid']
+                if rdata.get("diaries_paired"):
+                    paired_user_id = rdata["user_config"]["paired_user_config"][
+                        "userid"
+                    ]
                     _, prefetch_diary_ids_paired = await self._save_diaries(
-                        rdata['diaries_paired'],
+                        rdata["diaries_paired"],
                         account_id,
                         paired_user_id,
-                        account.auth_token,
+                        str(getattr(account, "auth_token", "") or ""),
+                        sync_log_id=sync_log_id_int,
                     )
                     prefetch_diary_ids.extend(list(prefetch_diary_ids_paired or []))
 
                 diaries_count = 0
                 paired_diaries_count = 0
-                if main_user and main_user.id is not None:
-                    diaries_count, paired_diaries_count = await self._get_account_diary_totals(
+                main_user_id = getattr(main_user, "id", None) if main_user else None
+                if isinstance(main_user_id, int) and main_user_id > 0:
+                    (
+                        diaries_count,
+                        paired_diaries_count,
+                    ) = await self._get_account_diary_totals(
                         account_id=account_id,
-                        main_user_id=main_user.id,
+                        main_user_id=main_user_id,
                     )
 
                 await self._finish_sync_log(
                     log,
-                    status='success',
+                    status="success",
                     diaries_count=diaries_count,
                     paired_diaries_count=paired_diaries_count,
                     error_message=None,
@@ -613,12 +797,14 @@ class CollectorService:
                     and bool(settings.image_cache_prefetch_on_sync)
                     and prefetch_diary_ids
                 ):
-                    self._schedule_prefetch_images(account_id=account_id, diary_ids=prefetch_diary_ids)
+                    self._schedule_prefetch_images(
+                        account_id=account_id, diary_ids=prefetch_diary_ids
+                    )
 
                 return {
-                    'status': 'success',
-                    'diaries_count': diaries_count,
-                    'paired_diaries_count': paired_diaries_count
+                    "status": "success",
+                    "diaries_count": diaries_count,
+                    "paired_diaries_count": paired_diaries_count,
                 }
             except Exception as e:
                 # 同步日志是“给人看的”，错误信息尽量短且可读（避免把内部堆栈写进去）
@@ -630,7 +816,7 @@ class CollectorService:
                     msg = safe_str(e, max_len=400)
                 await self._finish_sync_log(
                     log,
-                    status='failed',
+                    status="failed",
                     diaries_count=0,
                     paired_diaries_count=0,
                     error_message=msg,
@@ -638,53 +824,63 @@ class CollectorService:
                 await self.db.commit()
                 raise
 
-    async def _save_user_info(self, user_config: dict, account_id: int):
+    async def _save_user_info(
+        self, user_config: dict[str, Any], account_id: int
+    ) -> User:
         """保存用户信息"""
         result = await self.db.execute(
-            select(User).where(User.nideriji_userid == user_config['userid'])
+            select(User).where(User.nideriji_userid == user_config["userid"])
         )
         user = result.scalar_one_or_none()
 
         last_login_time = None
-        if user_config.get('last_login_time'):
-            last_login_time = self._to_utc_datetime(user_config['last_login_time'])
+        if user_config.get("last_login_time"):
+            last_login_time = self._to_utc_datetime(user_config["last_login_time"])
 
         if user:
-            user.name = user_config.get('name')
-            user.description = user_config.get('description')
-            user.role = user_config.get('role')
-            user.avatar = user_config.get('avatar')
-            user.diary_count = user_config.get('diary_count', 0)
-            user.word_count = user_config.get('word_count', 0)
-            user.image_count = user_config.get('image_count', 0)
-            user.last_login_time = last_login_time
+            user_any: Any = cast(Any, user)
+            setattr(user_any, "name", user_config.get("name"))
+            setattr(user_any, "description", user_config.get("description"))
+            setattr(user_any, "role", user_config.get("role"))
+            setattr(user_any, "avatar", user_config.get("avatar"))
+            setattr(user_any, "diary_count", user_config.get("diary_count", 0))
+            setattr(user_any, "word_count", user_config.get("word_count", 0))
+            setattr(user_any, "image_count", user_config.get("image_count", 0))
+            setattr(user_any, "last_login_time", last_login_time)
         else:
             user = User(
-                nideriji_userid=user_config['userid'],
-                name=user_config.get('name'),
-                description=user_config.get('description'),
-                role=user_config.get('role'),
-                avatar=user_config.get('avatar'),
-                diary_count=user_config.get('diary_count', 0),
-                word_count=user_config.get('word_count', 0),
-                image_count=user_config.get('image_count', 0),
-                last_login_time=last_login_time
+                nideriji_userid=user_config["userid"],
+                name=user_config.get("name"),
+                description=user_config.get("description"),
+                role=user_config.get("role"),
+                avatar=user_config.get("avatar"),
+                diary_count=user_config.get("diary_count", 0),
+                word_count=user_config.get("word_count", 0),
+                image_count=user_config.get("image_count", 0),
+                last_login_time=last_login_time,
             )
             self.db.add(user)
 
         await self.db.flush()
         return user
 
-    async def _save_paired_user_info(self, paired_config: dict, account_id: int):
+    async def _save_paired_user_info(
+        self, paired_config: dict[str, Any], account_id: int
+    ) -> None:
         """保存配对用户信息"""
-        paired_user = await self._save_user_info({'userid': paired_config['userid'], **paired_config}, account_id)
+        paired_user = await self._save_user_info(
+            {"userid": paired_config["userid"], **paired_config}, account_id
+        )
 
         result = await self.db.execute(
-            select(User).where(User.nideriji_userid == (
-                await self.db.execute(
-                    select(Account.nideriji_userid).where(Account.id == account_id)
-                )
-            ).scalar())
+            select(User).where(
+                User.nideriji_userid
+                == (
+                    await self.db.execute(
+                        select(Account.nideriji_userid).where(Account.id == account_id)
+                    )
+                ).scalar()
+            )
         )
         main_user = result.scalar_one_or_none()
 
@@ -692,22 +888,22 @@ class CollectorService:
             result = await self.db.execute(
                 select(PairedRelationship).where(
                     PairedRelationship.account_id == account_id,
-                    PairedRelationship.paired_user_id == paired_user.id
+                    PairedRelationship.paired_user_id == paired_user.id,
                 )
             )
             relationship = result.scalar_one_or_none()
 
             if not relationship:
                 paired_time = None
-                if paired_config.get('paired_time'):
-                    paired_time = self._to_utc_datetime(paired_config['paired_time'])
+                if paired_config.get("paired_time"):
+                    paired_time = self._to_utc_datetime(paired_config["paired_time"])
 
                 relationship = PairedRelationship(
                     account_id=account_id,
                     user_id=main_user.id,
                     paired_user_id=paired_user.id,
                     paired_time=paired_time,
-                    is_active=True
+                    is_active=True,
                 )
                 self.db.add(relationship)
 
@@ -717,6 +913,8 @@ class CollectorService:
         account_id: int,
         user_nideriji_id: int,
         auth_token: str,
+        *,
+        sync_log_id: int | None = None,
     ) -> tuple[int, list[int]]:
         """保存日记数据。
 
@@ -728,11 +926,11 @@ class CollectorService:
             return 0, []
 
         result = await self.db.execute(
-            select(User).where(User.nideriji_userid == user_nideriji_id)        
+            select(User).where(User.nideriji_userid == user_nideriji_id)
         )
         user = result.scalar_one_or_none()
         if not user:
-            return 0
+            return 0, []
 
         # 预查当前批次的日记，避免循环里逐条查库，同时用于“已有完整内容则跳过详情请求”。
         diary_ids: list[int] = []
@@ -747,10 +945,20 @@ class CollectorService:
                 select(Diary).where(Diary.nideriji_diary_id.in_(diary_ids))
             )
             for diary in existing_result.scalars().all():
-                existing_by_id[diary.nideriji_diary_id] = diary
+                diary_any: Any = cast(Any, diary)
+                nideriji_diary_id = int(getattr(diary_any, "nideriji_diary_id", 0) or 0)
+                if nideriji_diary_id > 0:
+                    existing_by_id[nideriji_diary_id] = diary
+
+        diary_db_ids: list[int] = []
+        for d in existing_by_id.values():
+            d_any: Any = cast(Any, d)
+            did = getattr(d_any, "id", None)
+            if isinstance(did, int) and did > 0:
+                diary_db_ids.append(did)
 
         detail_state_by_diary_db_id = await self._get_detail_fetch_state_map(
-            [d.id for d in existing_by_id.values() if d.id is not None]
+            diary_db_ids
         )
 
         need_detail_ids: list[int] = []
@@ -763,15 +971,32 @@ class CollectorService:
                 continue
 
             existing = existing_by_id.get(diary_id)
-            if existing and self._content_len(existing.content) >= self._DETAIL_CONTENT_MIN_LEN:
+            if (
+                existing
+                and self._content_len(getattr(cast(Any, existing), "content", None))
+                >= self._DETAIL_CONTENT_MIN_LEN
+            ):
                 # 数据库已有完整内容：不再采集详情，也不允许被短内容覆盖。
                 continue
 
             if existing:
-                state = detail_state_by_diary_db_id.get(existing.id)
-                if state and state.last_detail_success and state.last_detail_is_short:
-                    # 该日记已请求过详情接口，但内容仍然过短：后续同步不再重复请求详情
-                    continue
+                existing_any: Any = cast(Any, existing)
+                existing_db_id = getattr(existing_any, "id", None)
+                existing_db_id_int = (
+                    existing_db_id if isinstance(existing_db_id, int) else 0
+                )
+                state = (
+                    detail_state_by_diary_db_id.get(existing_db_id_int)
+                    if existing_db_id_int > 0
+                    else None
+                )
+                if state:
+                    state_any: Any = cast(Any, state)
+                    if bool(getattr(state_any, "last_detail_success", False)) and bool(
+                        getattr(state_any, "last_detail_is_short", False)
+                    ):
+                        # 该日记已请求过详情接口，但内容仍然过短：后续同步不再重复请求详情
+                        continue
 
             need_detail_ids.append(diary_id)
 
@@ -798,26 +1023,28 @@ class CollectorService:
             diary = existing_by_id.get(diary_id)
 
             created_time = None
-            if diary_data.get('createdtime'):
-                created_time = self._to_utc_datetime(diary_data['createdtime'])
+            if diary_data.get("createdtime"):
+                created_time = self._to_utc_datetime(diary_data["createdtime"])
 
             if not diary:
                 diary = Diary(
                     nideriji_diary_id=diary_id,
                     user_id=user.id,
                     account_id=account_id,
-                    title=diary_data.get('title', ''),
-                    content=diary_data.get('content', ''),
-                    created_date=datetime.strptime(diary_data['createddate'], '%Y-%m-%d').date(),
+                    title=diary_data.get("title", ""),
+                    content=diary_data.get("content", ""),
+                    created_date=datetime.strptime(
+                        diary_data["createddate"], "%Y-%m-%d"
+                    ).date(),
                     created_time=created_time,
-                    weather=diary_data.get('weather', ''),
-                    mood=diary_data.get('mood', ''),
-                    mood_id=diary_data.get('mood_id'),
-                    mood_color=diary_data.get('mood_color'),
-                    space=diary_data.get('space', ''),
-                    is_simple=diary_data.get('is_simple', 0),
-                    msg_count=diary_data.get('msg_count', 0),
-                    ts=diary_data.get('ts')
+                    weather=diary_data.get("weather", ""),
+                    mood=diary_data.get("mood", ""),
+                    mood_id=diary_data.get("mood_id"),
+                    mood_color=diary_data.get("mood_color"),
+                    space=diary_data.get("space", ""),
+                    is_simple=diary_data.get("is_simple", 0),
+                    msg_count=self._normalize_msg_count(diary_data.get("msg_count", 0)),
+                    ts=diary_data.get("ts"),
                 )
                 self.db.add(diary)
                 existing_by_id[diary_id] = diary
@@ -826,35 +1053,55 @@ class CollectorService:
                     touched_for_prefetch.append(diary)
             else:
                 # 检查内容是否有变化
-                new_content = diary_data.get('content', '') or ''
-                new_title = diary_data.get('title', '')
+                new_content = diary_data.get("content", "") or ""
+                new_title = diary_data.get("title", "")
+                new_msg_count = self._normalize_msg_count(
+                    diary_data.get("msg_count", 0)
+                )
+
+                await self._cas_update_diary_msg_count(
+                    diary=diary,
+                    account_id=account_id,
+                    new_msg_count=new_msg_count,
+                    source="sync",
+                    sync_log_id=sync_log_id,
+                )
+
+                diary_any: Any = cast(Any, diary)
+                db_content = getattr(diary_any, "content", None)
+                db_title = getattr(diary_any, "title", None)
+                db_content_text = db_content or ""
+                db_title_text = db_title or ""
 
                 # 防止“短内容”覆盖“完整内容”（常见于 paired 日记只返回预览）。
                 if (
                     self._content_len(new_content) < self._DETAIL_CONTENT_MIN_LEN
-                    and self._content_len(diary.content) >= self._DETAIL_CONTENT_MIN_LEN
+                    and self._content_len(db_content_text)
+                    >= self._DETAIL_CONTENT_MIN_LEN
                 ):
                     continue
 
-                if diary.content != new_content or diary.title != new_title:
+                if db_content_text != new_content or db_title_text != new_title:
                     # 保存历史记录
                     history = DiaryHistory(
-                        diary_id=diary.id,
-                        nideriji_diary_id=diary.nideriji_diary_id,
-                        title=diary.title,
-                        content=diary.content,
-                        weather=diary.weather,
-                        mood=diary.mood,
-                        ts=diary.ts
+                        diary_id=int(getattr(diary_any, "id", 0) or 0),
+                        nideriji_diary_id=int(
+                            getattr(diary_any, "nideriji_diary_id", 0) or 0
+                        ),
+                        title=db_title,
+                        content=db_content,
+                        weather=getattr(diary_any, "weather", None),
+                        mood=getattr(diary_any, "mood", None),
+                        ts=getattr(diary_any, "ts", None),
                     )
                     self.db.add(history)
                     # 更新日记
-                    diary.title = new_title
-                    diary.content = new_content
-                    diary.weather = diary_data.get('weather', '')
-                    diary.mood = diary_data.get('mood', '')
-                    diary.ts = diary_data.get('ts')
-                    if ImageCacheService.extract_image_ids(diary.content):
+                    setattr(diary_any, "title", new_title)
+                    setattr(diary_any, "content", new_content)
+                    setattr(diary_any, "weather", diary_data.get("weather", ""))
+                    setattr(diary_any, "mood", diary_data.get("mood", ""))
+                    setattr(diary_any, "ts", diary_data.get("ts"))
+                    if ImageCacheService.extract_image_ids(new_content):
                         touched_for_prefetch.append(diary)
 
             # 若本次对该日记发起过详情请求，则记录结果（用于后续跳过重复请求）
@@ -890,7 +1137,9 @@ class CollectorService:
 
         return count, prefetch_ids
 
-    def _schedule_prefetch_images(self, *, account_id: int, diary_ids: list[int]) -> None:
+    def _schedule_prefetch_images(
+        self, *, account_id: int, diary_ids: list[int]
+    ) -> None:
         """在后台预拉取图片（进程内异步任务，不阻塞同步 API）。"""
         if not diary_ids:
             return
@@ -917,13 +1166,18 @@ class CollectorService:
 
             try:
                 async with AsyncSessionLocal() as session:
-                    account = await session.scalar(select(Account).where(Account.id == account_id))
+                    account = await session.scalar(
+                        select(Account).where(Account.id == account_id)
+                    )
                     if (
                         not account
                         or not isinstance(getattr(account, "auth_token", None), str)
                         or not account.auth_token.strip()
                     ):
                         return
+
+                    account_any: Any = cast(Any, account)
+                    auth_token = str(getattr(account_any, "auth_token", "") or "")
 
                     # 读取本次需要预拉取的记录正文与 nideriji_userid（用于图片接口路径）
                     rows = (
@@ -960,7 +1214,7 @@ class CollectorService:
                     async with httpx.AsyncClient(timeout=timeout) as client:
                         for nideriji_userid, image_id in todo:
                             await service.ensure_cached(
-                                auth_token=account.auth_token,
+                                auth_token=auth_token,
                                 nideriji_userid=nideriji_userid,
                                 image_id=image_id,
                                 client=client,
@@ -972,13 +1226,15 @@ class CollectorService:
 
         task = asyncio.create_task(_run())
 
-        def _on_done(t: asyncio.Task) -> None:
+        def _on_done(t: asyncio.Task[None]) -> None:
             try:
                 t.result()
             except asyncio.CancelledError:
                 return
             except Exception:
-                logger.exception("[IMAGE_PREFETCH] Task error account_id=%s", account_id)
+                logger.exception(
+                    "[IMAGE_PREFETCH] Task error account_id=%s", account_id
+                )
 
         task.add_done_callback(_on_done)
 
@@ -988,7 +1244,7 @@ class CollectorService:
             account_id=account_id,
             # SQLite 的 CURRENT_TIMESTAMP 默认是 UTC 但不带时区；这里明确写入 UTC，避免前端解析偏差。
             sync_time=datetime.now(timezone.utc),
-            status='running',
+            status="running",
             diaries_count=None,
             paired_diaries_count=None,
             error_message=None,
@@ -1007,7 +1263,8 @@ class CollectorService:
         error_message: str | None,
     ) -> None:
         """更新同步日志为最终状态。"""
-        log.status = status
-        log.diaries_count = diaries_count
-        log.paired_diaries_count = paired_diaries_count
-        log.error_message = error_message
+        log_any: Any = cast(Any, log)
+        setattr(log_any, "status", status)
+        setattr(log_any, "diaries_count", diaries_count)
+        setattr(log_any, "paired_diaries_count", paired_diaries_count)
+        setattr(log_any, "error_message", error_message)

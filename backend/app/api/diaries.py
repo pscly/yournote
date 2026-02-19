@@ -1,10 +1,12 @@
 """Diary query API"""
+
 from __future__ import annotations
 
 import logging
 import re
 import time
 from datetime import date
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import func, or_, select
@@ -15,6 +17,7 @@ from ..schemas import (
     DiaryAttachments,
     DiaryDetailResponse,
     DiaryListItemResponse,
+    DiaryQueryNormalized,
     DiaryQueryResponse,
     DiaryRefreshResponse,
     DiaryResponse,
@@ -103,14 +106,14 @@ def _parse_smart_search_query(
 
         quoted = False
         token = ""
-        if i < n and s[i] == "\"":
+        if i < n and s[i] == '"':
             quoted = True
             i += 1
             start = i
-            while i < n and s[i] != "\"":
+            while i < n and s[i] != '"':
                 i += 1
             token = s[start:i].strip()
-            if i < n and s[i] == "\"":
+            if i < n and s[i] == '"':
                 i += 1
         else:
             start = i
@@ -155,7 +158,9 @@ def _parse_date_yyyy_mm_dd(value: str | None, field_name: str) -> date | None:
     try:
         return date.fromisoformat(text)
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=f"{field_name} must be YYYY-MM-DD") from e
+        raise HTTPException(
+            status_code=422, detail=f"{field_name} must be YYYY-MM-DD"
+        ) from e
 
 
 def _count_no_whitespace(text: str | None) -> int:
@@ -174,7 +179,9 @@ def _build_preview(text: str | None, preview_len: int) -> str:
     return raw[:preview_len] + "…"
 
 
-def _build_match_snippet(text: str | None, preview_len: int, match_terms: list[str]) -> str:
+def _build_match_snippet(
+    text: str | None, preview_len: int, match_terms: list[str]
+) -> str:
     """构造“命中附近片段”预览，提升搜索结果可读性。"""
     if preview_len <= 0:
         return ""
@@ -201,7 +208,7 @@ def _build_match_snippet(text: str | None, preview_len: int, match_terms: list[s
 
     # 让命中点前留一点上下文（约 25%）
     start = max(0, best_idx - int(preview_len * 0.25))
-    snippet = raw[start:start + preview_len]
+    snippet = raw[start : start + preview_len]
     prefix = "…" if start > 0 else ""
     suffix = "…" if (start + preview_len) < len(raw) else ""
     return f"{prefix}{snippet}{suffix}"
@@ -213,10 +220,12 @@ async def list_diaries(
     user_id: int | None = None,
     limit: int = 50,
     offset: int = 0,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """获取日记列表（支持筛选）"""
-    query = select(Diary).order_by(Diary.created_date.desc()).limit(limit).offset(offset)
+    query = (
+        select(Diary).order_by(Diary.created_date.desc()).limit(limit).offset(offset)
+    )
 
     if account_id:
         query = query.where(Diary.account_id == account_id)
@@ -231,16 +240,24 @@ async def list_diaries(
 @router.get("/query", response_model=DiaryQueryResponse)
 async def query_diaries(
     q: str | None = Query(None, description="关键字（标题/正文，空格分词，默认 AND）"),
-    q_mode: str = Query("and", description="关键字模式：and=全部命中（默认），or=命中任一"),
-    q_syntax: str = Query("smart", description="查询语法：smart=支持引号短语/排除词，plain=纯文本"),
-    scope: str = Query("matched", description="范围：matched=仅配对用户记录，all=全部记录"),
+    q_mode: str = Query(
+        "and", description="关键字模式：and=全部命中（默认），or=命中任一"
+    ),
+    q_syntax: str = Query(
+        "smart", description="查询语法：smart=支持引号短语/排除词，plain=纯文本"
+    ),
+    scope: str = Query(
+        "matched", description="范围：matched=仅配对用户记录，all=全部记录"
+    ),
     account_id: int | None = Query(None, ge=1, description="按账号过滤"),
     user_id: int | None = Query(None, ge=1, description="按作者 user_id 过滤"),
     date_from: str | None = Query(None, description="起始日期（YYYY-MM-DD，含）"),
     date_to: str | None = Query(None, description="结束日期（YYYY-MM-DD，含）"),
     include_inactive: bool = Query(True, description="是否包含停用账号"),
     include_stats: bool = Query(True, description="是否返回字数等统计字段"),
-    include_preview: bool = Query(True, description="是否返回 content_preview（列表预览）"),
+    include_preview: bool = Query(
+        True, description="是否返回 content_preview（列表预览）"
+    ),
     limit: int = Query(50, ge=1, le=200, description="分页大小"),
     offset: int = Query(0, ge=0, description="分页 offset"),
     order_by: str = Query("ts", description="排序字段：ts/created_date/created_at"),
@@ -265,7 +282,9 @@ async def query_diaries(
 
     order_by_norm = (order_by or "").strip().lower() or "ts"
     if order_by_norm not in {"ts", "created_date", "created_at"}:
-        raise HTTPException(status_code=422, detail="order_by must be ts, created_date or created_at")
+        raise HTTPException(
+            status_code=422, detail="order_by must be ts, created_date or created_at"
+        )
 
     order_norm = (order or "").strip().lower() or "desc"
     if order_norm not in {"desc", "asc"}:
@@ -274,7 +293,9 @@ async def query_diaries(
     df = _parse_date_yyyy_mm_dd(date_from, "date_from")
     dt = _parse_date_yyyy_mm_dd(date_to, "date_to")
     if df and dt and dt < df:
-        raise HTTPException(status_code=422, detail="date_to must be greater than or equal to date_from")
+        raise HTTPException(
+            status_code=422, detail="date_to must be greater than or equal to date_from"
+        )
 
     where_clauses = []
     if account_id is not None:
@@ -292,7 +313,9 @@ async def query_diaries(
         phrases: list[str] = []
         excludes: list[str] = []
     else:
-        terms, phrases, excludes = _parse_smart_search_query(q_text, max_positive_terms=5, max_excludes=5)
+        terms, phrases, excludes = _parse_smart_search_query(
+            q_text, max_positive_terms=5, max_excludes=5
+        )
 
     positive = [t for t in (terms + phrases) if isinstance(t, str) and t.strip()]
 
@@ -349,9 +372,8 @@ async def query_diaries(
 
     def _apply_joins(query):
         if not include_inactive:
-            query = (
-                query.join(Account, Diary.account_id == Account.id)
-                .where(Account.is_active.is_(True))
+            query = query.join(Account, Diary.account_id == Account.id).where(
+                Account.is_active.is_(True)
             )
         return query
 
@@ -392,30 +414,38 @@ async def query_diaries(
     diaries = list(diaries.all())
 
     match_terms_for_preview = positive
-    items = [
-        DiaryListItemResponse(
-            id=d.id,
-            nideriji_diary_id=d.nideriji_diary_id,
-            user_id=d.user_id,
-            account_id=d.account_id,
-            created_date=d.created_date,
-            ts=d.ts,
-            created_at=d.created_at,
-            updated_at=d.updated_at,
-            title=d.title,
-            content_preview=(
-                _build_match_snippet(d.content, preview_len, match_terms_for_preview)
-                if include_preview
-                else None
-            ),
-            word_count_no_ws=_count_no_whitespace(d.content) if include_stats else 0,
-            weather=d.weather,
-            mood=d.mood,
-            space=d.space,
+    items: list[DiaryListItemResponse] = []
+    for d in diaries:
+        if d is None:
+            continue
+        dd = cast(Any, d)
+        items.append(
+            DiaryListItemResponse(
+                id=int(dd.id),
+                nideriji_diary_id=int(dd.nideriji_diary_id),
+                user_id=int(dd.user_id),
+                account_id=int(dd.account_id),
+                created_date=dd.created_date,
+                ts=dd.ts,
+                created_at=dd.created_at,
+                updated_at=dd.updated_at,
+                title=dd.title,
+                content_preview=(
+                    _build_match_snippet(
+                        dd.content, preview_len, match_terms_for_preview
+                    )
+                    if include_preview
+                    else None
+                ),
+                word_count_no_ws=_count_no_whitespace(dd.content)
+                if include_stats
+                else 0,
+                msg_count=int(getattr(dd, "msg_count", 0) or 0),
+                weather=dd.weather,
+                mood=dd.mood,
+                space=dd.space,
+            )
         )
-        for d in diaries
-        if d is not None
-    ]
 
     return DiaryQueryResponse(
         count=total,
@@ -423,22 +453,19 @@ async def query_diaries(
         offset=offset,
         has_more=(offset + len(items) < total),
         took_ms=int((time.perf_counter() - started) * 1000),
-        normalized={
-            "mode": q_mode_norm,
-            "syntax": q_syntax_norm,
-            "terms": terms,
-            "phrases": phrases,
-            "excludes": excludes,
-        },
+        normalized=DiaryQueryNormalized(
+            mode=q_mode_norm,
+            syntax=q_syntax_norm,
+            terms=terms,
+            phrases=phrases,
+            excludes=excludes,
+        ),
         items=items,
     )
 
 
 @router.get("/{diary_id}", response_model=DiaryDetailResponse)
-async def get_diary(
-    diary_id: int,
-    db: AsyncSession = Depends(get_db)
-):
+async def get_diary(diary_id: int, db: AsyncSession = Depends(get_db)):
     """获取单条日记详情"""
     result = await db.execute(select(Diary).where(Diary.id == diary_id))
     diary = result.scalar_one_or_none()
@@ -451,12 +478,12 @@ async def get_diary(
     attachments = None
     if isinstance(nideriji_userid, int) and nideriji_userid > 0:
         service = ImageCacheService(db)
-        attachments = DiaryAttachments(
-            **await service.build_attachments_for_content(
-                diary_id=diary.id,
-                nideriji_userid=nideriji_userid,
-                content=diary.content,
-            )
+        diary_id_val = int(getattr(diary, "id", 0) or 0)
+        content_val = cast(str | None, getattr(diary, "content", None))
+        attachments = await service.build_attachments_for_content(
+            diary_id=diary_id_val,
+            nideriji_userid=nideriji_userid,
+            content=content_val,
         )
 
     base = DiaryResponse.model_validate(diary)
@@ -473,8 +500,8 @@ def _etag_matches(if_none_match: str | None, etag: str) -> bool:
     if etag in parts:
         return True
     # 兼容客户端不带引号的情况（极少见）
-    stripped = etag.strip("\"")
-    return stripped in [p.strip("\"") for p in parts]
+    stripped = etag.strip('"')
+    return stripped in [p.strip('"') for p in parts]
 
 
 @router.get("/{diary_id}/images/{image_id}")
@@ -490,7 +517,8 @@ async def get_diary_image(
         raise HTTPException(status_code=404, detail="Diary not found")
 
     account = await db.scalar(select(Account).where(Account.id == diary.account_id))
-    if not account or not isinstance(getattr(account, "auth_token", None), str) or not account.auth_token.strip():
+    auth_token = getattr(account, "auth_token", None) if account else None
+    if not isinstance(auth_token, str) or not auth_token.strip():
         raise HTTPException(status_code=404, detail="Account token not found")
 
     user = await db.scalar(select(User).where(User.id == diary.user_id))
@@ -500,20 +528,29 @@ async def get_diary_image(
 
     service = ImageCacheService(db)
     record = await service.ensure_cached(
-        auth_token=account.auth_token,
+        auth_token=auth_token,
         nideriji_userid=nideriji_userid,
         image_id=image_id,
     )
 
-    status = (getattr(record, "fetch_status", None) or "").strip().lower() if record else ""
-    if status != "ok" or not record or not record.data:
+    status = (
+        (getattr(record, "fetch_status", None) or "").strip().lower() if record else ""
+    )
+
+    data = getattr(record, "data", None) if record else None
+    if (
+        status != "ok"
+        or not record
+        or not isinstance(data, (bytes, bytearray))
+        or not data
+    ):
         # 为了 `<img>` 体验更一致：无权限/不存在统一返回 404，让前端走 onError 占位。
         if status in {"forbidden", "not_found"}:
             raise HTTPException(status_code=404, detail="IMAGE_NOT_AVAILABLE")
         raise HTTPException(status_code=502, detail="IMAGE_FETCH_FAILED")
 
     sha256 = (record.sha256 or "").strip()
-    etag = f"\"{sha256}\"" if sha256 else ""
+    etag = f'"{sha256}"' if sha256 else ""
     headers = {
         "Cache-Control": "private, max-age=31536000",
     }
@@ -524,14 +561,12 @@ async def get_diary_image(
         return Response(status_code=304, headers=headers)
 
     media_type = (record.content_type or "").strip() or "application/octet-stream"
-    return Response(content=record.data, media_type=media_type, headers=headers)
+    return Response(content=bytes(data), media_type=media_type, headers=headers)
 
 
 @router.get("/by-account/{account_id}", response_model=list[DiaryResponse])
 async def get_diaries_by_account(
-    account_id: int,
-    limit: int = 50,
-    db: AsyncSession = Depends(get_db)
+    account_id: int, limit: int = 50, db: AsyncSession = Depends(get_db)
 ):
     """按账号查询日记"""
     result = await db.execute(

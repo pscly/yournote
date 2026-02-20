@@ -3,6 +3,7 @@ import { test as base, expect } from '@playwright/test';
 const SAMPLE_NOW_ISO = '2026-02-08T00:00:00Z';
 const SAMPLE_DATE = '2026-02-08';
 const SAMPLE_TS_MS = 1770508800000;
+const SAMPLE_BOOKMARKED_AT_MS = SAMPLE_TS_MS + 12345;
 
 function shouldMockApi() {
   const raw = String(process.env.E2E_MOCK_API ?? '').trim().toLowerCase();
@@ -55,7 +56,7 @@ function getSampleAccount() {
   };
 }
 
-function getSampleDiaryListItem() {
+function getSampleDiaryListItem({ bookmarked_at = null } = {}) {
   return {
     id: 1,
     nideriji_diary_id: 111,
@@ -63,6 +64,7 @@ function getSampleDiaryListItem() {
     account_id: 1,
     created_date: SAMPLE_DATE,
     ts: SAMPLE_TS_MS,
+    bookmarked_at,
     created_at: SAMPLE_NOW_ISO,
     updated_at: SAMPLE_NOW_ISO,
     title: '测试标题',
@@ -75,7 +77,7 @@ function getSampleDiaryListItem() {
   };
 }
 
-function getSampleDiaryDetail() {
+function getSampleDiaryDetail({ bookmarked_at = null } = {}) {
   return {
     id: 1,
     nideriji_diary_id: 111,
@@ -94,6 +96,7 @@ function getSampleDiaryDetail() {
     space: null,
     msg_count: 7,
     ts: SAMPLE_TS_MS,
+    bookmarked_at,
     created_at: SAMPLE_NOW_ISO,
     updated_at: SAMPLE_NOW_ISO,
     attachments: { images: [] },
@@ -192,6 +195,60 @@ function buildPairedIncreaseResponse(url) {
 export const test = base.extend({
   page: async ({ page }, withPage) => {
     if (shouldMockApi()) {
+      const diaryBookmarkedAtById = new Map();
+
+      const getBookmarkedAt = (diaryId) => {
+        const did = Number(diaryId);
+        if (!Number.isFinite(did)) return null;
+        return diaryBookmarkedAtById.get(did) ?? null;
+      };
+
+      const applyBookmark = (diaryId, bookmarked) => {
+        const did = Number(diaryId);
+        if (!Number.isFinite(did) || did <= 0) return 0;
+
+        const prev = getBookmarkedAt(did);
+        if (Boolean(bookmarked)) {
+          if (prev == null) {
+            diaryBookmarkedAtById.set(did, SAMPLE_BOOKMARKED_AT_MS);
+            return 1;
+          }
+          return 0;
+        }
+
+        if (prev != null) {
+          diaryBookmarkedAtById.delete(did);
+          return 1;
+        }
+        return 0;
+      };
+
+      const readJsonBody = async (request) => {
+        try {
+          return await request.postDataJSON();
+        } catch (e) {
+          const raw = request.postData();
+          if (!raw) return null;
+          try {
+            return JSON.parse(raw);
+          } catch (e2) {
+            return null;
+          }
+        }
+      };
+
+      const normalizeBookmarkedFlag = (val) => {
+        if (typeof val === 'boolean') return val;
+        if (typeof val === 'number') return val !== 0;
+        if (typeof val === 'string') {
+          const raw = val.trim().toLowerCase();
+          if (!raw) return false;
+          if (['0', 'false', 'off', 'no', 'null', 'undefined'].includes(raw)) return false;
+          return true;
+        }
+        return Boolean(val);
+      };
+
       await page.route('**/api/**', async (route, request) => {
         const url = new URL(request.url());
         const path = url.pathname;
@@ -260,21 +317,96 @@ export const test = base.extend({
         }
 
         // Diaries
+        if (/^\/api\/diaries\/\d+\/bookmark$/.test(path) && method === 'PUT') {
+          const diaryId = Number(path.split('/')[3] || 0);
+          const body = await readJsonBody(request);
+          const bookmarked = normalizeBookmarkedFlag(body && body.bookmarked);
+
+          applyBookmark(diaryId, bookmarked);
+
+          await route.fulfill(jsonResponse({
+            diary_id: diaryId,
+            bookmarked_at: getBookmarkedAt(diaryId),
+          }));
+          return;
+        }
+        if (path === '/api/diaries/bookmarks/batch' && method === 'PUT') {
+          const body = await readJsonBody(request);
+          const diaryIdsRaw = body && Array.isArray(body.diary_ids) ? body.diary_ids : [];
+          const bookmarked = normalizeBookmarkedFlag(body && body.bookmarked);
+
+          const seen = new Set();
+          const diaryIds = [];
+          for (const rawId of diaryIdsRaw) {
+            const did = Number(rawId);
+            if (!Number.isFinite(did) || did <= 0) continue;
+            if (seen.has(did)) continue;
+            seen.add(did);
+            diaryIds.push(did);
+          }
+
+          const maxLen = 200;
+          if (diaryIds.length > maxLen) {
+            await route.fulfill(jsonResponse({
+              detail: `diary_ids too large (max ${maxLen})`,
+            }, { status: 422 }));
+            return;
+          }
+
+          let updated = 0;
+          for (const did of diaryIds) {
+            updated += applyBookmark(did, bookmarked);
+          }
+
+          const items = diaryIds.map((did) => ({
+            diary_id: did,
+            bookmarked_at: getBookmarkedAt(did),
+          }));
+
+          await route.fulfill(jsonResponse({ updated, items }));
+          return;
+        }
         if (path === '/api/diaries/query' && method === 'GET') {
-          await route.fulfill(jsonResponse(buildDiaryQueryResponse(url)));
+          const resp = buildDiaryQueryResponse(url);
+          const bookmarkedRaw = url.searchParams.get('bookmarked');
+          const bookmarkedFilter = bookmarkedRaw == null ? null : normalizeBookmarkedFlag(bookmarkedRaw);
+          const allItems = [getSampleDiaryListItem()].map((it) => ({
+            ...it,
+            bookmarked_at: getBookmarkedAt(it && it.id),
+          }));
+
+          const filteredItems = bookmarkedFilter == null
+            ? allItems
+            : allItems.filter((it) => (bookmarkedFilter ? it.bookmarked_at != null : it.bookmarked_at == null));
+
+          const pageItems = filteredItems.slice(resp.offset, resp.offset + resp.limit);
+
+          resp.items = pageItems;
+          resp.count = filteredItems.length;
+          resp.has_more = resp.offset + pageItems.length < filteredItems.length;
+          await route.fulfill(jsonResponse(resp));
           return;
         }
         if (path === '/api/diaries' && method === 'GET') {
-          await route.fulfill(jsonResponse([getSampleDiaryDetail()]));
+          const did = 1;
+          await route.fulfill(jsonResponse([
+            getSampleDiaryDetail({ bookmarked_at: getBookmarkedAt(did) }),
+          ]));
           return;
         }
         if (/^\/api\/diaries\/\d+$/.test(path) && method === 'GET') {
-          await route.fulfill(jsonResponse(getSampleDiaryDetail()));
+          const diaryId = Number(path.split('/')[3] || 0);
+          const detail = getSampleDiaryDetail({ bookmarked_at: getBookmarkedAt(diaryId) });
+          if (Number.isFinite(diaryId) && diaryId > 0) {
+            detail.id = diaryId;
+          }
+          await route.fulfill(jsonResponse(detail));
           return;
         }
         if (/^\/api\/diaries\/\d+\/refresh$/.test(path) && method === 'POST') {
+          const diaryId = Number(path.split('/')[3] || 0);
           await route.fulfill(jsonResponse({
-            diary: getSampleDiaryDetail(),
+            diary: getSampleDiaryDetail({ bookmarked_at: getBookmarkedAt(diaryId) }),
             refresh_info: {
               min_len_threshold: 0,
               used_sync: false,

@@ -21,10 +21,11 @@ import {
   message,
   theme,
 } from 'antd';
-import { FilterOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { FilterOutlined, ReloadOutlined, SearchOutlined, StarFilled, StarOutlined } from '@ant-design/icons';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 
 import { accountAPI, diaryAPI, userAPI } from '../services/api';
+import { downloadText, formatExportTimestamp, safeFilenamePart } from '../utils/download';
 import { getErrorMessage } from '../utils/errorMessage';
 import { getDiaryWordStats } from '../utils/wordCount';
 import { formatBeijingDateTimeFromTs } from '../utils/time';
@@ -113,7 +114,7 @@ function parseViewMode(value) {
 
 function parseOrderBy(value) {
   const v = String(value ?? '').trim().toLowerCase();
-  if (v === 'ts' || v === 'created_date' || v === 'created_at') return v;
+  if (v === 'ts' || v === 'created_date' || v === 'created_at' || v === 'bookmarked_at') return v;
   return null;
 }
 
@@ -136,6 +137,19 @@ function parseBool01(value) {
   if (v === '1') return true;
   if (v === '0') return false;
   return null;
+}
+
+function parseSortValue(value) {
+  const v = String(value ?? '').trim().toLowerCase();
+  if (!v) return { orderBy: 'ts', order: 'desc' };
+  const idx = v.lastIndexOf('_');
+  if (idx <= 0 || idx >= v.length - 1) return { orderBy: 'ts', order: 'desc' };
+  const left = v.slice(0, idx);
+  const right = v.slice(idx + 1);
+  return {
+    orderBy: parseOrderBy(left) || 'ts',
+    order: parseOrder(right) || 'desc',
+  };
 }
 
 function escapeRegExp(text) {
@@ -217,11 +231,14 @@ function parseSmartQuery(raw, { maxPositive = 10, maxExcludes = 10 } = {}) {
 
 export default function DiaryList() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
+  const isBookmarksRoute = String(location?.pathname || '').startsWith('/bookmarks');
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.md;
   const { token } = theme.useToken();
   const searchInputRef = useRef(null);
+  const bookmarksDefaultsInjectedRef = useRef(false);
   const isMobileByWindow = (() => {
     try {
       return window.innerWidth < 768;
@@ -255,6 +272,7 @@ export default function DiaryList() {
   const initialUserId = parsePositiveInt(searchParams.get('userId') || searchParams.get('user_id'));
   const initialDateFrom = parseDateYmd(searchParams.get('from') || searchParams.get('date_from'));
   const initialDateTo = parseDateYmd(searchParams.get('to') || searchParams.get('date_to'));
+  const initialBookmarked = parseBool01(searchParams.get('bookmarked'));
 
   const initialOrderBy = parseOrderBy(searchParams.get('orderBy')) || 'ts';
   const initialOrder = parseOrder(searchParams.get('order')) || 'desc';
@@ -281,6 +299,8 @@ export default function DiaryList() {
   const [orderBy, setOrderBy] = useState(initialOrderBy);
   const [order, setOrder] = useState(initialOrder);
 
+  const [bookmarked, setBookmarked] = useState(initialBookmarked);
+
   const [page, setPage] = useState(initialPage);
   const [pageSize, setPageSize] = useState(initialPageSize);
 
@@ -294,6 +314,10 @@ export default function DiaryList() {
   const [detailLoadingById, setDetailLoadingById] = useState({});
   const [detailErrorById, setDetailErrorById] = useState({});
   const [failedImageByDiaryId, setFailedImageByDiaryId] = useState({});
+  const [bookmarkLoadingById, setBookmarkLoadingById] = useState({});
+  const [batchCancelLoading, setBatchCancelLoading] = useState(false);
+  const [selectedRowKeys, setSelectedRowKeys] = useState([]);
+  const [selectedRows, setSelectedRows] = useState([]);
   const loadSeqRef = useRef(0);
 
   const syncUrl = useCallback((next, { replace = false } = {}) => {
@@ -321,13 +345,46 @@ export default function DiaryList() {
     if (next.dateFrom) p.set('from', next.dateFrom);
     if (next.dateTo) p.set('to', next.dateTo);
 
+    const hasBookmarked = Object.prototype.hasOwnProperty.call(next || {}, 'bookmarked');
+    const nextBookmarked = hasBookmarked ? next.bookmarked : bookmarked;
+    if (typeof nextBookmarked === 'boolean') p.set('bookmarked', nextBookmarked ? '1' : '0');
+
     p.set('page', String(Math.max(1, next.page || 1)));
     p.set('pageSize', String(next.pageSize || 50));
     p.set('orderBy', next.orderBy || 'ts');
     p.set('order', next.order || 'desc');
 
     setSearchParams(p, { replace });
-  }, [setSearchParams, qMode, qSyntax, statsEnabled, viewMode, multiExpand, isMobile]);
+  }, [setSearchParams, qMode, qSyntax, statsEnabled, viewMode, multiExpand, isMobile, bookmarked]);
+
+  useEffect(() => {
+    if (!isBookmarksRoute) {
+      bookmarksDefaultsInjectedRef.current = false;
+      return;
+    }
+    if (bookmarksDefaultsInjectedRef.current) return;
+    bookmarksDefaultsInjectedRef.current = true;
+
+    const next = new URLSearchParams(searchParams);
+    let changed = false;
+    if (!next.has('bookmarked')) {
+      next.set('bookmarked', '1');
+      changed = true;
+    }
+    if (!next.has('orderBy')) {
+      next.set('orderBy', 'bookmarked_at');
+      changed = true;
+    }
+    if (!next.has('order')) {
+      next.set('order', 'desc');
+      changed = true;
+    }
+    if (!next.has('page')) {
+      next.set('page', '1');
+      changed = true;
+    }
+    if (changed) setSearchParams(next, { replace: true });
+  }, [isBookmarksRoute, searchParams, setSearchParams]);
 
   const currentAccountId = useMemo(() => (accountValue === ALL ? null : parsePositiveInt(accountValue)), [accountValue]);
   const currentUserId = useMemo(() => (userValue === ALL ? null : parsePositiveInt(userValue)), [userValue]);
@@ -374,6 +431,7 @@ export default function DiaryList() {
         user_id: currentUserId || undefined,
         date_from: currentDateFrom || undefined,
         date_to: currentDateTo || undefined,
+        bookmarked: (typeof bookmarked === 'boolean') ? (bookmarked ? 1 : 0) : undefined,
         include_stats: Boolean(statsEnabled),
         include_preview: true,
         limit: pageSize,
@@ -403,7 +461,7 @@ export default function DiaryList() {
     } finally {
       if (loadSeqRef.current === seq) setLoading(false);
     }
-  }, [q, qMode, qSyntax, statsEnabled, scope, currentAccountId, currentUserId, currentDateFrom, currentDateTo, page, pageSize, orderBy, order, isMobile]);
+  }, [q, qMode, qSyntax, statsEnabled, scope, currentAccountId, currentUserId, currentDateFrom, currentDateTo, bookmarked, page, pageSize, orderBy, order, isMobile]);
 
   useEffect(() => {
     loadInit();
@@ -414,9 +472,25 @@ export default function DiaryList() {
   }, [loadDiaries]);
 
   // 阅读模式：当查询条件/分页变化时，清空上一批结果的展开项，避免“展开状态错位”。
+  const expandedResetKey = useMemo(() => JSON.stringify([
+    q,
+    qMode,
+    qSyntax,
+    scope,
+    currentAccountId,
+    currentUserId,
+    currentDateFrom,
+    currentDateTo,
+    bookmarked,
+    orderBy,
+    order,
+    page,
+    pageSize,
+  ]), [q, qMode, qSyntax, scope, currentAccountId, currentUserId, currentDateFrom, currentDateTo, bookmarked, orderBy, order, page, pageSize]);
   useEffect(() => {
+    void expandedResetKey;
     setExpandedIds([]);
-  }, [q, qMode, qSyntax, scope, currentAccountId, currentUserId, currentDateFrom, currentDateTo, orderBy, order, page, pageSize]);
+  }, [expandedResetKey]);
 
   useEffect(() => {
     if (viewMode !== 'read') setExpandedIds([]);
@@ -467,26 +541,35 @@ export default function DiaryList() {
     const urlUserId = parsePositiveInt(searchParams.get('userId') || searchParams.get('user_id'));
     const urlFrom = parseDateYmd(searchParams.get('from') || searchParams.get('date_from')) || '';
     const urlTo = parseDateYmd(searchParams.get('to') || searchParams.get('date_to')) || '';
+    const urlBookmarked = parseBool01(searchParams.get('bookmarked'));
     const urlOrderBy = parseOrderBy(searchParams.get('orderBy')) || 'ts';
     const urlOrder = parseOrder(searchParams.get('order')) || 'desc';
 
-    if (qInput !== urlQ) setQInput(urlQ);
-    if (q !== urlQ) setQ(urlQ);
-    if (scope !== urlScope) setScope(urlScope);
-    if (urlMode && qMode !== urlMode) setQMode(urlMode);
-    if (urlSyntax && qSyntax !== urlSyntax) setQSyntax(urlSyntax);
-    if (typeof urlStats === 'boolean' && statsEnabled !== urlStats) setStatsEnabled(urlStats);
-    if (urlView && viewMode !== urlView) setViewMode(urlView);
-    if (typeof urlMulti === 'boolean' && multiExpand !== urlMulti) setMultiExpand(urlMulti);
-    if (pageSize !== urlPageSize) setPageSize(urlPageSize);
-    if (page !== urlPage) setPage(urlPage);
-    if ((accountValue === ALL ? null : parsePositiveInt(accountValue)) !== urlAccountId) setAccountValue(urlAccountId ?? ALL);
-    if ((userValue === ALL ? null : parsePositiveInt(userValue)) !== urlUserId) setUserValue(urlUserId ?? ALL);
-    if (dateFrom !== urlFrom) setDateFrom(urlFrom);
-    if (dateTo !== urlTo) setDateTo(urlTo);
-    if (orderBy !== urlOrderBy) setOrderBy(urlOrderBy);
-    if (order !== urlOrder) setOrder(urlOrder);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setQInput((prev) => (prev !== urlQ ? urlQ : prev));
+    setQ((prev) => (prev !== urlQ ? urlQ : prev));
+    setScope((prev) => (prev !== urlScope ? urlScope : prev));
+    if (urlMode) setQMode((prev) => (prev !== urlMode ? urlMode : prev));
+    if (urlSyntax) setQSyntax((prev) => (prev !== urlSyntax ? urlSyntax : prev));
+    if (typeof urlStats === 'boolean') setStatsEnabled((prev) => (prev !== urlStats ? urlStats : prev));
+    if (urlView) setViewMode((prev) => (prev !== urlView ? urlView : prev));
+    if (typeof urlMulti === 'boolean') setMultiExpand((prev) => (prev !== urlMulti ? urlMulti : prev));
+    setPageSize((prev) => (prev !== urlPageSize ? urlPageSize : prev));
+    setPage((prev) => (prev !== urlPage ? urlPage : prev));
+    setAccountValue((prev) => {
+      const prevId = prev === ALL ? null : parsePositiveInt(prev);
+      if (prevId === urlAccountId) return prev;
+      return urlAccountId ?? ALL;
+    });
+    setUserValue((prev) => {
+      const prevId = prev === ALL ? null : parsePositiveInt(prev);
+      if (prevId === urlUserId) return prev;
+      return urlUserId ?? ALL;
+    });
+    setDateFrom((prev) => (prev !== urlFrom ? urlFrom : prev));
+    setDateTo((prev) => (prev !== urlTo ? urlTo : prev));
+    setBookmarked((prev) => (prev !== urlBookmarked ? urlBookmarked : prev));
+    setOrderBy((prev) => (prev !== urlOrderBy ? urlOrderBy : prev));
+    setOrder((prev) => (prev !== urlOrder ? urlOrder : prev));
   }, [searchParams]);
 
   // 若 URL 指定了不存在的账号，自动回退为“全部账号”，避免用户误以为“没有记录”。
@@ -554,7 +637,20 @@ export default function DiaryList() {
     { label: '最近更新', value: 'ts_desc' },
     { label: '记录日期', value: 'created_date_desc' },
     { label: '入库时间', value: 'created_at_desc' },
+    { label: '收藏时间', value: 'bookmarked_at_desc' },
   ]), []);
+
+  const bookmarkedValue = (typeof bookmarked === 'boolean') ? (bookmarked ? '1' : '0') : ALL;
+  const bookmarkedOptions = useMemo(() => ([
+    { label: '全部', value: ALL },
+    { label: '仅书签', value: '1' },
+    { label: '仅未书签', value: '0' },
+  ]), []);
+
+  const clearSelection = useCallback(() => {
+    setSelectedRowKeys([]);
+    setSelectedRows([]);
+  }, []);
 
   const handleApplySearch = useCallback(() => {
     const nextQ = qInput.trim();
@@ -859,15 +955,15 @@ export default function DiaryList() {
   }, [qInput, scope, currentAccountId, currentUserId, currentDateFrom, pageSize, orderBy, order, syncUrl]);
 
   const handleSortChange = useCallback((value) => {
-    const v = String(value || '');
-    const parts = v.split('_');
-    const nextOrderBy = parseOrderBy(parts[0]) || 'ts';
-    const nextOrder = parseOrder(parts[1]) || 'desc';
+    const parsed = parseSortValue(value);
+    const nextOrderBy = parsed.orderBy;
+    const nextOrder = parsed.order;
     const nextQ = qInput.trim();
     setOrderBy(nextOrderBy);
     setOrder(nextOrder);
     setQ(nextQ);
     setPage(1);
+    clearSelection();
     syncUrl({
       q: nextQ,
       scope,
@@ -880,10 +976,35 @@ export default function DiaryList() {
       orderBy: nextOrderBy,
       order: nextOrder,
     }, { replace: false });
-  }, [qInput, scope, currentAccountId, currentUserId, currentDateFrom, currentDateTo, pageSize, syncUrl]);
+  }, [qInput, scope, currentAccountId, currentUserId, currentDateFrom, currentDateTo, pageSize, syncUrl, clearSelection]);
+
+  const handleBookmarkedChange = useCallback((value) => {
+    const v = String(value ?? '').trim();
+    const nextBookmarked = (v === '1') ? true : (v === '0') ? false : null;
+    const nextQ = qInput.trim();
+    setBookmarked(nextBookmarked);
+    setQ(nextQ);
+    setPage(1);
+    clearSelection();
+    syncUrl({
+      q: nextQ,
+      scope,
+      accountId: currentAccountId,
+      userId: currentUserId,
+      dateFrom: currentDateFrom,
+      dateTo: currentDateTo,
+      bookmarked: nextBookmarked,
+      page: 1,
+      pageSize,
+      orderBy,
+      order,
+    }, { replace: false });
+  }, [qInput, scope, currentAccountId, currentUserId, currentDateFrom, currentDateTo, orderBy, order, pageSize, syncUrl, clearSelection]);
 
   const handleReset = useCallback(() => {
     const nextScope = (readStringStorage(DIARY_LIST_SCOPE_KEY) === 'all') ? 'all' : 'matched';
+    const nextBookmarked = isBookmarksRoute ? true : null;
+    const nextOrderBy = isBookmarksRoute ? 'bookmarked_at' : 'ts';
     setQInput('');
     setQ('');
     setScope(nextScope);
@@ -891,9 +1012,11 @@ export default function DiaryList() {
     setUserValue(ALL);
     setDateFrom('');
     setDateTo('');
-    setOrderBy('ts');
+    setBookmarked(nextBookmarked);
+    setOrderBy(nextOrderBy);
     setOrder('desc');
     setPage(1);
+    clearSelection();
     syncUrl({
       q: '',
       scope: nextScope,
@@ -901,12 +1024,13 @@ export default function DiaryList() {
       userId: null,
       dateFrom: null,
       dateTo: null,
+      bookmarked: nextBookmarked,
       page: 1,
       pageSize,
-      orderBy: 'ts',
+      orderBy: nextOrderBy,
       order: 'desc',
     }, { replace: false });
-  }, [pageSize, syncUrl]);
+  }, [pageSize, syncUrl, isBookmarksRoute, clearSelection]);
 
   const handlePaginationChange = useCallback((nextPage, nextPageSize) => {
     const ps = PAGE_SIZE_OPTIONS.includes(nextPageSize) ? nextPageSize : pageSize;
@@ -915,6 +1039,7 @@ export default function DiaryList() {
 
     if (sizeChanged) setPageSize(ps);
     setPage(finalPage);
+    clearSelection();
 
     syncUrl({
       q,
@@ -923,12 +1048,74 @@ export default function DiaryList() {
       userId: currentUserId,
       dateFrom: currentDateFrom,
       dateTo: currentDateTo,
+      bookmarked,
       page: finalPage,
       pageSize: ps,
       orderBy,
       order,
     }, { replace: false });
-  }, [pageSize, q, scope, currentAccountId, currentUserId, currentDateFrom, currentDateTo, orderBy, order, syncUrl]);
+  }, [pageSize, q, scope, currentAccountId, currentUserId, currentDateFrom, currentDateTo, bookmarked, orderBy, order, syncUrl, clearSelection]);
+
+  const handleToggleBookmark = useCallback(async (diaryId, nextBookmarked) => {
+    const idNum = Number(diaryId);
+    if (!Number.isFinite(idNum) || idNum <= 0) return;
+    if (typeof nextBookmarked !== 'boolean') return;
+    if (bookmarkLoadingById?.[idNum]) return;
+
+    setBookmarkLoadingById((prev) => ({ ...(prev || {}), [idNum]: true }));
+    try {
+      await diaryAPI.setBookmark(idNum, nextBookmarked);
+      message.success(nextBookmarked ? '已加入书签' : '已取消书签');
+      await loadDiaries();
+    } catch (error) {
+      message.error('设置书签失败：' + getErrorMessage(error));
+    } finally {
+      setBookmarkLoadingById((prev) => ({ ...(prev || {}), [idNum]: false }));
+    }
+  }, [bookmarkLoadingById, loadDiaries]);
+
+  const handleBatchCancelBookmarks = useCallback(async () => {
+    const ids = (selectedRowKeys || [])
+      .map((k) => Number(k))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    if (!ids.length) return;
+
+    setBatchCancelLoading(true);
+    try {
+      await diaryAPI.setBookmarksBatch(ids, false);
+      message.success('已批量取消书签');
+      clearSelection();
+      await loadDiaries();
+    } catch (error) {
+      message.error('批量取消书签失败：' + getErrorMessage(error));
+    } finally {
+      setBatchCancelLoading(false);
+    }
+  }, [selectedRowKeys, clearSelection, loadDiaries]);
+
+  const handleExportMarkdown = useCallback(() => {
+    const rows = Array.isArray(selectedRows) ? selectedRows : [];
+    if (!rows.length) return;
+
+    const lines = [];
+    const title = isBookmarksRoute ? '书签' : '记录列表';
+    lines.push(`# ${title} 导出（${rows.length} 条）`);
+    lines.push('');
+    for (const r of rows) {
+      const idNum = Number(r?.id);
+      if (!Number.isFinite(idNum) || idNum <= 0) continue;
+      const dateText = String(r?.created_date || '').trim() || '-';
+      const titleText = String(r?.title || '无标题').replace(/\s+/g, ' ').trim();
+      lines.push(`- ${dateText} ${titleText} (/diary/${idNum})`);
+    }
+    lines.push('');
+
+    const base = isBookmarksRoute ? 'bookmarks' : 'diaries';
+    const qPart = safeFilenamePart(q);
+    const name = qPart ? `${base}-${formatExportTimestamp()}-${qPart}.md` : `${base}-${formatExportTimestamp()}.md`;
+    downloadText(lines.join('\n'), name, 'text/markdown;charset=utf-8');
+    message.success('已导出 Markdown');
+  }, [selectedRows, isBookmarksRoute, q]);
 
   const loadDiaryDetail = useCallback(async (diaryId) => {
     const idNum = Number(diaryId);
@@ -1015,9 +1202,9 @@ export default function DiaryList() {
     const re = /\[图(\d+)\]/g;
     const nodes = [];
     let lastIndex = 0;
-    let match;
-
-    while ((match = re.exec(text)) !== null) {
+    while (true) {
+      const match = re.exec(text);
+      if (!match) break;
       const start = match.index;
       const end = start + match[0].length;
       if (start > lastIndex) {
@@ -1116,9 +1303,9 @@ export default function DiaryList() {
     const regex = new RegExp(highlightRegexSource, 'gi');
     const out = [];
     let lastIndex = 0;
-    let m;
-
-    while ((m = regex.exec(raw)) !== null) {
+    while (true) {
+      const m = regex.exec(raw);
+      if (!m) break;
       const start = m.index;
       const end = start + String(m[0] || '').length;
       if (end <= start) {
@@ -1151,6 +1338,32 @@ export default function DiaryList() {
 
     const cols = [
       { title: '日期', dataIndex: 'created_date', key: 'date', width: 120, render: (v) => v || '-' },
+      {
+        title: '书签',
+        key: 'bookmark',
+        width: 70,
+        align: 'center',
+        render: (_, record) => {
+          const idNum = Number(record?.id);
+          const isBookmarked = record?.bookmarked_at != null;
+          const rowLoading = Number.isFinite(idNum) ? Boolean(bookmarkLoadingById?.[idNum]) : false;
+          return (
+            <Button
+              size="small"
+              type="text"
+              shape="circle"
+              icon={isBookmarked ? <StarFilled style={{ color: token.colorWarning }} /> : <StarOutlined />}
+              loading={rowLoading}
+              disabled={batchCancelLoading || !Number.isFinite(idNum) || idNum <= 0}
+              onClick={(e) => {
+                e?.stopPropagation?.();
+                handleToggleBookmark(idNum, !isBookmarked);
+              }}
+              title={isBookmarked ? '取消书签' : '加入书签'}
+            />
+          );
+        },
+      },
       {
         title: '修改时间',
         dataIndex: 'ts',
@@ -1234,7 +1447,7 @@ export default function DiaryList() {
     ];
 
     return cols;
-  }, [navigate, userById, token, renderHighlighted, statsEnabled, currentAccountId]);
+  }, [navigate, userById, token, renderHighlighted, statsEnabled, currentAccountId, bookmarkLoadingById, handleToggleBookmark, batchCancelLoading]);
 
   const noAccounts = initDone && (accounts?.length || 0) === 0;
 
@@ -1245,7 +1458,7 @@ export default function DiaryList() {
   return (
     <Page>
       <Title level={3} style={{ marginTop: 0 }}>
-        记录列表
+        {isBookmarksRoute ? '书签' : '记录列表'}
       </Title>
 
       <div style={{ position: 'sticky', top: 'var(--app-header-height)', zIndex: 50 }}>
@@ -1451,16 +1664,27 @@ export default function DiaryList() {
                   </Space>
                 </Space>
 
-                <Space wrap direction="horizontal" style={{ width: '100%' }}>
-                  <Space wrap>
-                    <Text type="secondary">日期</Text>
-                    <Input type="date" value={dateFrom} onChange={handleDateFromChange} style={{ width: 160 }} />
-                    <Text type="secondary">到</Text>
-                    <Input type="date" value={dateTo} onChange={handleDateToChange} style={{ width: 160 }} />
-                  </Space>
+                  <Space wrap direction="horizontal" style={{ width: '100%' }}>
+                    <Space wrap>
+                      <Text type="secondary">日期</Text>
+                      <Input type="date" value={dateFrom} onChange={handleDateFromChange} style={{ width: 160 }} />
+                      <Text type="secondary">到</Text>
+                      <Input type="date" value={dateTo} onChange={handleDateToChange} style={{ width: 160 }} />
+                    </Space>
 
-                  <Space wrap style={{ marginLeft: 'auto' }}>
-                    <Text type="secondary">排序</Text>
+                    <Space wrap>
+                      <Text type="secondary">书签</Text>
+                      <Select
+                        style={{ width: 140 }}
+                        value={bookmarkedValue}
+                        onChange={handleBookmarkedChange}
+                        options={bookmarkedOptions}
+                        disabled={loading}
+                      />
+                    </Space>
+
+                    <Space wrap style={{ marginLeft: 'auto' }}>
+                      <Text type="secondary">排序</Text>
                     <Select
                       style={{ width: 160 }}
                       value={sortValue}
@@ -1555,6 +1779,17 @@ export default function DiaryList() {
             </Space>
 
             <Space wrap style={{ width: '100%' }}>
+              <Text type="secondary">书签</Text>
+              <Select
+                style={{ flex: 1, minWidth: 180 }}
+                value={bookmarkedValue}
+                onChange={handleBookmarkedChange}
+                options={bookmarkedOptions}
+                disabled={loading}
+              />
+            </Space>
+
+            <Space wrap style={{ width: '100%' }}>
               <Text type="secondary">排序</Text>
               <Select
                 style={{ flex: 1, minWidth: 180 }}
@@ -1598,6 +1833,28 @@ export default function DiaryList() {
       )}
 
       <Card>
+        {!isMobile && viewMode === 'list' && (
+          <div style={{ marginBottom: 12 }}>
+            <Space wrap style={{ width: '100%', justifyContent: 'space-between' }}>
+              <Text type="secondary">已选 {selectedRowKeys.length} 条（仅当前页）</Text>
+              <Space wrap>
+                <Button
+                  onClick={handleBatchCancelBookmarks}
+                  disabled={batchCancelLoading || selectedRowKeys.length === 0}
+                  loading={batchCancelLoading}
+                >
+                  批量取消书签
+                </Button>
+                <Button
+                  onClick={handleExportMarkdown}
+                  disabled={selectedRowKeys.length === 0}
+                >
+                  导出 Markdown
+                </Button>
+              </Space>
+            </Space>
+          </div>
+        )}
         {viewMode === 'read' ? (
           <List
             dataSource={diaries}
@@ -1638,17 +1895,21 @@ export default function DiaryList() {
                       {item.weather && <Tag color="cyan">{item.weather}</Tag>}
                     </Space>
 
-                    <div
-                      role="button"
-                      tabIndex={0}
+                    <button
+                      type="button"
                       onClick={() => toggleDiaryExpanded(diaryId)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') toggleDiaryExpanded(diaryId);
+                      style={{
+                        cursor: 'pointer',
+                        padding: 0,
+                        border: 'none',
+                        background: 'transparent',
+                        textAlign: 'left',
+                        width: '100%',
+                        display: 'block',
                       }}
-                      style={{ cursor: 'pointer' }}
                     >
                       <Text strong>{renderHighlighted(item.title || '无标题')}</Text>
-                    </div>
+                    </button>
 
                     {!isOpen && (
                       <Paragraph
@@ -1771,6 +2032,13 @@ export default function DiaryList() {
             columns={columns}
             dataSource={diaries}
             rowKey="id"
+            rowSelection={{
+              selectedRowKeys,
+              onChange: (keys, rows) => {
+                setSelectedRowKeys(keys);
+                setSelectedRows(rows);
+              },
+            }}
             loading={loading}
             pagination={false}
             locale={{ emptyText: '暂无记录' }}

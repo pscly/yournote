@@ -102,6 +102,8 @@ export const diaryAPI = {
   get: (id) => api.get(`/diaries/${id}`),
   byAccount: (accountId, limit = 50) => api.get(`/diaries/by-account/${accountId}`, { params: { limit } }),
   refresh: (id) => api.post(`/diaries/${id}/refresh`),
+  setBookmark: (diaryId, bookmarked) => api.put(`/diaries/${diaryId}/bookmark`, { bookmarked }),
+  setBookmarksBatch: (diaryIds, bookmarked) => api.put('/diaries/bookmarks/batch', { diary_ids: diaryIds, bookmarked }),
 };
 
 // 记录修改历史

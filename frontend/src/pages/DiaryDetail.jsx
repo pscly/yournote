@@ -32,6 +32,8 @@ import {
   CloudOutlined,
   MenuOutlined,
   SmileOutlined,
+  StarFilled,
+  StarOutlined,
 } from '@ant-design/icons';
 import { diaryAPI, diaryHistoryAPI, userAPI } from '../services/api';
 import PageState from '../components/PageState';
@@ -63,6 +65,7 @@ export default function DiaryDetail() {
   const [loading, setLoading] = useState(true);
   const [pageError, setPageError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+  const [bookmarking, setBookmarking] = useState(false);
   const [pairedUserId, setPairedUserId] = useState(null);
   const [pairUsers, setPairUsers] = useState({ main: null, matched: null });
   const [pairLoading, setPairLoading] = useState(false);
@@ -341,6 +344,30 @@ export default function DiaryDetail() {
       message.error('刷新失败：' + getErrorMessage(error));
     } finally {
       setRefreshing(false);
+    }
+  };
+
+  const isBookmarked = !!diary?.bookmarked_at;
+
+  const toggleBookmark = async () => {
+    if (bookmarking) return;
+    if (!currentDiaryId) {
+      message.warning('记录 ID 无效，无法收藏');
+      return;
+    }
+
+    const nextBookmarked = !isBookmarked;
+
+    setBookmarking(true);
+    try {
+      const res = await diaryAPI.setBookmark(currentDiaryId, nextBookmarked);
+      const bookmarkedAt = res?.data?.bookmarked_at ?? null;
+      setDiary((prev) => ({ ...prev, bookmarked_at: bookmarkedAt }));
+      message.success(nextBookmarked ? '已收藏' : '已取消收藏');
+    } catch (error) {
+      message.error((nextBookmarked ? '收藏失败：' : '取消收藏失败：') + getErrorMessage(error));
+    } finally {
+      setBookmarking(false);
     }
   };
 
@@ -914,6 +941,15 @@ export default function DiaryDetail() {
               </Button>
               <Button onClick={refreshDiary} loading={refreshing} size={isMobile ? 'middle' : 'large'}>
                 {isMobile ? '刷新详情' : '重新访问此记录详情（强制更新）'}
+              </Button>
+              <Button
+                icon={isBookmarked ? <StarFilled /> : <StarOutlined />}
+                onClick={toggleBookmark}
+                loading={bookmarking}
+                disabled={bookmarking}
+                size={isMobile ? 'middle' : 'large'}
+              >
+                {isBookmarked ? '取消收藏' : '收藏'}
               </Button>
               {isMobile && (
                 <Button icon={<MenuOutlined />} onClick={() => setDrawerVisible(true)} size={isMobile ? 'middle' : 'large'}>

@@ -21,6 +21,7 @@ import {
   MenuOutlined,
   MoonOutlined,
   SendOutlined,
+  StarOutlined,
   SunOutlined,
   TeamOutlined,
   UserOutlined,
@@ -30,6 +31,7 @@ import Dashboard from './pages/Dashboard';
 import AccountManage from './pages/AccountManage';
 import DiaryList from './pages/DiaryList';
 import DiaryDetail from './pages/DiaryDetail';
+import Bookmarks from './pages/Bookmarks';
 import PairedIncreaseHistory from './pages/PairedIncreaseHistory';
 import PublishDiary from './pages/PublishDiary';
 import AllUsers from './pages/AllUsers';
@@ -115,6 +117,7 @@ function AppShell({ themeMode, setThemeMode }) {
     if (pathname === '/' || pathname.startsWith('/dashboard')) return '/';
     if (pathname.startsWith('/accounts')) return '/accounts';
     if (pathname.startsWith('/diaries') || pathname.startsWith('/diary/')) return '/diaries';
+    if (pathname.startsWith('/bookmarks')) return '/bookmarks';
     if (pathname.startsWith('/publish')) return '/publish';
     if (pathname.startsWith('/users') || pathname.startsWith('/user/')) return '/users';
     if (pathname.startsWith('/sync-logs')) return '/sync-logs';
@@ -125,6 +128,7 @@ function AppShell({ themeMode, setThemeMode }) {
     { key: '/', icon: <AppstoreOutlined />, label: '仪表盘' },
     { key: '/accounts', icon: <UserOutlined />, label: '账号管理' },
     { key: '/diaries', icon: <BookOutlined />, label: '记录列表' },
+    { key: '/bookmarks', icon: <StarOutlined />, label: '书签/收藏' },
     { key: '/publish', icon: <SendOutlined />, label: '发布记录' },
     { key: '/users', icon: <TeamOutlined />, label: '所有用户' },
     { key: '/sync-logs', icon: <HistoryOutlined />, label: '同步记录' },
@@ -323,6 +327,7 @@ function AppShell({ themeMode, setThemeMode }) {
             <Route path="/" element={<Dashboard />} />
             <Route path="/accounts" element={<AccountManage />} />
             <Route path="/diaries" element={<DiaryList />} />
+            <Route path="/bookmarks/*" element={<Bookmarks />} />
             <Route path="/diary/:id" element={<DiaryDetail />} />
             <Route path="/paired-increase-history" element={<PairedIncreaseHistory />} />
             <Route path="/publish" element={<PublishDiary />} />

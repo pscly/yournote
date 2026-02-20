@@ -50,3 +50,11 @@ docker compose down
 - 后端接口（通过前端 Nginx 同源反代）：`/api/*`
 - 后端文档：`/docs`、`/redoc`
 
+### 6) 网络/域名常见坑（IPv4 / IPv6）
+
+如果你用域名访问，在某些网络（尤其是纯 IPv4 的 Wi‑Fi）里出现“域名解析失败 / 访问不到”，很多时候并不是服务挂了，而是**域名只有 AAAA（IPv6）记录**，没有 A（IPv4）记录。
+
+建议：
+- 尽量让域名同时具备 **A（IPv4）+ AAAA（IPv6）** 记录（双栈），兼容性最好。
+- 自测方式：分别查询 `A` 与 `AAAA`（可用 `dig <域名> A`、`dig <域名> AAAA` 或在线 DNS 工具）。
+- 如果上行没有公网 IPv4 / 处于 CGNAT：即使补了 A 记录，也可能无法从外网通过 IPv4 连入，需要 Cloudflare Tunnel / FRP / VPS 反代 等方案。

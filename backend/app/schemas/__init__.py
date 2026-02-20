@@ -14,6 +14,12 @@ from .diary import (
     DiaryImageAttachment,
     DiaryResponse,
 )
+from .diary_bookmark import (
+    DiaryBookmarkBatchResponse,
+    DiaryBookmarkBatchUpsertRequest,
+    DiaryBookmarkItemResponse,
+    DiaryBookmarkUpsertRequest,
+)
 from .diary_query import DiaryListItemResponse, DiaryQueryNormalized, DiaryQueryResponse
 from .diary_refresh import DiaryRefreshInfo, DiaryRefreshResponse
 from .publish_diary import (
@@ -53,6 +59,10 @@ __all__ = [
     "DiaryImageAttachment",
     "DiaryAttachments",
     "DiaryDetailResponse",
+    "DiaryBookmarkUpsertRequest",
+    "DiaryBookmarkBatchUpsertRequest",
+    "DiaryBookmarkItemResponse",
+    "DiaryBookmarkBatchResponse",
     "DiaryListItemResponse",
     "DiaryQueryNormalized",
     "DiaryQueryResponse",

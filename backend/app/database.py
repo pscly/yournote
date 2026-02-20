@@ -12,7 +12,7 @@ _connect_args = {"timeout": 30} if _is_sqlite else {}
 
 # Create async engine (supports both SQLite and PostgreSQL)
 engine = create_async_engine(
-    settings.database_url,
+    settings.database_url,  # pyright: ignore[reportArgumentType]
     echo=settings.sql_echo,
     pool_pre_ping=True,
     future=True,
@@ -21,6 +21,7 @@ engine = create_async_engine(
 
 # 只有 SQLite 才需要 PRAGMA；PostgreSQL 会忽略
 if _is_sqlite:
+
     @event.listens_for(engine.sync_engine, "connect")
     def _set_sqlite_pragma(dbapi_connection, _connection_record):
         cursor = dbapi_connection.cursor()
@@ -30,11 +31,10 @@ if _is_sqlite:
         cursor.execute("PRAGMA busy_timeout=30000;")
         cursor.close()
 
+
 # Create async session factory
 AsyncSessionLocal = async_sessionmaker(
-    engine,
-    class_=AsyncSession,
-    expire_on_commit=False
+    engine, class_=AsyncSession, expire_on_commit=False
 )
 
 # Base class for models
@@ -58,7 +58,11 @@ async def init_db():
     """Initialize database tables"""
     # 确保所有模型都已被导入，从而注册到 Base.metadata
     # （否则单独运行 init_db.py 时可能出现“没有建表”的情况）
-    from . import models  # noqa: F401
+    # 动态导入用于规避 basedpyright 的 import cycle 检测。
+    import importlib
+
+    module_name = f"{__package__}.models" if __package__ else "backend.app.models"
+    _ = importlib.import_module(module_name)
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -79,19 +83,38 @@ async def _ensure_schema(conn) -> None:
         result = await conn.execute(text("PRAGMA table_info(accounts)"))
         cols = {row[1] for row in result.fetchall()}
         if "login_password" not in cols:
-            await conn.execute(text("ALTER TABLE accounts ADD COLUMN login_password TEXT"))
+            await conn.execute(
+                text("ALTER TABLE accounts ADD COLUMN login_password TEXT")
+            )
+
+        result = await conn.execute(text("PRAGMA table_info(diaries)"))
+        diary_cols = {row[1] for row in result.fetchall()}
+        if "bookmarked_at" not in diary_cols:
+            await conn.execute(
+                text("ALTER TABLE diaries ADD COLUMN bookmarked_at INTEGER")
+            )
     elif dialect.startswith("postgresql"):
-        await conn.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS login_password TEXT"))
+        await conn.execute(
+            text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS login_password TEXT")
+        )
+
+        await conn.execute(
+            text("ALTER TABLE diaries ADD COLUMN IF NOT EXISTS bookmarked_at BIGINT")
+        )
 
     # 索引：同步日志查询（按时间排序 / 按账号查最近一条）
     # 说明：
     # - 前端会轮询同步日志（同步指示器/刷新等待），没有索引时随着数据量增长会越来越慢
     # - IF NOT EXISTS 同时兼容 SQLite / PostgreSQL
     await conn.execute(
-        text("CREATE INDEX IF NOT EXISTS idx_sync_logs_sync_time_desc ON sync_logs (sync_time DESC)")
+        text(
+            "CREATE INDEX IF NOT EXISTS idx_sync_logs_sync_time_desc ON sync_logs (sync_time DESC)"
+        )
     )
     await conn.execute(
-        text("CREATE INDEX IF NOT EXISTS idx_sync_logs_account_time_desc ON sync_logs (account_id, sync_time DESC)")
+        text(
+            "CREATE INDEX IF NOT EXISTS idx_sync_logs_account_time_desc ON sync_logs (account_id, sync_time DESC)"
+        )
     )
 
     # 记录列表/搜索：常用排序索引
@@ -103,7 +126,14 @@ async def _ensure_schema(conn) -> None:
         text("CREATE INDEX IF NOT EXISTS idx_diaries_ts_desc ON diaries (ts DESC)")
     )
     await conn.execute(
-        text("CREATE INDEX IF NOT EXISTS idx_diaries_created_at_desc ON diaries (created_at DESC)")
+        text(
+            "CREATE INDEX IF NOT EXISTS idx_diaries_created_at_desc ON diaries (created_at DESC)"
+        )
+    )
+    await conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS idx_diaries_bookmarked_at_desc ON diaries (bookmarked_at DESC)"
+        )
     )
 
     # 记录查询（筛选 + 日期范围 + 稳定排序）常用复合索引
@@ -111,13 +141,19 @@ async def _ensure_schema(conn) -> None:
     # - PostgreSQL 可反向扫描索引，因此不强依赖 DESC；SQLite 也能从复合索引里获益
     # - 这些索引能显著加速 “账号/作者 + 日期范围 + 分页” 的常见查询
     await conn.execute(
-        text("CREATE INDEX IF NOT EXISTS idx_diaries_acc_date_id ON diaries (account_id, created_date, id)")
+        text(
+            "CREATE INDEX IF NOT EXISTS idx_diaries_acc_date_id ON diaries (account_id, created_date, id)"
+        )
     )
     await conn.execute(
-        text("CREATE INDEX IF NOT EXISTS idx_diaries_user_date_id ON diaries (user_id, created_date, id)")
+        text(
+            "CREATE INDEX IF NOT EXISTS idx_diaries_user_date_id ON diaries (user_id, created_date, id)"
+        )
     )
     await conn.execute(
-        text("CREATE INDEX IF NOT EXISTS idx_diaries_date_id ON diaries (created_date, id)")
+        text(
+            "CREATE INDEX IF NOT EXISTS idx_diaries_date_id ON diaries (created_date, id)"
+        )
     )
 
     # 配对范围（scope=matched）会 join paired_relationships 并过滤 is_active

@@ -1,10 +1,20 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text, Date, BigInteger, ForeignKey
+from sqlalchemy import (
+    Column,
+    Integer,
+    String,
+    DateTime,
+    Text,
+    Date,
+    BigInteger,
+    ForeignKey,
+)
 from sqlalchemy.sql import func
 from ..database import Base
 
 
 class Diary(Base):
     """日记表 - 存储日记内容"""
+
     __tablename__ = "diaries"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -23,5 +33,9 @@ class Diary(Base):
     is_simple = Column(Integer, default=0)
     msg_count = Column(Integer, default=0)
     ts = Column(BigInteger)
+    # 收藏时间（epoch 毫秒时间戳）；NULL 表示未收藏
+    bookmarked_at = Column(BigInteger, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

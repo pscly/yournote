@@ -42,11 +42,12 @@ deploy_u3:
     - |
       echo "健康检查：检测 frontend 端口并访问首页"
       port="$(docker compose --project-directory "${DEPLOY_DIR}" -f "${DEPLOY_DIR}/docker-compose.yml" port frontend 80 | awk -F: 'NR==1{print $NF}' | tail -n 1 || true)"
-      if [ -n "${port}" ]; then
-        curl -fsS "http://127.0.0.1:${port}/" >/dev/null
-      else
-        echo "WARNING: 未检测到 frontend 端口映射，跳过 curl 检查。"
-      fi
+       if [ -n "${port}" ]; then
+         curl -fsS "http://127.0.0.1:${port}/" >/dev/null
+         code="$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:${port}/api/access/status")"; [[ "${code}" == "200" || "${code}" == "401" ]]
+       else
+         echo "WARNING: 未检测到 frontend 端口映射，跳过 curl 检查。"
+       fi
 
 redeploy_u3:
   stage: deploy

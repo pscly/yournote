@@ -9,12 +9,16 @@ from datetime import date
 from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import engine, get_db
 from ..models import Account, Diary, PairedRelationship, User
 from ..schemas import (
     DiaryAttachments,
+    DiaryBookmarkBatchResponse,
+    DiaryBookmarkBatchUpsertRequest,
+    DiaryBookmarkItemResponse,
+    DiaryBookmarkUpsertRequest,
     DiaryDetailResponse,
     DiaryListItemResponse,
     DiaryQueryNormalized,
@@ -258,9 +262,15 @@ async def query_diaries(
     include_preview: bool = Query(
         True, description="是否返回 content_preview（列表预览）"
     ),
+    bookmarked: bool | None = Query(
+        None,
+        description="是否收藏过滤：true=仅收藏，false=仅未收藏，不传=不过滤",
+    ),
     limit: int = Query(50, ge=1, le=200, description="分页大小"),
     offset: int = Query(0, ge=0, description="分页 offset"),
-    order_by: str = Query("ts", description="排序字段：ts/created_date/created_at"),
+    order_by: str = Query(
+        "ts", description="排序字段：ts/created_date/created_at/bookmarked_at"
+    ),
     order: str = Query("desc", description="排序方向：desc/asc"),
     preview_len: int = Query(120, ge=0, le=1000, description="内容预览长度（字符数）"),
     db: AsyncSession = Depends(get_db),
@@ -281,9 +291,10 @@ async def query_diaries(
         raise HTTPException(status_code=422, detail="q_syntax must be smart or plain")
 
     order_by_norm = (order_by or "").strip().lower() or "ts"
-    if order_by_norm not in {"ts", "created_date", "created_at"}:
+    if order_by_norm not in {"ts", "created_date", "created_at", "bookmarked_at"}:
         raise HTTPException(
-            status_code=422, detail="order_by must be ts, created_date or created_at"
+            status_code=422,
+            detail="order_by must be ts, created_date, created_at or bookmarked_at",
         )
 
     order_norm = (order or "").strip().lower() or "desc"
@@ -306,6 +317,11 @@ async def query_diaries(
         where_clauses.append(Diary.created_date >= df)
     if dt is not None:
         where_clauses.append(Diary.created_date <= dt)
+
+    if bookmarked is True:
+        where_clauses.append(Diary.bookmarked_at.is_not(None))
+    elif bookmarked is False:
+        where_clauses.append(Diary.bookmarked_at.is_(None))
 
     q_text = (q or "").strip()
     if q_syntax_norm == "plain":
@@ -385,6 +401,7 @@ async def query_diaries(
         "ts": Diary.ts,
         "created_date": Diary.created_date,
         "created_at": Diary.created_at,
+        "bookmarked_at": Diary.bookmarked_at,
     }
     primary_col = col_map[order_by_norm]
     if order_norm == "asc":
@@ -396,7 +413,10 @@ async def query_diaries(
         id_order = Diary.id.desc()
         date_order = Diary.created_date.desc()
 
-    order_clauses = [primary_order]
+    order_clauses = []
+    if order_by_norm == "bookmarked_at":
+        order_clauses.append(Diary.bookmarked_at.is_(None).asc())
+    order_clauses.append(primary_order)
     if order_by_norm != "created_date":
         order_clauses.append(date_order)
     order_clauses.append(id_order)
@@ -427,6 +447,7 @@ async def query_diaries(
                 account_id=int(dd.account_id),
                 created_date=dd.created_date,
                 ts=dd.ts,
+                bookmarked_at=getattr(dd, "bookmarked_at", None),
                 created_at=dd.created_at,
                 updated_at=dd.updated_at,
                 title=dd.title,
@@ -464,6 +485,110 @@ async def query_diaries(
     )
 
 
+@router.put("/{diary_id}/bookmark", response_model=DiaryBookmarkItemResponse)
+async def upsert_diary_bookmark(
+    diary_id: int,
+    req: DiaryBookmarkUpsertRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    if bool(req.bookmarked) is True:
+        now_ms = int(time.time_ns() // 1_000_000)
+        result = await db.execute(
+            update(Diary)
+            .where(Diary.id == diary_id, Diary.bookmarked_at.is_(None))
+            .values(bookmarked_at=now_ms)
+        )
+        result_any = cast(Any, result)
+        if int(getattr(result_any, "rowcount", 0) or 0) > 0:
+            await db.commit()
+    else:
+        result = await db.execute(
+            update(Diary)
+            .where(Diary.id == diary_id, Diary.bookmarked_at.is_not(None))
+            .values(bookmarked_at=None)
+        )
+        result_any = cast(Any, result)
+        if int(getattr(result_any, "rowcount", 0) or 0) > 0:
+            await db.commit()
+
+    row = (
+        await db.execute(
+            select(Diary.id, Diary.bookmarked_at).where(Diary.id == diary_id)
+        )
+    ).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Diary not found")
+    _, bookmarked_at = row
+    return DiaryBookmarkItemResponse(
+        diary_id=int(diary_id), bookmarked_at=bookmarked_at
+    )
+
+
+@router.put("/bookmarks/batch", response_model=DiaryBookmarkBatchResponse)
+async def upsert_diary_bookmarks_batch(
+    req: DiaryBookmarkBatchUpsertRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    diary_ids: list[int] = []
+    seen: set[int] = set()
+    for raw in req.diary_ids:
+        try:
+            did = int(raw)
+        except Exception:
+            continue
+        if did <= 0:
+            continue
+        if did in seen:
+            continue
+        seen.add(did)
+        diary_ids.append(did)
+
+    if not diary_ids:
+        return DiaryBookmarkBatchResponse(updated=0, items=[])
+
+    max_len = 200
+    if len(diary_ids) > max_len:
+        raise HTTPException(
+            status_code=422,
+            detail=f"diary_ids too large (max {max_len})",
+        )
+
+    updated = 0
+    if bool(req.bookmarked) is True:
+        now_ms = int(time.time_ns() // 1_000_000)
+        result = await db.execute(
+            update(Diary)
+            .where(Diary.id.in_(diary_ids), Diary.bookmarked_at.is_(None))
+            .values(bookmarked_at=now_ms)
+        )
+        result_any = cast(Any, result)
+        updated = int(getattr(result_any, "rowcount", 0) or 0)
+        if updated > 0:
+            await db.commit()
+    else:
+        result = await db.execute(
+            update(Diary)
+            .where(Diary.id.in_(diary_ids), Diary.bookmarked_at.is_not(None))
+            .values(bookmarked_at=None)
+        )
+        result_any = cast(Any, result)
+        updated = int(getattr(result_any, "rowcount", 0) or 0)
+        if updated > 0:
+            await db.commit()
+
+    rows = await db.execute(
+        select(Diary.id, Diary.bookmarked_at).where(Diary.id.in_(diary_ids))
+    )
+    got = {int(did): bookmarked_at for did, bookmarked_at in rows.all()}
+    items = [
+        DiaryBookmarkItemResponse(diary_id=did, bookmarked_at=got[did])
+        for did in diary_ids
+        if did in got
+    ]
+
+    return DiaryBookmarkBatchResponse(updated=updated, items=items)
+
+
 @router.get("/{diary_id}", response_model=DiaryDetailResponse)
 async def get_diary(diary_id: int, db: AsyncSession = Depends(get_db)):
     """获取单条日记详情"""
@@ -480,11 +605,12 @@ async def get_diary(diary_id: int, db: AsyncSession = Depends(get_db)):
         service = ImageCacheService(db)
         diary_id_val = int(getattr(diary, "id", 0) or 0)
         content_val = cast(str | None, getattr(diary, "content", None))
-        attachments = await service.build_attachments_for_content(
+        raw_attachments = await service.build_attachments_for_content(
             diary_id=diary_id_val,
             nideriji_userid=nideriji_userid,
             content=content_val,
         )
+        attachments = DiaryAttachments.model_validate(raw_attachments)
 
     base = DiaryResponse.model_validate(diary)
     return DiaryDetailResponse(**base.model_dump(), attachments=attachments)

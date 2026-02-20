@@ -30,6 +30,7 @@ class DiaryResponse(BaseModel):
     mood: str | None
     space: str | None
     ts: int | None
+    bookmarked_at: int | None = None
     msg_count: int = 0
     created_at: datetime | None = None
     updated_at: datetime | None = None

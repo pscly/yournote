@@ -20,6 +20,7 @@ class DiaryListItemResponse(BaseModel):
 
     created_date: date | None = None
     ts: int | None = None
+    bookmarked_at: int | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

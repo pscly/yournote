@@ -266,10 +266,17 @@ async def query_diaries(
         None,
         description="是否收藏过滤：true=仅收藏，false=仅未收藏，不传=不过滤",
     ),
+    has_msg: bool | None = Query(
+        None,
+        description=(
+            "是否有留言过滤：true=仅有留言（msg_count>0），"
+            "false=仅无留言（msg_count<=0），不传=不过滤"
+        ),
+    ),
     limit: int = Query(50, ge=1, le=200, description="分页大小"),
     offset: int = Query(0, ge=0, description="分页 offset"),
     order_by: str = Query(
-        "ts", description="排序字段：ts/created_date/created_at/bookmarked_at"
+        "ts", description="排序字段：ts/created_date/created_at/bookmarked_at/msg_count"
     ),
     order: str = Query("desc", description="排序方向：desc/asc"),
     preview_len: int = Query(120, ge=0, le=1000, description="内容预览长度（字符数）"),
@@ -291,10 +298,16 @@ async def query_diaries(
         raise HTTPException(status_code=422, detail="q_syntax must be smart or plain")
 
     order_by_norm = (order_by or "").strip().lower() or "ts"
-    if order_by_norm not in {"ts", "created_date", "created_at", "bookmarked_at"}:
+    if order_by_norm not in {
+        "ts",
+        "created_date",
+        "created_at",
+        "bookmarked_at",
+        "msg_count",
+    }:
         raise HTTPException(
             status_code=422,
-            detail="order_by must be ts, created_date, created_at or bookmarked_at",
+            detail="order_by must be ts, created_date, created_at, bookmarked_at or msg_count",
         )
 
     order_norm = (order or "").strip().lower() or "desc"
@@ -322,6 +335,11 @@ async def query_diaries(
         where_clauses.append(Diary.bookmarked_at.is_not(None))
     elif bookmarked is False:
         where_clauses.append(Diary.bookmarked_at.is_(None))
+
+    if has_msg is True:
+        where_clauses.append(func.coalesce(Diary.msg_count, 0) > 0)
+    elif has_msg is False:
+        where_clauses.append(func.coalesce(Diary.msg_count, 0) <= 0)
 
     q_text = (q or "").strip()
     if q_syntax_norm == "plain":
@@ -402,6 +420,7 @@ async def query_diaries(
         "created_date": Diary.created_date,
         "created_at": Diary.created_at,
         "bookmarked_at": Diary.bookmarked_at,
+        "msg_count": func.coalesce(Diary.msg_count, 0),
     }
     primary_col = col_map[order_by_norm]
     if order_norm == "asc":

@@ -67,8 +67,32 @@ deploy_u3:
       port="$(docker compose --project-directory "${DEPLOY_DIR}" -f "${DEPLOY_DIR}/docker-compose.yml" port frontend 80 | awk -F: 'NR==1{print $NF}' | tail -n 1 || true)"
       if [ -n "${port}" ]; then
         # Runner 环境存在代理变量时，curl 可能走代理误报 502；这里强制直连。
-        curl --noproxy '*' -fsS "http://127.0.0.1:${port}/" >/dev/null
-        code="$(curl --noproxy '*' -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:${port}/api/access/status")"; [[ "${code}" == "200" || "${code}" == "401" ]]
+        echo "frontend 映射端口：${port}"
+
+        ok=""
+        for i in 1 2 3 4 5 6 7 8 9 10; do
+          if curl --noproxy '*' -fsS "http://127.0.0.1:${port}/" >/dev/null; then
+            code="$(curl --noproxy '*' -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:${port}/api/access/status" || true)"
+            code="${code:-000}"
+            echo "access/status http_code=${code}（尝试 ${i}/10）"
+            if [[ "${code}" == "200" || "${code}" == "401" ]]; then
+              ok=1
+              break
+            fi
+          else
+            echo "WARNING: 首页不可达（尝试 ${i}/10），等待容器就绪..." >&2
+          fi
+
+          sleep 2
+        done
+
+        if [ -z "${ok}" ]; then
+          echo "ERROR: 健康检查失败（frontend port=${port}）。输出容器状态与日志用于排障。" >&2
+          docker compose --project-directory "${DEPLOY_DIR}" -f "${DEPLOY_DIR}/docker-compose.yml" ps || true
+          docker compose --project-directory "${DEPLOY_DIR}" -f "${DEPLOY_DIR}/docker-compose.yml" logs --tail 200 backend || true
+          docker compose --project-directory "${DEPLOY_DIR}" -f "${DEPLOY_DIR}/docker-compose.yml" logs --tail 200 frontend || true
+          exit 1
+        fi
       else
         echo "WARNING: 未检测到 frontend 端口映射，跳过 curl 检查。"
       fi

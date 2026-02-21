@@ -428,6 +428,17 @@ export default function Dashboard() {
                       +{Number(msgCountTodayIncrease) || 0}
                     </Text>
                     {msgCountIncreaseLoading && <Spin size="small" />}
+                    <Button
+                      type="link"
+                      size="small"
+                      style={{ padding: 0, height: 'auto' }}
+                      onClick={(e) => {
+                        e?.stopPropagation?.();
+                        navigate('/messages');
+                      }}
+                    >
+                      查看所有有留言的记录
+                    </Button>
                   </Space>
 
                   <div style={{ marginTop: 8, maxHeight: 160, overflowY: 'auto' }}>

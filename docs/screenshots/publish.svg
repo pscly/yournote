@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675">
+  <defs>
+    <style>
+      .bg { fill: #ffffff; }
+      .frame { fill: none; stroke: #c7c7c7; stroke-width: 2; }
+      .muted { fill: #7a7a7a; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 18px; }
+      .title { fill: #111111; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 28px; font-weight: 700; }
+      .label { fill: #111111; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 18px; }
+      .panel { fill: #f6f7f9; stroke: #d9d9d9; stroke-width: 1; }
+      .btn { fill: #e9eefc; stroke: #c3d2ff; stroke-width: 1; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1200" height="675" />
+  <rect class="frame" x="18" y="18" width="1164" height="639" rx="16" />
+
+  <!-- Top bar -->
+  <rect x="34" y="34" width="1132" height="58" rx="12" fill="#111111" opacity="0.06" />
+  <text class="title" x="52" y="74">Publish</text>
+  <text class="muted" x="210" y="74">(draft by date, publish runs, history)</text>
+
+  <!-- Left: editor -->
+  <rect x="34" y="108" width="760" height="530" rx="14" fill="#ffffff" stroke="#d9d9d9" />
+  <text class="label" x="56" y="146">Editor</text>
+  <rect class="panel" x="56" y="164" width="716" height="46" rx="12" />
+  <text class="muted" x="72" y="194">Date: YYYY-MM-DD   Auto-save</text>
+
+  <rect class="panel" x="56" y="228" width="716" height="320" rx="12" />
+  <text class="muted" x="72" y="264">Draft content ...</text>
+
+  <rect class="btn" x="56" y="566" width="160" height="50" rx="12" />
+  <text class="label" x="78" y="598">Publish</text>
+  <rect class="btn" x="230" y="566" width="200" height="50" rx="12" />
+  <text class="label" x="252" y="598">Save draft</text>
+
+  <!-- Right: accounts + runs -->
+  <rect x="810" y="108" width="356" height="250" rx="14" fill="#ffffff" stroke="#d9d9d9" />
+  <text class="label" x="832" y="146">Target accounts</text>
+  <rect class="panel" x="832" y="164" width="312" height="46" rx="12" />
+  <text class="muted" x="848" y="194">A1  [x]</text>
+  <rect class="panel" x="832" y="220" width="312" height="46" rx="12" />
+  <text class="muted" x="848" y="250">A2  [ ]</text>
+  <rect class="panel" x="832" y="276" width="312" height="46" rx="12" />
+  <text class="muted" x="848" y="306">A3  [x]</text>
+
+  <rect x="810" y="374" width="356" height="264" rx="14" fill="#ffffff" stroke="#d9d9d9" />
+  <text class="label" x="832" y="412">Publish runs</text>
+  <text class="muted" x="832" y="440">(history, per-account status)</text>
+  <rect class="panel" x="832" y="458" width="312" height="46" rx="12" />
+  <rect class="panel" x="832" y="514" width="312" height="46" rx="12" />
+  <rect class="panel" x="832" y="570" width="312" height="46" rx="12" />
+  <text class="muted" x="848" y="488">run#123  success</text>
+  <text class="muted" x="848" y="544">run#122  running</text>
+  <text class="muted" x="848" y="600">run#121  failed</text>
+</svg>

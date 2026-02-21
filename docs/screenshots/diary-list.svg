@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675">
+  <defs>
+    <style>
+      .bg { fill: #ffffff; }
+      .frame { fill: none; stroke: #c7c7c7; stroke-width: 2; }
+      .muted { fill: #7a7a7a; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 18px; }
+      .title { fill: #111111; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 28px; font-weight: 700; }
+      .label { fill: #111111; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 18px; }
+      .panel { fill: #f6f7f9; stroke: #d9d9d9; stroke-width: 1; }
+      .chip { fill: #eef7ee; stroke: #cfe7cf; stroke-width: 1; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1200" height="675" />
+  <rect class="frame" x="18" y="18" width="1164" height="639" rx="16" />
+
+  <!-- Top bar -->
+  <rect x="34" y="34" width="1132" height="58" rx="12" fill="#111111" opacity="0.06" />
+  <text class="title" x="52" y="74">Diary List</text>
+  <text class="muted" x="240" y="74">(search, filters, pagination)</text>
+
+  <!-- Filter panel -->
+  <rect class="panel" x="34" y="108" width="1132" height="120" rx="14" />
+  <text class="label" x="56" y="146">Search</text>
+  <rect x="160" y="124" width="610" height="44" rx="12" fill="#ffffff" stroke="#d9d9d9" />
+  <text class="muted" x="176" y="154">q: terms / "phrase" / -exclude</text>
+
+  <rect class="chip" x="790" y="124" width="160" height="44" rx="12" />
+  <text class="label" x="806" y="154">Scope</text>
+  <text class="muted" x="870" y="154">matched</text>
+
+  <rect class="chip" x="970" y="124" width="170" height="44" rx="12" />
+  <text class="label" x="986" y="154">Order</text>
+  <text class="muted" x="1048" y="154">ts desc</text>
+
+  <text class="muted" x="56" y="204">Other: account / author / date range / bookmarked / has_msg ...</text>
+
+  <!-- Table/List area -->
+  <rect x="34" y="244" width="1132" height="394" rx="14" fill="#ffffff" stroke="#d9d9d9" />
+  <text class="label" x="56" y="284">Results</text>
+  <text class="muted" x="160" y="284">(click row to open detail)</text>
+
+  <!-- Header row -->
+  <rect x="56" y="304" width="1088" height="44" rx="10" fill="#111111" opacity="0.04" />
+  <text class="muted" x="78" y="334">Date</text>
+  <text class="muted" x="240" y="334">Title</text>
+  <text class="muted" x="740" y="334">Account</text>
+  <text class="muted" x="900" y="334">Bookmark</text>
+  <text class="muted" x="1040" y="334">Msg</text>
+
+  <!-- Rows -->
+  <rect x="56" y="360" width="1088" height="50" rx="10" fill="#ffffff" stroke="#e4e4e4" />
+  <rect x="56" y="420" width="1088" height="50" rx="10" fill="#ffffff" stroke="#e4e4e4" />
+  <rect x="56" y="480" width="1088" height="50" rx="10" fill="#ffffff" stroke="#e4e4e4" />
+  <rect x="56" y="540" width="1088" height="50" rx="10" fill="#ffffff" stroke="#e4e4e4" />
+
+  <text class="muted" x="78" y="392">2026-02-21</text>
+  <text class="muted" x="240" y="392">Some title ...</text>
+  <text class="muted" x="740" y="392">A1</text>
+  <text class="muted" x="900" y="392">*</text>
+  <text class="muted" x="1040" y="392">3</text>
+</svg>

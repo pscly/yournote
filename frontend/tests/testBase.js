@@ -208,7 +208,7 @@ export const test = base.extend({
         if (!Number.isFinite(did) || did <= 0) return 0;
 
         const prev = getBookmarkedAt(did);
-        if (Boolean(bookmarked)) {
+        if (bookmarked) {
           if (prev == null) {
             diaryBookmarkedAtById.set(did, SAMPLE_BOOKMARKED_AT_MS);
             return 1;
@@ -226,12 +226,12 @@ export const test = base.extend({
       const readJsonBody = async (request) => {
         try {
           return await request.postDataJSON();
-        } catch (e) {
+        } catch {
           const raw = request.postData();
           if (!raw) return null;
           try {
             return JSON.parse(raw);
-          } catch (e2) {
+          } catch {
             return null;
           }
         }

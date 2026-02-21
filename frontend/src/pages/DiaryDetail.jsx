@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   Alert,
   BackTop,
@@ -49,6 +49,7 @@ const APP_HEADER_HEIGHT = 'var(--app-header-height)';
 export default function DiaryDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { token } = theme.useToken();
   const currentDiaryId = useMemo(() => {
     const n = Number.parseInt(id, 10);
@@ -57,6 +58,21 @@ export default function DiaryDetail() {
 
   const diaryListScrollRef = useRef(null);
   const activeDiaryItemRef = useRef(null);
+
+  const fromPath = useMemo(() => {
+    const raw = location?.state?.from;
+    if (typeof raw !== 'string') return null;
+    const s = raw.trim();
+    return s.startsWith('/') ? s : null;
+  }, [location?.state?.from]);
+
+  const handleBack = useCallback(() => {
+    if (fromPath) {
+      navigate(fromPath);
+      return;
+    }
+    navigate(-1);
+  }, [navigate, fromPath]);
 
   const [diary, setDiary] = useState(null);
   const [diaryList, setDiaryList] = useState([]);
@@ -87,6 +103,22 @@ export default function DiaryDetail() {
   const [exportFormats, setExportFormats] = useState(['txt', 'md']);
   const [exportSelectedIds, setExportSelectedIds] = useState([]);
   const [exporting, setExporting] = useState(false);
+
+  const neighbors = useMemo(() => {
+    const list = Array.isArray(diaryList) ? diaryList : [];
+    const cur = Number(currentDiaryId);
+    if (!Number.isFinite(cur) || cur <= 0 || list.length === 0) return { prevId: null, nextId: null };
+
+    const idx = list.findIndex((x) => Number(x?.id) === cur);
+    if (idx < 0) return { prevId: null, nextId: null };
+
+    const prevId = Number(list[idx - 1]?.id);
+    const nextId = Number(list[idx + 1]?.id);
+    return {
+      prevId: Number.isFinite(prevId) && prevId > 0 ? prevId : null,
+      nextId: Number.isFinite(nextId) && nextId > 0 ? nextId : null,
+    };
+  }, [diaryList, currentDiaryId]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -936,8 +968,28 @@ export default function DiaryDetail() {
              }}
            >
             <Space wrap size={isMobile ? 'small' : 'middle'} style={{ width: '100%' }}>
-              <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)} size={isMobile ? 'middle' : 'large'}>
-                返回
+              <Button icon={<ArrowLeftOutlined />} onClick={handleBack} size={isMobile ? 'middle' : 'large'}>
+                返回列表
+              </Button>
+              <Button
+                disabled={!neighbors?.prevId}
+                onClick={() => {
+                  if (!neighbors?.prevId) return;
+                  navigate(`/diary/${neighbors.prevId}`, { state: fromPath ? { from: fromPath } : undefined });
+                }}
+                size={isMobile ? 'middle' : 'large'}
+              >
+                上一条
+              </Button>
+              <Button
+                disabled={!neighbors?.nextId}
+                onClick={() => {
+                  if (!neighbors?.nextId) return;
+                  navigate(`/diary/${neighbors.nextId}`, { state: fromPath ? { from: fromPath } : undefined });
+                }}
+                size={isMobile ? 'middle' : 'large'}
+              >
+                下一条
               </Button>
               <Button onClick={refreshDiary} loading={refreshing} size={isMobile ? 'middle' : 'large'}>
                 {isMobile ? '刷新详情' : '重新访问此记录详情（强制更新）'}

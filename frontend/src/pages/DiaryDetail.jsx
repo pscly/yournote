@@ -173,29 +173,40 @@ export default function DiaryDetail() {
     }
   }, [getDiaryTimestamp]);
 
-  const loadPairedUser = useCallback(async (accountId, currentUserId) => {
+  const loadPairedUser = useCallback(async (accountId, currentUserIdRaw) => {
     setPairLoading(true);
     setPairError('');
     try {
-      const res = await userAPI.paired(accountId);
-      const relationships = res.data || [];
-      const matchedRel = relationships.find((r) =>
-        r?.user?.id === currentUserId || r?.paired_user?.id === currentUserId
-      ) || relationships[0];
-
-      if (!matchedRel?.user?.id || !matchedRel?.paired_user?.id) {
+      const currentUserId = Number(currentUserIdRaw);
+      if (!Number.isFinite(currentUserId) || currentUserId <= 0) {
         setPairedUserId(null);
         setPairUsers({ main: null, matched: null });
         setShowMatched(false);
         return;
       }
 
-      setPairUsers({ main: matchedRel.user, matched: matchedRel.paired_user });
+      const res = await userAPI.paired(accountId);
+      const relationships = res.data || [];
+      const relationshipForCurrentUser = relationships.find((r) => {
+        const left = Number(r?.user?.id);
+        const right = Number(r?.paired_user?.id);
+        return left === currentUserId || right === currentUserId;
+      });
 
-      const otherUserId = matchedRel.user.id === currentUserId
-        ? matchedRel.paired_user.id
-        : matchedRel.user.id;
-      setPairedUserId(otherUserId);
+      if (!relationshipForCurrentUser?.user?.id || !relationshipForCurrentUser?.paired_user?.id) {
+        setPairedUserId(null);
+        setPairUsers({ main: null, matched: null });
+        setShowMatched(false);
+        return;
+      }
+
+      const leftId = Number(relationshipForCurrentUser.user.id);
+      const orientedUsers = (leftId === currentUserId)
+        ? { main: relationshipForCurrentUser.user, matched: relationshipForCurrentUser.paired_user }
+        : { main: relationshipForCurrentUser.paired_user, matched: relationshipForCurrentUser.user };
+
+      setPairUsers(orientedUsers);
+      setPairedUserId(Number(orientedUsers.matched?.id) || null);
     } catch (error) {
       setPairError(getErrorMessage(error));
       setPairedUserId(null);
@@ -222,8 +233,13 @@ export default function DiaryDetail() {
     setListLoading(true);
     setListError('');
     try {
+      const accountIdForList = Number(diary?.account_id);
+      const accountScopedParams = (Number.isFinite(accountIdForList) && accountIdForList > 0)
+        ? { account_id: accountIdForList }
+        : {};
+
       const results = await Promise.all(
-        userIds.map((uid) => diaryAPI.list({ user_id: uid, limit: 100 }))
+        userIds.map((uid) => diaryAPI.list({ ...accountScopedParams, user_id: uid, limit: 100 }))
       );
 
       const map = new Map();
@@ -418,7 +434,7 @@ export default function DiaryDetail() {
     return getDiaryOwner(item) === 'matched' ? token.magenta1 : token.colorPrimaryBg;
   };
 
-  const canExportMatched = !!(showMatched && pairUsers?.main?.id && pairUsers?.matched?.id);
+   const canExportMatched = !!(showMatched && pairUsers?.main?.id && pairUsers?.matched?.id);
 
   const wordStats = useMemo(() => getDiaryWordStats(diary), [diary]);
   const titleWordCount = wordStats?.title?.no_whitespace ?? 0;
@@ -551,14 +567,14 @@ export default function DiaryDetail() {
   }, [exportModalOpen, exportCandidateDiaries]);
 
   const getOwnerTextForExport = (item) => {
-    if (!canExportMatched) return '我的记录';
+    if (!canExportMatched) return '当前用户记录';
     const owner = getDiaryOwner(item);
     if (owner === 'matched') {
       const name = pairUsers?.matched?.name ? `：${pairUsers.matched.name}` : '';
-      return `被匹配用户${name}`;
+      return `配对用户${name}`;
     }
     const name = pairUsers?.main?.name ? `：${pairUsers.main.name}` : '';
-    return `主用户${name}`;
+    return `当前用户${name}`;
   };
 
   const getUsernameForExport = (item) => {
@@ -707,11 +723,11 @@ export default function DiaryDetail() {
 
       const scopePart = canExportMatched
         ? (exportIncludeMain && exportIncludeMatched
-          ? '主用户+被匹配用户'
+          ? '当前用户+配对用户'
           : exportIncludeMain
-            ? '主用户'
-            : '被匹配用户')
-        : '我的记录';
+            ? '当前用户'
+            : '配对用户')
+        : '当前用户记录';
 
       const keywordPart = safeFilenamePart(exportSearch.trim());
       const keywordSuffix = keywordPart ? `-${keywordPart}` : '';
@@ -851,16 +867,16 @@ export default function DiaryDetail() {
           </Button>
           {pairUsers?.main?.id && pairUsers?.matched?.id && (
             <div style={{ fontSize: '12px', color: token.colorTextSecondary }}>
-              <div>
-                <span style={{ display: 'inline-block', width: 12, height: 12, background: token.colorPrimary, marginRight: 6, borderRadius: 2 }}></span>
-                主用户{pairUsers.main?.name ? `：${pairUsers.main.name}` : ''}
-              </div>
-              <div>
-                <span style={{ display: 'inline-block', width: 12, height: 12, background: token.magenta6, marginRight: 6, borderRadius: 2 }}></span>
-                被匹配用户{pairUsers.matched?.name ? `：${pairUsers.matched.name}` : ''}
-              </div>
-            </div>
-          )}
+               <div>
+                 <span style={{ display: 'inline-block', width: 12, height: 12, background: token.colorPrimary, marginRight: 6, borderRadius: 2 }}></span>
+                 当前用户{pairUsers.main?.name ? `：${pairUsers.main.name}` : ''}
+               </div>
+               <div>
+                 <span style={{ display: 'inline-block', width: 12, height: 12, background: token.magenta6, marginRight: 6, borderRadius: 2 }}></span>
+                 配对用户{pairUsers.matched?.name ? `：${pairUsers.matched.name}` : ''}
+               </div>
+             </div>
+           )}
         </Space>
       </div>
 
@@ -1218,14 +1234,14 @@ export default function DiaryDetail() {
             {canExportMatched ? (
               <Space wrap>
                 <Checkbox checked={exportIncludeMain} onChange={(e) => setExportIncludeMain(e.target.checked)}>
-                  主用户（我的记录）{pairUsers?.main?.name ? `：${pairUsers.main.name}` : ''}
+                  当前用户{pairUsers?.main?.name ? `：${pairUsers.main.name}` : ''}
                 </Checkbox>
                 <Checkbox checked={exportIncludeMatched} onChange={(e) => setExportIncludeMatched(e.target.checked)}>
-                  被匹配用户{pairUsers?.matched?.name ? `：${pairUsers.matched.name}` : ''}
+                  配对用户{pairUsers?.matched?.name ? `：${pairUsers.matched.name}` : ''}
                 </Checkbox>
               </Space>
             ) : (
-              <div style={{ color: token.colorTextSecondary }}>当前仅可导出我的记录（未开启/不可用“显示匹配记录”）。</div>
+              <div style={{ color: token.colorTextSecondary }}>当前仅可导出当前用户记录（未开启/不可用“显示匹配记录”）。</div>
             )}
           </div>
 

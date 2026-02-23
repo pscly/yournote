@@ -104,6 +104,114 @@ test.describe('记录详情页测试', () => {
     }
   });
 
+  test('桌面端 - 开启“显示匹配记录”后应同时展示当前用户与配对用户记录', async ({ page }) => {
+    await page.route('**/api/users/paired/1', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          {
+            id: 1,
+            account_id: 1,
+            is_active: true,
+            paired_time: '2026-02-08T00:00:00Z',
+            user: { id: 1, nideriji_userid: 10001, name: '当前用户', created_at: '2026-02-08T00:00:00Z' },
+            paired_user: { id: 2, nideriji_userid: 10002, name: '配对用户', created_at: '2026-02-08T00:00:00Z' },
+          },
+        ]),
+      });
+    });
+
+    await page.route('**/api/diaries**', async (route, request) => {
+      const url = new URL(request.url());
+      const path = url.pathname;
+      const method = request.method().toUpperCase();
+      if (!(path === '/api/diaries' && method === 'GET')) {
+        await route.fallback();
+        return;
+      }
+
+      const uid = Number(url.searchParams.get('user_id') || '');
+      if (uid === 1) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify([
+            {
+              id: 1,
+              nideriji_diary_id: 111,
+              user_id: 1,
+              account_id: 1,
+              title: '当前用户记录',
+              content: 'main',
+              created_date: '2026-02-08',
+              created_time: '2026-02-08T00:00:00Z',
+              msg_count: 0,
+              ts: 1770508800000,
+              bookmarked_at: null,
+              created_at: '2026-02-08T00:00:00Z',
+              updated_at: '2026-02-08T00:00:00Z',
+              weather: null,
+              mood: null,
+              space: null,
+            },
+          ]),
+        });
+        return;
+      }
+
+      if (uid === 2) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify([
+            {
+              id: 2,
+              nideriji_diary_id: 222,
+              user_id: 2,
+              account_id: 1,
+              title: '配对用户记录',
+              content: 'matched',
+              created_date: '2026-02-07',
+              created_time: '2026-02-07T00:00:00Z',
+              msg_count: 0,
+              ts: 1770422400000,
+              bookmarked_at: null,
+              created_at: '2026-02-08T00:00:00Z',
+              updated_at: '2026-02-08T00:00:00Z',
+              weather: null,
+              mood: null,
+              space: null,
+            },
+          ]),
+        });
+        return;
+      }
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([]),
+      });
+    });
+
+    await page.goto('/diary/1');
+    await ensureAccess(page);
+
+    const sider = page.getByRole('complementary').filter({ hasText: '显示匹配记录' }).first();
+    await expect(sider).toBeVisible({ timeout: 15000 });
+    await expect(sider.getByRole('heading', { name: '记录列表' })).toBeVisible({ timeout: 15000 });
+    await expect(sider.getByText('显示匹配记录', { exact: true })).toBeVisible({ timeout: 15000 });
+    const matchedSwitch = sider.locator('.ant-switch').first();
+    await expect(matchedSwitch).toBeVisible({ timeout: 15000 });
+
+    await expect(sider.getByText('当前用户记录', { exact: true })).toBeVisible({ timeout: 15000 });
+    await expect(sider.getByText('配对用户记录', { exact: true })).toHaveCount(0);
+
+    await matchedSwitch.click();
+    await expect(sider.getByText('配对用户记录', { exact: true })).toBeVisible({ timeout: 15000 });
+  });
+
   test('桌面端 - 记录列表项应该有颜色边框', async ({ page }) => {
     if (await openFirstDiaryDetail(page)) {
       const listItem = page.locator('.ant-list-item').first();

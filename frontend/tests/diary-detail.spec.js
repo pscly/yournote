@@ -212,6 +212,154 @@ test.describe('记录详情页测试', () => {
     await expect(sider.getByText('配对用户记录', { exact: true })).toBeVisible({ timeout: 15000 });
   });
 
+  test('桌面端 - 开启“显示匹配记录”后切换日记不应丢失配对列表', async ({ page }) => {
+    await page.route('**/api/users/paired/1', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          {
+            id: 1,
+            account_id: 1,
+            is_active: true,
+            paired_time: '2026-02-08T00:00:00Z',
+            user: { id: 1, nideriji_userid: 10001, name: '用户1', created_at: '2026-02-08T00:00:00Z' },
+            paired_user: { id: 2, nideriji_userid: 10002, name: '用户2', created_at: '2026-02-08T00:00:00Z' },
+          },
+        ]),
+      });
+    });
+
+    await page.route('**/api/diaries/*', async (route, request) => {
+      const url = new URL(request.url());
+      const path = url.pathname;
+      const method = request.method().toUpperCase();
+      const m = path.match(/^\/api\/diaries\/(\d+)$/);
+      if (!(m && method === 'GET')) {
+        await route.fallback();
+        return;
+      }
+
+      const diaryId = Number(m[1]);
+      const detail = {
+        id: diaryId,
+        nideriji_diary_id: diaryId === 2 ? 222 : 111,
+        user_id: diaryId === 2 ? 2 : 1,
+        account_id: 1,
+        title: diaryId === 2 ? '用户2-日记' : '用户1-日记',
+        content: 'mock',
+        created_date: diaryId === 2 ? '2026-02-07' : '2026-02-08',
+        created_time: diaryId === 2 ? '2026-02-07T00:00:00Z' : '2026-02-08T00:00:00Z',
+        weather: null,
+        mood: null,
+        space: null,
+        msg_count: 0,
+        ts: diaryId === 2 ? 1770422400000 : 1770508800000,
+        bookmarked_at: null,
+        created_at: '2026-02-08T00:00:00Z',
+        updated_at: '2026-02-08T00:00:00Z',
+        attachments: { images: [] },
+      };
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(detail),
+      });
+    });
+
+    let user2CallCount = 0;
+    await page.route('**/api/diaries**', async (route, request) => {
+      const url = new URL(request.url());
+      const path = url.pathname;
+      const method = request.method().toUpperCase();
+      if (!(path === '/api/diaries' && method === 'GET')) {
+        await route.fallback();
+        return;
+      }
+
+      const uid = Number(url.searchParams.get('user_id') || '');
+      const accountId = Number(url.searchParams.get('account_id') || '');
+      if (accountId !== 1) {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
+        return;
+      }
+
+      if (uid === 2) {
+        user2CallCount += 1;
+        if (user2CallCount === 1) {
+          await new Promise((r) => setTimeout(r, 600));
+        }
+      }
+
+      const itemsByUserId = {
+        1: [
+          {
+            id: 1,
+            nideriji_diary_id: 111,
+            user_id: 1,
+            account_id: 1,
+            title: '用户1-日记',
+            content: 'u1',
+            created_date: '2026-02-08',
+            created_time: '2026-02-08T00:00:00Z',
+            msg_count: 0,
+            ts: 1770508800000,
+            bookmarked_at: null,
+            created_at: '2026-02-08T00:00:00Z',
+            updated_at: '2026-02-08T00:00:00Z',
+            weather: null,
+            mood: null,
+            space: null,
+          },
+        ],
+        2: [
+          {
+            id: 2,
+            nideriji_diary_id: 222,
+            user_id: 2,
+            account_id: 1,
+            title: '用户2-日记',
+            content: 'u2',
+            created_date: '2026-02-07',
+            created_time: '2026-02-07T00:00:00Z',
+            msg_count: 0,
+            ts: 1770422400000,
+            bookmarked_at: null,
+            created_at: '2026-02-08T00:00:00Z',
+            updated_at: '2026-02-08T00:00:00Z',
+            weather: null,
+            mood: null,
+            space: null,
+          },
+        ],
+      };
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(itemsByUserId[uid] || []),
+      });
+    });
+
+    await page.goto('/diary/1');
+    await ensureAccess(page);
+
+    const sider = page.getByRole('complementary').filter({ hasText: '显示匹配记录' }).first();
+    const matchedSwitch = sider.locator('.ant-switch').first();
+    await expect(matchedSwitch).toBeVisible({ timeout: 15000 });
+
+    await matchedSwitch.click();
+    await expect(sider.getByText('用户1-日记', { exact: true })).toBeVisible({ timeout: 15000 });
+    await expect(sider.getByText('用户2-日记', { exact: true })).toBeVisible({ timeout: 15000 });
+
+    await sider.locator('.ant-card').filter({ hasText: '用户2-日记' }).first().click();
+    await page.waitForURL(/\/diary\/2$/, { timeout: 15000 });
+
+    await expect(sider.getByText('用户1-日记', { exact: true })).toBeVisible({ timeout: 15000 });
+    await expect(sider.getByText('用户2-日记', { exact: true })).toBeVisible({ timeout: 15000 });
+  });
+
   test('桌面端 - 记录列表项应该有颜色边框', async ({ page }) => {
     if (await openFirstDiaryDetail(page)) {
       const listItem = page.locator('.ant-list-item').first();

@@ -58,6 +58,7 @@ export default function DiaryDetail() {
 
   const diaryListScrollRef = useRef(null);
   const activeDiaryItemRef = useRef(null);
+  const listSeqRef = useRef(0);
 
   const fromPath = useMemo(() => {
     const raw = location?.state?.from;
@@ -150,28 +151,44 @@ export default function DiaryDetail() {
     return d.getTime();
   }, []);
 
-  const loadMyDiaries = useCallback(async (userId) => {
+  const startListRequest = useCallback(() => {
+    const seq = listSeqRef.current + 1;
+    listSeqRef.current = seq;
     setListLoading(true);
     setListError('');
+    return seq;
+  }, []);
+
+  const loadMyDiaries = useCallback(async (userId, opts = {}) => {
+    const seq = startListRequest();
     try {
       const uid = Number(userId);
       if (!Number.isFinite(uid) || uid <= 0) {
-        setDiaryList([]);
+        if (listSeqRef.current === seq) setDiaryList([]);
         return;
       }
 
-      const listRes = await diaryAPI.list({ user_id: uid, limit: 100 });
+      const accountId = Number(opts?.accountId);
+      const params = {
+        user_id: uid,
+        limit: 100,
+        ...(Number.isFinite(accountId) && accountId > 0 ? { account_id: accountId } : {}),
+      };
+
+      const listRes = await diaryAPI.list(params);
       const sorted = (listRes.data || []).slice().sort((a, b) => (
         getDiaryTimestamp(b) - getDiaryTimestamp(a)
       ));
+      if (listSeqRef.current !== seq) return;
       setDiaryList(sorted);
     } catch (error) {
+      if (listSeqRef.current !== seq) return;
       setDiaryList([]);
       setListError(getErrorMessage(error));
     } finally {
-      setListLoading(false);
+      if (listSeqRef.current === seq) setListLoading(false);
     }
-  }, [getDiaryTimestamp]);
+  }, [getDiaryTimestamp, startListRequest]);
 
   const loadPairedUser = useCallback(async (accountId, currentUserIdRaw) => {
     setPairLoading(true);
@@ -225,15 +242,16 @@ export default function DiaryDetail() {
     if (pairedUserId) ids.add(pairedUserId);
 
     const userIds = Array.from(ids).filter(Boolean);
+    const accountIdForList = Number(diary?.account_id);
     if (userIds.length <= 1) {
-      await loadMyDiaries(userIds[0] || diary?.user_id);
+      await loadMyDiaries(userIds[0] || diary?.user_id, {
+        accountId: (Number.isFinite(accountIdForList) && accountIdForList > 0) ? accountIdForList : null,
+      });
       return;
     }
 
-    setListLoading(true);
-    setListError('');
+    const seq = startListRequest();
     try {
-      const accountIdForList = Number(diary?.account_id);
       const accountScopedParams = (Number.isFinite(accountIdForList) && accountIdForList > 0)
         ? { account_id: accountIdForList }
         : {};
@@ -253,14 +271,16 @@ export default function DiaryDetail() {
         getDiaryTimestamp(b) - getDiaryTimestamp(a)
       ));
 
+      if (listSeqRef.current !== seq) return;
       setDiaryList(merged);
     } catch (error) {
+      if (listSeqRef.current !== seq) return;
       setDiaryList([]);
       setListError(getErrorMessage(error));
     } finally {
-      setListLoading(false);
+      if (listSeqRef.current === seq) setListLoading(false);
     }
-  }, [pairUsers, diary, pairedUserId, loadMyDiaries, getDiaryTimestamp]);
+  }, [pairUsers, diary, pairedUserId, loadMyDiaries, getDiaryTimestamp, startListRequest]);
 
   const loadHistory = useCallback(async (diaryId) => {
     setHistoryLoading(true);
@@ -288,7 +308,6 @@ export default function DiaryDetail() {
       setPairUsers({ main: null, matched: null });
 
       await Promise.all([
-        loadMyDiaries(currentDiary.user_id),
         loadPairedUser(currentDiary.account_id, currentDiary.user_id),
         loadHistory(currentDiary?.id ?? id),
       ]);
@@ -306,7 +325,7 @@ export default function DiaryDetail() {
     } finally {
       setLoading(false);
     }
-  }, [id, loadHistory, loadMyDiaries, loadPairedUser]);
+  }, [id, loadHistory, loadPairedUser]);
 
   useEffect(() => {
     loadData();
@@ -321,7 +340,7 @@ export default function DiaryDetail() {
       return;
     }
 
-    loadMyDiaries(diary.user_id);
+    loadMyDiaries(diary.user_id, { accountId: diary.account_id });
   }, [showMatched, diary, pairUsers, pairedUserId, loadMatchedDiaries, loadMyDiaries]);
 
   useEffect(() => {
@@ -800,7 +819,7 @@ export default function DiaryDetail() {
       return;
     }
 
-    loadMyDiaries(diary.user_id);
+    loadMyDiaries(diary.user_id, { accountId: diary.account_id });
   };
 
   const reloadPairUsers = () => {

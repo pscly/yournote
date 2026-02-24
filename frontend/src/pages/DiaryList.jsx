@@ -459,7 +459,7 @@ export default function DiaryList() {
       changed = true;
     }
     if (!next.has('orderBy')) {
-      next.set('orderBy', 'msg_count');
+      next.set('orderBy', 'created_at');
       changed = true;
     }
     if (!next.has('order')) {

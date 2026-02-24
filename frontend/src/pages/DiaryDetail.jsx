@@ -46,6 +46,63 @@ const { Sider, Content } = Layout;
 const { Title, Paragraph } = Typography;
 const APP_HEADER_HEIGHT = 'var(--app-header-height)';
 
+function toFiniteId(raw) {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function getPairedTimeMs(raw) {
+  if (raw == null) return null;
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+
+  const d = parseServerDate(raw);
+  if (d) return d.getTime();
+  const fallback = new Date(raw);
+  if (Number.isNaN(fallback.getTime())) return null;
+  return fallback.getTime();
+}
+
+function compareRelationshipsByLatest(a, b) {
+  const ta = getPairedTimeMs(a?.paired_time);
+  const tb = getPairedTimeMs(b?.paired_time);
+  const sa = ta == null ? Number.NEGATIVE_INFINITY : ta;
+  const sb = tb == null ? Number.NEGATIVE_INFINITY : tb;
+  if (sa !== sb) return sa - sb;
+
+  const ida = toFiniteId(a?.id);
+  const idb = toFiniteId(b?.id);
+  const ia = ida == null ? Number.NEGATIVE_INFINITY : ida;
+  const ib = idb == null ? Number.NEGATIVE_INFINITY : idb;
+  return ia - ib;
+}
+
+// 配对关系选择入口（锁定 / 入口对方 / 最新配对）
+function pickRelationshipForDiaryDetail(relationships, { lockedPartnerUserId, entryDiaryUserId }) {
+  const lockedId = toFiniteId(lockedPartnerUserId);
+  const entryId = toFiniteId(entryDiaryUserId);
+
+  const list = (Array.isArray(relationships) ? relationships : [])
+    .filter((r) => r?.is_active !== false)
+    .filter((r) => toFiniteId(r?.user?.id) && toFiniteId(r?.paired_user?.id));
+
+  if (list.length === 0) return null;
+
+  if (lockedId) {
+    const locked = list.find((r) => toFiniteId(r?.paired_user?.id) === lockedId);
+    if (locked) return locked;
+  }
+
+  if (entryId) {
+    const entry = list.find((r) => toFiniteId(r?.paired_user?.id) === entryId);
+    if (entry) return entry;
+  }
+
+  return list.reduce((best, cur) => {
+    if (!best) return cur;
+    return compareRelationshipsByLatest(best, cur) >= 0 ? best : cur;
+  }, null);
+}
+
 export default function DiaryDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -59,6 +116,9 @@ export default function DiaryDetail() {
   const diaryListScrollRef = useRef(null);
   const activeDiaryItemRef = useRef(null);
   const listSeqRef = useRef(0);
+  const pairSeqRef = useRef(0);
+  const lockedAccountIdRef = useRef(null);
+  const lockedPartnerUserIdRef = useRef(null);
 
   const fromPath = useMemo(() => {
     const raw = location?.state?.from;
@@ -159,6 +219,14 @@ export default function DiaryDetail() {
     return seq;
   }, []);
 
+  const startPairRequest = useCallback(() => {
+    const seq = pairSeqRef.current + 1;
+    pairSeqRef.current = seq;
+    setPairLoading(true);
+    setPairError('');
+    return seq;
+  }, []);
+
   const loadMyDiaries = useCallback(async (userId, opts = {}) => {
     const seq = startListRequest();
     try {
@@ -190,49 +258,67 @@ export default function DiaryDetail() {
     }
   }, [getDiaryTimestamp, startListRequest]);
 
-  const loadPairedUser = useCallback(async (accountId, currentUserIdRaw) => {
-    setPairLoading(true);
-    setPairError('');
+  const loadPairedUser = useCallback(async (accountIdRaw, entryDiaryUserIdRaw) => {
+    const seq = startPairRequest();
     try {
-      const currentUserId = Number(currentUserIdRaw);
-      if (!Number.isFinite(currentUserId) || currentUserId <= 0) {
+      const accountId = toFiniteId(accountIdRaw);
+      const entryDiaryUserId = toFiniteId(entryDiaryUserIdRaw);
+
+      if (!accountId || !entryDiaryUserId) {
+        if (pairSeqRef.current !== seq) return;
         setPairedUserId(null);
         setPairUsers({ main: null, matched: null });
         setShowMatched(false);
+        lockedPartnerUserIdRef.current = null;
         return;
       }
+
+      const lockedAccountId = toFiniteId(lockedAccountIdRef.current);
+      if (lockedAccountId && lockedAccountId !== accountId) {
+        lockedPartnerUserIdRef.current = null;
+        lockedAccountIdRef.current = accountId;
+      }
+
+      if (!lockedAccountIdRef.current) lockedAccountIdRef.current = accountId;
 
       const res = await userAPI.paired(accountId);
       const relationships = res.data || [];
-      const relationshipForCurrentUser = relationships.find((r) => {
-        const left = Number(r?.user?.id);
-        const right = Number(r?.paired_user?.id);
-        return left === currentUserId || right === currentUserId;
+      const lockedPartnerUserId = (toFiniteId(lockedAccountIdRef.current) === accountId)
+        ? toFiniteId(lockedPartnerUserIdRef.current)
+        : null;
+
+      const selected = pickRelationshipForDiaryDetail(relationships, {
+        lockedPartnerUserId,
+        entryDiaryUserId,
       });
 
-      if (!relationshipForCurrentUser?.user?.id || !relationshipForCurrentUser?.paired_user?.id) {
+      if (pairSeqRef.current !== seq) return;
+
+      if (!selected?.user?.id || !selected?.paired_user?.id) {
         setPairedUserId(null);
         setPairUsers({ main: null, matched: null });
         setShowMatched(false);
+        lockedPartnerUserIdRef.current = null;
         return;
       }
 
-      const leftId = Number(relationshipForCurrentUser.user.id);
-      const orientedUsers = (leftId === currentUserId)
-        ? { main: relationshipForCurrentUser.user, matched: relationshipForCurrentUser.paired_user }
-        : { main: relationshipForCurrentUser.paired_user, matched: relationshipForCurrentUser.user };
+      // 身份语义固定：main=relationship.user，matched=relationship.paired_user
+      setPairUsers({ main: selected.user, matched: selected.paired_user });
+      setPairedUserId(toFiniteId(selected?.paired_user?.id));
 
-      setPairUsers(orientedUsers);
-      setPairedUserId(Number(orientedUsers.matched?.id) || null);
+      lockedAccountIdRef.current = accountId;
+      lockedPartnerUserIdRef.current = toFiniteId(selected?.paired_user?.id);
     } catch (error) {
+      if (pairSeqRef.current !== seq) return;
       setPairError(getErrorMessage(error));
       setPairedUserId(null);
       setPairUsers({ main: null, matched: null });
       setShowMatched(false);
+      lockedPartnerUserIdRef.current = null;
     } finally {
-      setPairLoading(false);
+      if (pairSeqRef.current === seq) setPairLoading(false);
     }
-  }, []);
+  }, [startPairRequest]);
 
   const loadMatchedDiaries = useCallback(async () => {
     const ids = new Set();
@@ -302,10 +388,19 @@ export default function DiaryDetail() {
       setPageError('');
       const diaryRes = await diaryAPI.get(id);
       const currentDiary = diaryRes.data;
-      setDiary(currentDiary);
 
-      setPairedUserId(null);
-      setPairUsers({ main: null, matched: null });
+      const nextAccountId = toFiniteId(currentDiary?.account_id);
+      const lockedAccountId = toFiniteId(lockedAccountIdRef.current);
+      if (nextAccountId && lockedAccountId && nextAccountId !== lockedAccountId) {
+        lockedAccountIdRef.current = nextAccountId;
+        lockedPartnerUserIdRef.current = null;
+        setPairedUserId(null);
+        setPairUsers({ main: null, matched: null });
+      } else if (nextAccountId && !lockedAccountIdRef.current) {
+        lockedAccountIdRef.current = nextAccountId;
+      }
+
+      setDiary(currentDiary);
 
       await Promise.all([
         loadPairedUser(currentDiary.account_id, currentDiary.user_id),
@@ -439,9 +534,12 @@ export default function DiaryDetail() {
   };
 
   const getDiaryOwner = (item) => {
-    if (pairUsers?.matched?.id && item?.user_id === pairUsers.matched.id) return 'matched';
-    if (pairUsers?.main?.id && item?.user_id === pairUsers.main.id) return 'main';
-    if (diary?.user_id && item?.user_id === diary.user_id) return 'main';
+    const uid = toFiniteId(item?.user_id);
+    const mainId = toFiniteId(pairUsers?.main?.id);
+    const matchedId = toFiniteId(pairUsers?.matched?.id) ?? toFiniteId(lockedPartnerUserIdRef.current);
+
+    if (matchedId && uid === matchedId) return 'matched';
+    if (mainId && uid === mainId) return 'main';
     return 'main';
   };
 
@@ -550,9 +648,11 @@ export default function DiaryDetail() {
       // 未开启“显示匹配记录”时，当前列表就是“你正在看的这位用户”的记录：
       // 这时候导出不应因为识别为 matched 而被过滤为空。
       if (!canExportMatched) return 'main';
-      if (pairUsers?.matched?.id && item?.user_id === pairUsers.matched.id) return 'matched';
-      if (pairUsers?.main?.id && item?.user_id === pairUsers.main.id) return 'main';
-      if (diary?.user_id && item?.user_id === diary.user_id) return 'main';
+      const uid = toFiniteId(item?.user_id);
+      const mainId = toFiniteId(pairUsers?.main?.id);
+      const matchedId = toFiniteId(pairUsers?.matched?.id) ?? toFiniteId(lockedPartnerUserIdRef.current);
+      if (matchedId && uid === matchedId) return 'matched';
+      if (mainId && uid === mainId) return 'main';
       return 'main';
     };
 
@@ -571,7 +671,7 @@ export default function DiaryDetail() {
       const date = String(d?.created_date ?? '').toLowerCase();
       return title.includes(kw) || content.includes(kw) || date.includes(kw);
     });
-  }, [diaryList, exportIncludeMain, exportIncludeMatched, exportSearch, canExportMatched, pairUsers, diary]);
+  }, [diaryList, exportIncludeMain, exportIncludeMatched, exportSearch, canExportMatched, pairUsers]);
 
   useEffect(() => {
     if (!exportModalOpen) return;
@@ -599,9 +699,10 @@ export default function DiaryDetail() {
   const getUsernameForExport = (item) => {
     const uid = item?.user_id;
     if (!uid) return '未知用户';
-    if (pairUsers?.matched?.id && uid === pairUsers.matched.id) return pairUsers.matched?.name || `用户 ${uid}`;
-    if (pairUsers?.main?.id && uid === pairUsers.main.id) return pairUsers.main?.name || `用户 ${uid}`;
-    if (diary?.user_id && uid === diary.user_id) return pairUsers.main?.name || `用户 ${uid}`;
+    const mainId = toFiniteId(pairUsers?.main?.id);
+    const matchedId = toFiniteId(pairUsers?.matched?.id) ?? toFiniteId(lockedPartnerUserIdRef.current);
+    if (matchedId && uid === matchedId) return pairUsers.matched?.name || `用户 ${uid}`;
+    if (mainId && uid === mainId) return pairUsers.main?.name || `用户 ${uid}`;
     return `用户 ${uid}`;
   };
 
@@ -886,16 +987,22 @@ export default function DiaryDetail() {
           </Button>
           {pairUsers?.main?.id && pairUsers?.matched?.id && (
             <div style={{ fontSize: '12px', color: token.colorTextSecondary }}>
-               <div>
-                 <span style={{ display: 'inline-block', width: 12, height: 12, background: token.colorPrimary, marginRight: 6, borderRadius: 2 }}></span>
-                 当前用户{pairUsers.main?.name ? `：${pairUsers.main.name}` : ''}
-               </div>
-               <div>
-                 <span style={{ display: 'inline-block', width: 12, height: 12, background: token.magenta6, marginRight: 6, borderRadius: 2 }}></span>
-                 配对用户{pairUsers.matched?.name ? `：${pairUsers.matched.name}` : ''}
-               </div>
-             </div>
-           )}
+               <div data-testid="diary-owner-legend-main">
+                  <span
+                    data-testid="diary-owner-legend-main-color"
+                    style={{ display: 'inline-block', width: 12, height: 12, background: token.colorPrimary, marginRight: 6, borderRadius: 2 }}
+                  ></span>
+                  当前用户{pairUsers.main?.name ? `：${pairUsers.main.name}` : ''}
+                </div>
+                <div data-testid="diary-owner-legend-matched">
+                  <span
+                    data-testid="diary-owner-legend-matched-color"
+                    style={{ display: 'inline-block', width: 12, height: 12, background: token.magenta6, marginRight: 6, borderRadius: 2 }}
+                  ></span>
+                  配对用户{pairUsers.matched?.name ? `：${pairUsers.matched.name}` : ''}
+                </div>
+              </div>
+            )}
         </Space>
       </div>
 
@@ -913,6 +1020,7 @@ export default function DiaryDetail() {
               const modifiedText = formatBeijingDateTimeFromTs(item?.ts);
               const wordCount = getDiaryWordStats(item)?.content?.no_whitespace ?? 0;
               const isActive = !!(currentDiaryId && item?.id === currentDiaryId);
+              const owner = getDiaryOwner(item);
 
               return (
                 <div
@@ -922,6 +1030,8 @@ export default function DiaryDetail() {
                 >
                   <Card
                     hoverable
+                    data-testid={`diary-sider-item-${item.id}`}
+                    data-owner={owner}
                     onClick={() => {
                       navigate(`/diary/${item.id}`);
                       if (isMobile) setDrawerVisible(false);

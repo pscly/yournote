@@ -360,6 +360,638 @@ test.describe('记录详情页测试', () => {
     await expect(sider.getByText('用户2-日记', { exact: true })).toBeVisible({ timeout: 15000 });
   });
 
+  test('桌面端 - 从对方日记进入时 legend/归属不翻转', async ({ page }) => {
+    await page.route('**/api/users/paired/1', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          {
+            id: 1,
+            account_id: 1,
+            is_active: true,
+            paired_time: '2026-02-08T00:00:00Z',
+            user: { id: 1, nideriji_userid: 10001, name: '用户1', created_at: '2026-02-08T00:00:00Z' },
+            paired_user: { id: 2, nideriji_userid: 10002, name: '用户2', created_at: '2026-02-08T00:00:00Z' },
+          },
+        ]),
+      });
+    });
+
+    await page.route('**/api/diaries/*', async (route, request) => {
+      const url = new URL(request.url());
+      const path = url.pathname;
+      const method = request.method().toUpperCase();
+      const m = path.match(/^\/api\/diaries\/(\d+)$/);
+      if (!(m && method === 'GET')) {
+        await route.fallback();
+        return;
+      }
+
+      const diaryId = Number(m[1]);
+      const detail = {
+        id: diaryId,
+        nideriji_diary_id: diaryId === 2 ? 222 : 111,
+        user_id: diaryId === 2 ? 2 : 1,
+        account_id: 1,
+        title: diaryId === 2 ? '用户2-日记' : '用户1-日记',
+        content: diaryId === 2 ? 'matched' : 'main',
+        created_date: diaryId === 2 ? '2026-02-07' : '2026-02-08',
+        created_time: diaryId === 2 ? '2026-02-07T00:00:00Z' : '2026-02-08T00:00:00Z',
+        weather: null,
+        mood: null,
+        space: null,
+        msg_count: 0,
+        ts: diaryId === 2 ? 1770422400000 : 1770508800000,
+        bookmarked_at: null,
+        created_at: '2026-02-08T00:00:00Z',
+        updated_at: '2026-02-08T00:00:00Z',
+        attachments: { images: [] },
+      };
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(detail),
+      });
+    });
+
+    await page.route('**/api/diaries**', async (route, request) => {
+      const url = new URL(request.url());
+      const path = url.pathname;
+      const method = request.method().toUpperCase();
+      if (!(path === '/api/diaries' && method === 'GET')) {
+        await route.fallback();
+        return;
+      }
+
+      const accountIdRaw = url.searchParams.get('account_id');
+      const accountId = accountIdRaw == null ? 1 : Number(accountIdRaw || '');
+      const uid = Number(url.searchParams.get('user_id') || '');
+      if (accountId !== 1) {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
+        return;
+      }
+
+      const itemsByUserId = {
+        1: [
+          {
+            id: 1,
+            nideriji_diary_id: 111,
+            user_id: 1,
+            account_id: 1,
+            title: '用户1-日记',
+            content: 'u1',
+            created_date: '2026-02-08',
+            created_time: '2026-02-08T00:00:00Z',
+            msg_count: 0,
+            ts: 1770508800000,
+            bookmarked_at: null,
+            created_at: '2026-02-08T00:00:00Z',
+            updated_at: '2026-02-08T00:00:00Z',
+            weather: null,
+            mood: null,
+            space: null,
+          },
+        ],
+        2: [
+          {
+            id: 2,
+            nideriji_diary_id: 222,
+            user_id: 2,
+            account_id: 1,
+            title: '用户2-日记',
+            content: 'u2',
+            created_date: '2026-02-07',
+            created_time: '2026-02-07T00:00:00Z',
+            msg_count: 0,
+            ts: 1770422400000,
+            bookmarked_at: null,
+            created_at: '2026-02-08T00:00:00Z',
+            updated_at: '2026-02-08T00:00:00Z',
+            weather: null,
+            mood: null,
+            space: null,
+          },
+        ],
+      };
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(itemsByUserId[uid] || []),
+      });
+    });
+
+    await page.goto('/diary/2');
+    await ensureAccess(page);
+
+    const sider = page.getByRole('complementary').filter({ hasText: '显示匹配记录' }).first();
+    await expect(sider).toBeVisible({ timeout: 15000 });
+
+    const matchedSwitch = sider.getByRole('switch').first();
+    await expect(matchedSwitch).toBeVisible({ timeout: 15000 });
+    await matchedSwitch.click();
+
+    const legendMain = page.getByTestId('diary-owner-legend-main');
+    await expect(legendMain).toBeVisible({ timeout: 15000 });
+    await expect(legendMain).toContainText('当前用户');
+    await expect(legendMain).toContainText('用户1');
+
+    const legendMatched = page.getByTestId('diary-owner-legend-matched');
+    await expect(legendMatched).toBeVisible({ timeout: 15000 });
+    await expect(legendMatched).toContainText('配对用户');
+    await expect(legendMatched).toContainText('用户2');
+
+    const item1 = page.getByTestId('diary-sider-item-1');
+    const item2 = page.getByTestId('diary-sider-item-2');
+    await expect(item1).toBeVisible({ timeout: 15000 });
+    await expect(item2).toBeVisible({ timeout: 15000 });
+    await expect(item1).toHaveAttribute('data-owner', 'main');
+    await expect(item2).toHaveAttribute('data-owner', 'matched');
+  });
+
+  test('桌面端 - 竞态回归：paired 接口慢于 diaries 列表时不覆盖入口锁定对方', async ({ page }) => {
+    const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    let diariesListFulfilledAt = 0;
+    let pairedFulfilledAt = 0;
+
+    await page.route('**/api/users/paired/1', async (route) => {
+      const delayMs = 600 + Math.floor(Math.random() * 601);
+      await delay(delayMs);
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          {
+            id: 1,
+            account_id: 1,
+            is_active: true,
+            paired_time: '2026-02-08T00:00:00Z',
+            user: { id: 1, nideriji_userid: 10001, name: '用户1', created_at: '2026-02-08T00:00:00Z' },
+            paired_user: { id: 2, nideriji_userid: 10002, name: '用户2', created_at: '2026-02-08T00:00:00Z' },
+          },
+        ]),
+      });
+
+      pairedFulfilledAt = Date.now();
+    });
+
+    await page.route('**/api/diaries/*', async (route, request) => {
+      const url = new URL(request.url());
+      const path = url.pathname;
+      const method = request.method().toUpperCase();
+      const m = path.match(/^\/api\/diaries\/(\d+)$/);
+      if (!(m && method === 'GET')) {
+        await route.fallback();
+        return;
+      }
+
+      const diaryId = Number(m[1]);
+      const detail = {
+        id: diaryId,
+        nideriji_diary_id: diaryId === 2 ? 222 : 111,
+        user_id: diaryId === 2 ? 2 : 1,
+        account_id: 1,
+        title: diaryId === 2 ? '用户2-日记' : '用户1-日记',
+        content: diaryId === 2 ? 'matched' : 'main',
+        created_date: diaryId === 2 ? '2026-02-07' : '2026-02-08',
+        created_time: diaryId === 2 ? '2026-02-07T00:00:00Z' : '2026-02-08T00:00:00Z',
+        weather: null,
+        mood: null,
+        space: null,
+        msg_count: 0,
+        ts: diaryId === 2 ? 1770422400000 : 1770508800000,
+        bookmarked_at: null,
+        created_at: '2026-02-08T00:00:00Z',
+        updated_at: '2026-02-08T00:00:00Z',
+        attachments: { images: [] },
+      };
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(detail),
+      });
+    });
+
+    await page.route('**/api/diaries**', async (route, request) => {
+      const url = new URL(request.url());
+      const path = url.pathname;
+      const method = request.method().toUpperCase();
+      if (!(path === '/api/diaries' && method === 'GET')) {
+        await route.fallback();
+        return;
+      }
+
+      const accountIdRaw = url.searchParams.get('account_id');
+      const accountId = accountIdRaw == null ? 1 : Number(accountIdRaw || '');
+      const uid = Number(url.searchParams.get('user_id') || '');
+      if (accountId !== 1) {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
+        return;
+      }
+
+      const itemsByUserId = {
+        1: [
+          {
+            id: 1,
+            nideriji_diary_id: 111,
+            user_id: 1,
+            account_id: 1,
+            title: '用户1-日记',
+            content: 'u1',
+            created_date: '2026-02-08',
+            created_time: '2026-02-08T00:00:00Z',
+            msg_count: 0,
+            ts: 1770508800000,
+            bookmarked_at: null,
+            created_at: '2026-02-08T00:00:00Z',
+            updated_at: '2026-02-08T00:00:00Z',
+            weather: null,
+            mood: null,
+            space: null,
+          },
+        ],
+        2: [
+          {
+            id: 2,
+            nideriji_diary_id: 222,
+            user_id: 2,
+            account_id: 1,
+            title: '用户2-日记',
+            content: 'u2',
+            created_date: '2026-02-07',
+            created_time: '2026-02-07T00:00:00Z',
+            msg_count: 0,
+            ts: 1770422400000,
+            bookmarked_at: null,
+            created_at: '2026-02-08T00:00:00Z',
+            updated_at: '2026-02-08T00:00:00Z',
+            weather: null,
+            mood: null,
+            space: null,
+          },
+        ],
+      };
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(itemsByUserId[uid] || []),
+      });
+
+      if (!diariesListFulfilledAt && uid === 2) diariesListFulfilledAt = Date.now();
+    });
+
+    await page.goto('/diary/2');
+    await ensureAccess(page);
+
+    const sider = page.getByRole('complementary').filter({ hasText: '显示匹配记录' }).first();
+    await expect(sider).toBeVisible({ timeout: 15000 });
+
+    await expect(sider.getByText('用户2-日记', { exact: true })).toBeVisible({ timeout: 15000 });
+
+    const matchedSwitch = sider.getByRole('switch').first();
+    await expect(matchedSwitch).toBeVisible({ timeout: 15000 });
+    await expect(matchedSwitch).toBeEnabled({ timeout: 15000 });
+    await matchedSwitch.click();
+
+    const legendMain = page.getByTestId('diary-owner-legend-main');
+    await expect(legendMain).toBeVisible({ timeout: 15000 });
+    await expect(legendMain).toContainText('用户1');
+    await expect(legendMain).not.toContainText('用户2');
+
+    const legendMatched = page.getByTestId('diary-owner-legend-matched');
+    await expect(legendMatched).toBeVisible({ timeout: 15000 });
+    await expect(legendMatched).toContainText('用户2');
+    await expect(legendMatched).not.toContainText('用户1');
+
+    const item2 = page.getByTestId('diary-sider-item-2');
+    await expect(item2).toBeVisible({ timeout: 15000 });
+    const item1 = page.getByTestId('diary-sider-item-1');
+    await expect(item1).toBeVisible({ timeout: 15000 });
+    await expect(item1).toHaveAttribute('data-owner', 'main');
+    await expect(item2).toHaveAttribute('data-owner', 'matched');
+
+    expect(diariesListFulfilledAt, '需要观测到 uid=2 的 diaries 列表已返回，才能确保复现“列表先到”').toBeGreaterThan(0);
+    expect(pairedFulfilledAt, '需要观测到 paired 已返回，才能验证“慢接口不覆盖锁定对方”的最终稳定态').toBeGreaterThan(0);
+    expect(diariesListFulfilledAt, '竞态顺序必须为：diaries 列表先返回、paired 后返回').toBeLessThan(pairedFulfilledAt);
+  });
+
+  test('桌面端 - 多 active 配对下“入口对方锁定”，切回我的日记不丢对方', async ({ page }) => {
+    await page.route('**/api/users/paired/1', async (route) => {
+      const relInterference = {
+        id: 2,
+        account_id: 1,
+        is_active: true,
+        paired_time: '2026-02-09T00:00:00Z',
+        user: { id: 1, nideriji_userid: 10001, name: '用户1', created_at: '2026-02-08T00:00:00Z' },
+        paired_user: { id: 3, nideriji_userid: 10003, name: '用户3', created_at: '2026-02-08T00:00:00Z' },
+      };
+
+      const relEntryPartner = {
+        id: 1,
+        account_id: 1,
+        is_active: true,
+        paired_time: '2026-02-08T00:00:00Z',
+        user: { id: 1, nideriji_userid: 10001, name: '用户1', created_at: '2026-02-08T00:00:00Z' },
+        paired_user: { id: 2, nideriji_userid: 10002, name: '用户2', created_at: '2026-02-08T00:00:00Z' },
+      };
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          relInterference,
+          relEntryPartner,
+        ]),
+      });
+    });
+
+    await page.route('**/api/diaries/*', async (route, request) => {
+      const url = new URL(request.url());
+      const path = url.pathname;
+      const method = request.method().toUpperCase();
+      const m = path.match(/^\/api\/diaries\/(\d+)$/);
+      if (!(m && method === 'GET')) {
+        await route.fallback();
+        return;
+      }
+
+      const diaryId = Number(m[1]);
+      const ownerUserId = diaryId;
+      const detail = {
+        id: diaryId,
+        nideriji_diary_id: ownerUserId === 1 ? 111 : ownerUserId === 2 ? 222 : 333,
+        user_id: ownerUserId,
+        account_id: 1,
+        title: `用户${ownerUserId}-日记`,
+        content: 'mock',
+        created_date: ownerUserId === 1 ? '2026-02-08' : ownerUserId === 2 ? '2026-02-07' : '2026-02-06',
+        created_time: ownerUserId === 1 ? '2026-02-08T00:00:00Z' : ownerUserId === 2 ? '2026-02-07T00:00:00Z' : '2026-02-06T00:00:00Z',
+        weather: null,
+        mood: null,
+        space: null,
+        msg_count: 0,
+        ts: ownerUserId === 1 ? 1770508800000 : ownerUserId === 2 ? 1770422400000 : 1770336000000,
+        bookmarked_at: null,
+        created_at: '2026-02-08T00:00:00Z',
+        updated_at: '2026-02-08T00:00:00Z',
+        attachments: { images: [] },
+      };
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(detail),
+      });
+    });
+
+    await page.route('**/api/diaries**', async (route, request) => {
+      const url = new URL(request.url());
+      const path = url.pathname;
+      const method = request.method().toUpperCase();
+      if (!(path === '/api/diaries' && method === 'GET')) {
+        await route.fallback();
+        return;
+      }
+
+      const accountIdRaw = url.searchParams.get('account_id');
+      const accountId = accountIdRaw == null ? 1 : Number(accountIdRaw || '');
+      const uid = Number(url.searchParams.get('user_id') || '');
+      if (accountId !== 1) {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
+        return;
+      }
+
+      const mkItem = (id, userId, createdDate, createdTime, ts) => ({
+        id,
+        nideriji_diary_id: id * 111,
+        user_id: userId,
+        account_id: 1,
+        title: `用户${userId}-日记`,
+        content: `u${userId}`,
+        created_date: createdDate,
+        created_time: createdTime,
+        msg_count: 0,
+        ts,
+        bookmarked_at: null,
+        created_at: '2026-02-08T00:00:00Z',
+        updated_at: '2026-02-08T00:00:00Z',
+        weather: null,
+        mood: null,
+        space: null,
+      });
+
+      const itemsByUserId = {
+        1: [mkItem(1, 1, '2026-02-08', '2026-02-08T00:00:00Z', 1770508800000)],
+        2: [mkItem(2, 2, '2026-02-07', '2026-02-07T00:00:00Z', 1770422400000)],
+        3: [mkItem(3, 3, '2026-02-06', '2026-02-06T00:00:00Z', 1770336000000)],
+      };
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(itemsByUserId[uid] || []),
+      });
+    });
+
+    await page.goto('/diary/2');
+    await ensureAccess(page);
+
+    const sider = page.getByRole('complementary').filter({ hasText: '显示匹配记录' }).first();
+    await expect(sider).toBeVisible({ timeout: 15000 });
+    const matchedSwitch = sider.getByRole('switch').first();
+    await expect(matchedSwitch).toBeVisible({ timeout: 15000 });
+    await matchedSwitch.click();
+
+    const assertLockedToUser2 = async () => {
+      const legendMain = page.getByTestId('diary-owner-legend-main');
+      const legendMatched = page.getByTestId('diary-owner-legend-matched');
+      await expect(legendMain).toBeVisible({ timeout: 15000 });
+      await expect(legendMatched).toBeVisible({ timeout: 15000 });
+      await expect(legendMain).toContainText('用户1');
+      await expect(legendMatched).toContainText('用户2');
+      await expect(legendMatched).not.toContainText('用户3');
+
+      const item2 = page.getByTestId('diary-sider-item-2');
+      await expect(item2).toBeVisible({ timeout: 15000 });
+      await expect(item2).toHaveAttribute('data-owner', 'matched');
+      await expect(page.getByTestId('diary-sider-item-3')).toHaveCount(0);
+    };
+
+    await assertLockedToUser2();
+
+    const item1 = page.getByTestId('diary-sider-item-1');
+    await expect(item1).toBeVisible({ timeout: 15000 });
+    const clickSiderItem = async (item) => {
+      try {
+        await item.click({ timeout: 5000 });
+      } catch {
+        await item.locator('.ant-card').first().click({ timeout: 5000 });
+      }
+    };
+    await clickSiderItem(item1);
+    await page.waitForURL(/\/diary\/1$/, { timeout: 15000 });
+
+    await assertLockedToUser2();
+  });
+
+  test('桌面端 - 默认最新配对：从我的日记进入，多 active 时默认选择最新配对', async ({ page }) => {
+    let withPairedTime = true;
+
+    await page.route('**/api/users/paired/1', async (route) => {
+      const relOld = {
+        id: 1,
+        account_id: 1,
+        is_active: true,
+        user: { id: 1, nideriji_userid: 10001, name: '用户1', created_at: '2026-02-08T00:00:00Z' },
+        paired_user: { id: 2, nideriji_userid: 10002, name: '用户2', created_at: '2026-02-08T00:00:00Z' },
+      };
+
+      const relNew = {
+        id: 2,
+        account_id: 1,
+        is_active: true,
+        user: { id: 1, nideriji_userid: 10001, name: '用户1', created_at: '2026-02-08T00:00:00Z' },
+        paired_user: { id: 3, nideriji_userid: 10003, name: '用户3', created_at: '2026-02-08T00:00:00Z' },
+      };
+
+      if (withPairedTime) {
+        relOld.paired_time = '2026-02-08T00:00:00Z';
+        relNew.paired_time = '2026-02-09T00:00:00Z';
+      }
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([relOld, relNew]),
+      });
+    });
+
+    await page.route('**/api/diaries/*', async (route, request) => {
+      const url = new URL(request.url());
+      const path = url.pathname;
+      const method = request.method().toUpperCase();
+      const m = path.match(/^\/api\/diaries\/(\d+)$/);
+      if (!(m && method === 'GET')) {
+        await route.fallback();
+        return;
+      }
+
+      const diaryId = Number(m[1]);
+      const ownerUserId = diaryId;
+      const detail = {
+        id: diaryId,
+        nideriji_diary_id: ownerUserId === 1 ? 111 : ownerUserId === 2 ? 222 : 333,
+        user_id: ownerUserId,
+        account_id: 1,
+        title: `用户${ownerUserId}-日记`,
+        content: 'mock',
+        created_date: ownerUserId === 1 ? '2026-02-08' : ownerUserId === 2 ? '2026-02-07' : '2026-02-06',
+        created_time: ownerUserId === 1 ? '2026-02-08T00:00:00Z' : ownerUserId === 2 ? '2026-02-07T00:00:00Z' : '2026-02-06T00:00:00Z',
+        weather: null,
+        mood: null,
+        space: null,
+        msg_count: 0,
+        ts: ownerUserId === 1 ? 1770508800000 : ownerUserId === 2 ? 1770422400000 : 1770336000000,
+        bookmarked_at: null,
+        created_at: '2026-02-08T00:00:00Z',
+        updated_at: '2026-02-08T00:00:00Z',
+        attachments: { images: [] },
+      };
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(detail),
+      });
+    });
+
+    await page.route('**/api/diaries**', async (route, request) => {
+      const url = new URL(request.url());
+      const path = url.pathname;
+      const method = request.method().toUpperCase();
+      if (!(path === '/api/diaries' && method === 'GET')) {
+        await route.fallback();
+        return;
+      }
+
+      const accountIdRaw = url.searchParams.get('account_id');
+      const accountId = accountIdRaw == null ? 1 : Number(accountIdRaw || '');
+      const uid = Number(url.searchParams.get('user_id') || '');
+      if (accountId !== 1) {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
+        return;
+      }
+
+      const mkItem = (id, userId, createdDate, createdTime, ts) => ({
+        id,
+        nideriji_diary_id: id * 111,
+        user_id: userId,
+        account_id: 1,
+        title: `用户${userId}-日记`,
+        content: `u${userId}`,
+        created_date: createdDate,
+        created_time: createdTime,
+        msg_count: 0,
+        ts,
+        bookmarked_at: null,
+        created_at: '2026-02-08T00:00:00Z',
+        updated_at: '2026-02-08T00:00:00Z',
+        weather: null,
+        mood: null,
+        space: null,
+      });
+
+      const itemsByUserId = {
+        1: [mkItem(1, 1, '2026-02-08', '2026-02-08T00:00:00Z', 1770508800000)],
+        2: [mkItem(2, 2, '2026-02-07', '2026-02-07T00:00:00Z', 1770422400000)],
+        3: [mkItem(3, 3, '2026-02-06', '2026-02-06T00:00:00Z', 1770336000000)],
+      };
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(itemsByUserId[uid] || []),
+      });
+    });
+
+    const openAndEnableMatched = async () => {
+      const sider = page.getByRole('complementary').filter({ hasText: '显示匹配记录' }).first();
+      await expect(sider).toBeVisible({ timeout: 15000 });
+      const matchedSwitch = sider.getByRole('switch').first();
+      await expect(matchedSwitch).toBeVisible({ timeout: 15000 });
+      await matchedSwitch.click();
+    };
+
+    const assertDefaultMatchedIsUser3 = async () => {
+      const legendMatched = page.getByTestId('diary-owner-legend-matched');
+      await expect(legendMatched).toBeVisible({ timeout: 15000 });
+      await expect(legendMatched).toContainText('用户3');
+      await expect(legendMatched).not.toContainText('用户2');
+
+      const item3 = page.getByTestId('diary-sider-item-3');
+      await expect(item3).toBeVisible({ timeout: 15000 });
+      await expect(item3).toHaveAttribute('data-owner', 'matched');
+      await expect(page.getByTestId('diary-sider-item-2')).toHaveCount(0);
+    };
+
+    await page.goto('/diary/1');
+    await ensureAccess(page);
+    await openAndEnableMatched();
+    await assertDefaultMatchedIsUser3();
+
+    withPairedTime = false;
+    await page.reload();
+    await ensureAccess(page);
+    await openAndEnableMatched();
+    await assertDefaultMatchedIsUser3();
+  });
+
   test('桌面端 - 记录列表项应该有颜色边框', async ({ page }) => {
     if (await openFirstDiaryDetail(page)) {
       const listItem = page.locator('.ant-list-item').first();

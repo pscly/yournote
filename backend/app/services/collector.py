@@ -743,7 +743,34 @@ class CollectorService:
                     )
                 )
 
-                if rdata["user_config"].get("paired_user_config"):
+                diaries_paired_missing = "diaries_paired" not in rdata
+                paired_diaries = rdata.get("diaries_paired", None)
+                if diaries_paired_missing or paired_diaries is None:
+                    logger.warning(
+                        "[SYNC] account_id=%s 上游未返回 diaries_paired（按取消配对处理）",
+                        account_id,
+                    )
+                elif not isinstance(paired_diaries, list):
+                    logger.warning(
+                        "[SYNC] account_id=%s 上游 diaries_paired 类型异常：%s（按取消配对处理）",
+                        account_id,
+                        type(paired_diaries).__name__,
+                    )
+                has_paired_diaries = (
+                    isinstance(paired_diaries, list) and len(paired_diaries) > 0
+                )
+
+                if not has_paired_diaries:
+                    await self.db.execute(
+                        update(PairedRelationship)
+                        .where(
+                            PairedRelationship.account_id == account_id,
+                            PairedRelationship.is_active.is_(True),
+                        )
+                        .values(is_active=False)
+                        .execution_options(synchronize_session="fetch")
+                    )
+                else:
                     await self._save_paired_user_info(
                         rdata["user_config"]["paired_user_config"], account_id
                     )
@@ -757,12 +784,12 @@ class CollectorService:
                 )
 
                 prefetch_diary_ids: list[int] = list(prefetch_diary_ids_main or [])
-                if rdata.get("diaries_paired"):
+                if has_paired_diaries:
                     paired_user_id = rdata["user_config"]["paired_user_config"][
                         "userid"
                     ]
                     _, prefetch_diary_ids_paired = await self._save_diaries(
-                        rdata["diaries_paired"],
+                        cast(list[dict[str, Any]], paired_diaries),
                         account_id,
                         paired_user_id,
                         str(getattr(account, "auth_token", "") or ""),
@@ -893,11 +920,11 @@ class CollectorService:
             )
             relationship = result.scalar_one_or_none()
 
-            if not relationship:
-                paired_time = None
-                if paired_config.get("paired_time"):
-                    paired_time = self._to_utc_datetime(paired_config["paired_time"])
+            paired_time = None
+            if paired_config.get("paired_time"):
+                paired_time = self._to_utc_datetime(paired_config["paired_time"])
 
+            if not relationship:
                 relationship = PairedRelationship(
                     account_id=account_id,
                     user_id=main_user.id,
@@ -906,6 +933,25 @@ class CollectorService:
                     is_active=True,
                 )
                 self.db.add(relationship)
+                await self.db.flush()
+            else:
+                rel_any: Any = cast(Any, relationship)
+                setattr(rel_any, "is_active", True)
+                if paired_time is not None:
+                    setattr(rel_any, "paired_time", paired_time)
+
+            rel_id = getattr(cast(Any, relationship), "id", None)
+            if isinstance(rel_id, int) and rel_id > 0:
+                await self.db.execute(
+                    update(PairedRelationship)
+                    .where(
+                        PairedRelationship.account_id == account_id,
+                        PairedRelationship.id != rel_id,
+                        PairedRelationship.is_active.is_(True),
+                    )
+                    .values(is_active=False)
+                    .execution_options(synchronize_session="fetch")
+                )
 
     async def _save_diaries(
         self,

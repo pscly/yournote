@@ -5,6 +5,18 @@ const SAMPLE_DATE = '2026-02-08';
 const SAMPLE_TS_MS = 1770508800000;
 const SAMPLE_BOOKMARKED_AT_MS = SAMPLE_TS_MS + 12345;
 
+const mockPairedRelsByAccountId = new Map();
+
+export function setMockPairedRelationships(accountId, rels) {
+  const aid = Number(accountId);
+  if (!Number.isFinite(aid) || aid <= 0) return;
+  mockPairedRelsByAccountId.set(aid, Array.isArray(rels) ? rels : []);
+}
+
+export function resetMockPairedRelationships() {
+  mockPairedRelsByAccountId.clear();
+}
+
 function shouldMockApi() {
   const raw = String(process.env.E2E_MOCK_API ?? '').trim().toLowerCase();
   if (!raw) return true;
@@ -312,7 +324,9 @@ export const test = base.extend({
           return;
         }
         if (/^\/api\/users\/paired\/\d+$/.test(path) && method === 'GET') {
-          await route.fulfill(jsonResponse([]));
+          const accountId = Number(path.split('/').pop() || 0);
+          const rels = mockPairedRelsByAccountId.get(accountId);
+          await route.fulfill(jsonResponse(rels ?? []));
           return;
         }
 

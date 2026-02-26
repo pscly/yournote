@@ -115,6 +115,7 @@ export default function AllUsers() {
           nextUnpairedMains.push({
             accountId: account.id,
             mainUser,
+            pairingCancelled: rels.length > 0 && activeRels.length === 0,
           });
         }
 
@@ -229,7 +230,7 @@ export default function AllUsers() {
                   <Card title="当前配对关系" styles={{ body: { padding: 12 } }}>
                     <List
                       dataSource={activePairs}
-                      locale={{ emptyText: '暂无当前配对关系' }}
+                      locale={{ emptyText: '没有配对用户' }}
                       renderItem={(item) => (
                         <List.Item style={{ paddingLeft: 0, paddingRight: 0 }}>
                           <Space wrap>
@@ -270,13 +271,23 @@ export default function AllUsers() {
                     ) : (
                       <Space wrap>
                         {unpairedMains.map((item) => (
-                          <Tag
-                            key={item.accountId}
-                            style={{ cursor: item?.mainUser?.id ? 'pointer' : 'default' }}
-                            onClick={() => item?.mainUser?.id && navigate(`/user/${item.mainUser.id}`)}
-                          >
-                            {formatUserLabel(item?.mainUser)}
-                          </Tag>
+                          <Space key={item.accountId} size={6} align="center">
+                            <Tag
+                              data-testid={`users-unpaired-main-${item.accountId}`}
+                              style={{ cursor: item?.mainUser?.id ? 'pointer' : 'default' }}
+                              onClick={() => item?.mainUser?.id && navigate(`/user/${item.mainUser.id}`)}
+                            >
+                              {formatUserLabel(item?.mainUser)}
+                            </Tag>
+                            {item?.pairingCancelled && (
+                              <Text
+                                type="warning"
+                                data-testid={`users-pairing-cancelled-${item.accountId}`}
+                              >
+                                已取消配对
+                              </Text>
+                            )}
+                          </Space>
                         ))}
                       </Space>
                     )}

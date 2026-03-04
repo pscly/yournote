@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
 import httpx
@@ -276,7 +276,9 @@ class CollectorService:
             select(DiaryDetailFetch).where(DiaryDetailFetch.diary_id == diary.id)
         )
         state = result.scalar_one_or_none()
-        now = datetime.utcnow()
+        # Python 3.13 起 `datetime.utcnow()` 已弃用；这里保留“naive 表示 UTC”的约定，
+        # 但用 timezone-aware now 再去掉 tzinfo 来避免告警。
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
 
         if not state:
             state = DiaryDetailFetch(
@@ -978,6 +980,41 @@ class CollectorService:
         if not user:
             return 0, []
 
+        # 旧日记“详情补全”访问次数限制：
+        # - 当 content 过短（或 is_simple==1）时，才会触发 all_by_ids 详情接口
+        # - 仅对“超过 N 天”的旧日记生效
+        # - 若同一条日记详情接口已尝试 >= M 次，则后续自动同步不再继续访问详情接口
+        # - 手动 refresh 单条日记不受影响（见 refresh_diary）
+        # 注意：这里不要用 `or 3`，因为用户可能显式配置 0/负数用来“禁用限制”。
+        give_up_days = int(
+            getattr(settings, "diary_detail_fetch_old_give_up_days", 3)
+        )
+        max_attempts = int(
+            getattr(settings, "diary_detail_fetch_old_max_attempts", 3)
+        )
+        apply_old_detail_give_up = give_up_days > 0 and max_attempts > 0
+        # 同上：保持“naive 表示 UTC”，避免 datetime.utcnow() 的弃用告警。
+        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+
+        def _is_old_diary(diary_data: dict[str, Any]) -> bool:
+            if not apply_old_detail_give_up:
+                return False
+
+            dt = self._to_utc_datetime(diary_data.get("createdtime"))
+            if dt is None:
+                createddate = diary_data.get("createddate")
+                if isinstance(createddate, str) and createddate.strip():
+                    try:
+                        # 兜底：把 YYYY-MM-DD 当作 UTC 00:00（阈值是天级，误差不敏感）
+                        dt = datetime.strptime(createddate.strip(), "%Y-%m-%d")
+                    except Exception:
+                        dt = None
+
+            if dt is None:
+                return False
+
+            return (now_utc - dt) > timedelta(days=give_up_days)
+
         # 预查当前批次的日记，避免循环里逐条查库，同时用于“已有完整内容则跳过详情请求”。
         diary_ids: list[int] = []
         for d in diaries:
@@ -1043,6 +1080,17 @@ class CollectorService:
                     ):
                         # 该日记已请求过详情接口，但内容仍然过短：后续同步不再重复请求详情
                         continue
+                    if apply_old_detail_give_up and _is_old_diary(d):
+                        attempts = int(getattr(state_any, "attempts", 0) or 0)
+                        if attempts >= max_attempts:
+                            logger.debug(
+                                "[SYNC] Skip all_by_ids for old diary id=%s attempts=%s (>= %s, age>%s days)",
+                                diary_id,
+                                attempts,
+                                max_attempts,
+                                give_up_days,
+                            )
+                            continue
 
             need_detail_ids.append(diary_id)
 

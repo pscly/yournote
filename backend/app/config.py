@@ -133,6 +133,20 @@ class Settings(BaseSettings):
     sync_interval_minutes: int | None = None
     sync_interval_hours: int | None = None
 
+    # Diary Detail Fetch（旧日记“详情补全”访问次数限制）
+    #
+    # 背景：
+    # - 同步时若发现 content 过短（或 is_simple==1），会额外调用上游 `all_by_ids` 拉取完整内容。
+    # - 对于很久以前的旧日记，上游可能长期返回缺失/失败；如果无限重试会造成不必要的请求。
+    #
+    # 规则：
+    # - 仅对“超过 N 天”的旧日记生效
+    # - 当某条日记的详情接口尝试次数（DiaryDetailFetch.attempts）>= M 时，
+    #   后续自动同步不再对其调用详情接口（手动 refresh 单条日记不受影响）
+    # - 若 N<=0 或 M<=0：视为禁用该限制（保持现有行为）
+    diary_detail_fetch_old_give_up_days: int = 3
+    diary_detail_fetch_old_max_attempts: int = 3
+
     # Image Cache（图片缓存）
     # - 将 nideriji 的 `[图13]` 图片拉取后缓存在本项目数据库里
     image_cache_enabled: bool = True

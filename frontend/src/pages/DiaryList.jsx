@@ -405,6 +405,7 @@ export default function DiaryList() {
     const hasHasMsg = Object.prototype.hasOwnProperty.call(next || {}, 'hasMsg');
     const nextHasMsg = hasHasMsg ? next.hasMsg : hasMsg;
     if (typeof nextHasMsg === 'boolean') p.set('hasMsg', nextHasMsg ? '1' : '0');
+    else if (isMessagesRoute) p.set('hasMsg', ALL);
 
     p.set('page', String(Math.max(1, next.page || 1)));
     p.set('pageSize', String(next.pageSize || 50));
@@ -412,7 +413,7 @@ export default function DiaryList() {
     p.set('order', next.order || 'desc');
 
     setSearchParams(p, { replace });
-  }, [setSearchParams, qMode, qSyntax, statsEnabled, viewMode, multiExpand, isMobile, bookmarked, hasMsg]);
+  }, [setSearchParams, qMode, qSyntax, statsEnabled, viewMode, multiExpand, isMobile, isMessagesRoute, bookmarked, hasMsg]);
 
   useEffect(() => {
     if (!isBookmarksRoute) {
@@ -1135,7 +1136,7 @@ export default function DiaryList() {
       : (readStringStorage(DIARY_LIST_SCOPE_KEY) === 'all') ? 'all' : 'matched';
     const nextBookmarked = isBookmarksRoute ? true : null;
     const nextHasMsg = isMessagesRoute ? true : null;
-    const nextOrderBy = isBookmarksRoute ? 'bookmarked_at' : isMessagesRoute ? 'msg_count' : 'ts';
+    const nextOrderBy = isBookmarksRoute ? 'bookmarked_at' : isMessagesRoute ? 'created_at' : 'ts';
     setQInput('');
     setQ('');
     setScope(nextScope);

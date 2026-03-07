@@ -48,6 +48,7 @@ import './App.css';
 const { Header, Sider, Content } = Layout;
 
 const THEME_KEY = 'yournote_theme_mode';
+const SIDER_COLLAPSED_KEY = 'yournote_app_sider_collapsed_v1';
 
 function getInitialThemeMode() {
   const apply = (mode) => {
@@ -67,6 +68,14 @@ function getInitialThemeMode() {
   }
   const prefersDark = globalThis.matchMedia?.('(prefers-color-scheme: dark)')?.matches;
   return apply(prefersDark ? 'dark' : 'light');
+}
+
+function getInitialSiderCollapsed() {
+  try {
+    return localStorage.getItem(SIDER_COLLAPSED_KEY) === '1';
+  } catch {
+    return false;
+  }
 }
 
 function BeijingClock() {
@@ -112,7 +121,7 @@ function AppShell({ themeMode, setThemeMode }) {
   const isAccessPage = (location.pathname || '').startsWith('/access');
 
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [siderCollapsed, setSiderCollapsed] = useState(false);
+  const [siderCollapsed, setSiderCollapsed] = useState(() => getInitialSiderCollapsed());
 
   const selectedKey = useMemo(() => {
     const pathname = location.pathname || '/';
@@ -155,6 +164,14 @@ function AppShell({ themeMode, setThemeMode }) {
       style={{ borderInlineEnd: 0 }}
     />
   );
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIDER_COLLAPSED_KEY, siderCollapsed ? '1' : '0');
+    } catch {
+      // ignore
+    }
+  }, [siderCollapsed]);
 
   useEffect(() => {
     const path = `${location.pathname || '/'}${location.search || ''}`;

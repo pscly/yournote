@@ -1,5 +1,11 @@
 import { test, expect } from './testBase.js';
 
+
+const SIDER_COLLAPSED_KEY = 'yournote_app_sider_collapsed_v1';
+
+const getDesktopSider = (page) => page.locator('.ant-layout-sider').first();
+const getDesktopSiderTrigger = (page) => page.locator('.ant-layout-sider-trigger').first();
+
 const ensureAccess = async (page) => {
   const accessHeading = page.getByRole('heading', { name: '请输入访问密码', level: 3 });
 
@@ -80,4 +86,46 @@ test.describe('YourNote 应用测试', () => {
       await expect(page.getByRole('heading', { level: 2 })).toBeVisible();
     }
   });
+
+  test('应该在刷新后保持左侧栏折叠状态', async ({ page }) => {
+    await page.goto('/');
+    await ensureAccess(page);
+
+    const sider = getDesktopSider(page);
+    const trigger = getDesktopSiderTrigger(page);
+
+    await expect(sider).toBeVisible();
+    await expect(sider).not.toHaveClass(/ant-layout-sider-collapsed/);
+
+    await trigger.click();
+    await expect(sider).toHaveClass(/ant-layout-sider-collapsed/);
+
+    await page.reload();
+    await ensureAccess(page);
+    await expect(sider).toHaveClass(/ant-layout-sider-collapsed/);
+  });
+
+  test('应该从本地存储恢复左侧栏折叠状态', async ({ page }) => {
+    await page.addInitScript(([storageKey]) => {
+      window.localStorage.setItem(storageKey, '1');
+    }, [SIDER_COLLAPSED_KEY]);
+
+    await page.goto('/');
+    await ensureAccess(page);
+
+    await expect(getDesktopSider(page)).toHaveClass(/ant-layout-sider-collapsed/);
+  });
+
+
+  test('本地存储是非法值时应回退为默认展开', async ({ page }) => {
+    await page.addInitScript(([storageKey]) => {
+      window.localStorage.setItem(storageKey, 'invalid');
+    }, [SIDER_COLLAPSED_KEY]);
+
+    await page.goto('/');
+    await ensureAccess(page);
+
+    await expect(getDesktopSider(page)).not.toHaveClass(/ant-layout-sider-collapsed/);
+  });
+
 });

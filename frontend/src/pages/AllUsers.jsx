@@ -36,8 +36,20 @@ function toTime(value) {
   return t;
 }
 
-function formatUserLabel(user) {
+function getUserEmail(user, accountByNid) {
+  const nid = user?.nideriji_userid;
+  if (!nid) return null;
+  const email = accountByNid?.get?.(nid)?.email;
+  if (typeof email !== 'string') return null;
+  const trimmed = email.trim();
+  if (!trimmed) return null;
+  return trimmed;
+}
+
+function formatUserLabel(user, accountByNid) {
   if (!user) return '未知';
+  const email = getUserEmail(user, accountByNid);
+  if (email) return email;
   const name = user?.name || user?.user_name || '未命名';
   const nid = user?.nideriji_userid;
   return nid ? `${name}（${nid}）` : name;
@@ -53,6 +65,7 @@ export default function AllUsers() {
   const navigate = useNavigate();
   const { token } = antdTheme.useToken();
   const [users, setUsers] = useState([]);
+  const [accounts, setAccounts] = useState([]);
   const [activePairs, setActivePairs] = useState([]);
   const [unpairedMains, setUnpairedMains] = useState([]);
   const [historyPaired, setHistoryPaired] = useState([]);
@@ -154,11 +167,13 @@ export default function AllUsers() {
       ));
 
       setUsers(usersList);
+      setAccounts(accounts);
       setActivePairs(nextActivePairs);
       setUnpairedMains(nextUnpairedMains);
       setHistoryPaired(nextHistory);
     } catch (e) {
       setUsers([]);
+      setAccounts([]);
       setActivePairs([]);
       setUnpairedMains([]);
       setHistoryPaired([]);
@@ -177,6 +192,12 @@ export default function AllUsers() {
     [activePairs],
   );
 
+  const accountByNid = useMemo(() => new Map(
+    accounts
+      .filter(a => a?.nideriji_userid)
+      .map(a => [a.nideriji_userid, a]),
+  ), [accounts]);
+
   const pairedSourcesByUserId = useMemo(() => {
     const map = new Map();
     activePairs.forEach((p) => {
@@ -185,8 +206,7 @@ export default function AllUsers() {
       map.set(pairedId, {
         accountId: p?.accountId,
         mainUserId: p?.mainUser?.id,
-        mainUserName: p?.mainUser?.name || '未命名',
-        mainUserNiderijiUserid: p?.mainUser?.nideriji_userid,
+        mainUser: p?.mainUser || null,
         pairedTime: p?.pairedTime,
       });
     });
@@ -239,7 +259,7 @@ export default function AllUsers() {
                               style={{ cursor: item?.mainUser?.id ? 'pointer' : 'default' }}
                               onClick={() => item?.mainUser?.id && navigate(`/user/${item.mainUser.id}`)}
                             >
-                              {formatUserLabel(item?.mainUser)}
+                              {formatUserLabel(item?.mainUser, accountByNid)}
                             </Tag>
                             <span>-</span>
                             <Tag
@@ -247,7 +267,7 @@ export default function AllUsers() {
                               style={{ cursor: item?.pairedUser?.id ? 'pointer' : 'default' }}
                               onClick={() => item?.pairedUser?.id && navigate(`/user/${item.pairedUser.id}`)}
                             >
-                              {formatUserLabel(item?.pairedUser)}
+                              {formatUserLabel(item?.pairedUser, accountByNid)}
                             </Tag>
                             {item?.pairedTime && (
                               <Tag color="geekblue">配对 {formatShortTime(item.pairedTime) || '-'}</Tag>
@@ -277,7 +297,7 @@ export default function AllUsers() {
                               style={{ cursor: item?.mainUser?.id ? 'pointer' : 'default' }}
                               onClick={() => item?.mainUser?.id && navigate(`/user/${item.mainUser.id}`)}
                             >
-                              {formatUserLabel(item?.mainUser)}
+                              {formatUserLabel(item?.mainUser, accountByNid)}
                             </Tag>
                             {item?.pairingCancelled && (
                               <Text
@@ -300,7 +320,9 @@ export default function AllUsers() {
                       <Space wrap>
                         {historyPaired.map((item) => {
                           const pairedId = item?.pairedUser?.id;
-                          const tipMain = item?.mainUser ? formatUserLabel(item.mainUser) : '未知主账号';
+                          const tipMain = item?.mainUser
+                            ? formatUserLabel(item.mainUser, accountByNid)
+                            : '未知主账号';
                           const tipTime = formatShortTime(item?.pairedTime) || '-';
                           const tip = `曾被 ${tipMain} 配对（${tipTime}）`;
                           return (
@@ -309,7 +331,7 @@ export default function AllUsers() {
                                 style={{ cursor: pairedId ? 'pointer' : 'default' }}
                                 onClick={() => pairedId && navigate(`/user/${pairedId}`)}
                               >
-                                {formatUserLabel(item?.pairedUser)}
+                                {formatUserLabel(item?.pairedUser, accountByNid)}
                               </Tag>
                             </Tooltip>
                           );
@@ -328,6 +350,8 @@ export default function AllUsers() {
                   {users.map((user) => {
                     const isPaired = pairedUserIds.has(user.id);
                     const pairedSource = pairedSourcesByUserId?.[user.id] || null;
+                    const userLabel = formatUserLabel(user, accountByNid);
+                    const userEmail = getUserEmail(user, accountByNid);
                     const card = (
                       <Card
                         hoverable
@@ -341,14 +365,16 @@ export default function AllUsers() {
                             marginBottom: 12,
                           }}
                         >
-                          {getAvatarText(user.name)}
+                          {getAvatarText(userLabel)}
                         </Avatar>
                         <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>
-                          {user.name || '未命名'}
+                          {userLabel}
                         </div>
-                        <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
-                          Nideriji ID: {user.nideriji_userid}
-                        </Text>
+                        {!userEmail && (
+                          <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
+                            Nideriji ID: {user.nideriji_userid}
+                          </Text>
+                        )}
                         <Text type="secondary" style={{ marginTop: 8, display: 'block' }}>
                           记录数：{user.diary_count ?? 0}
                         </Text>
@@ -362,8 +388,7 @@ export default function AllUsers() {
                                 key={`${pairedSource.accountId || 'a'}-${pairedSource.mainUserId || 'u'}`}
                                 color="geekblue"
                               >
-                                {pairedSource.mainUserName}
-                                {pairedSource.mainUserNiderijiUserid ? `（${pairedSource.mainUserNiderijiUserid}）` : ''}
+                                {formatUserLabel(pairedSource.mainUser, accountByNid)}
                               </Tag>
                             </div>
                           </div>

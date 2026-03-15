@@ -18,6 +18,7 @@ const { Title, Text } = Typography;
 const DASHBOARD_ACCOUNTS_COLLAPSED_KEY = 'yournote.dashboard.accountsCollapsed.v2';
 // 仪表盘“新增配对记录”统计窗口（可切换，避免只按记录日期导致漏算“今天才解锁的旧记录”）
 const DASHBOARD_PAIRED_INCREASE_WINDOW_KEY = 'yournote.dashboard.pairedIncreaseWindow.v1';
+const DASHBOARD_LATEST_ORDER_KEY = 'yournote.dashboard.latestOrderBy.v1';
 const DASHBOARD_MSG_COUNT_INCREASE_LIMIT = 20;
 
 function readBoolStorage(key) {
@@ -117,6 +118,11 @@ export default function Dashboard() {
     if (stored === 'today0' || stored === 'yesterday20') return stored;
     return 'yesterday20';
   });
+  const [latestOrderBy, setLatestOrderBy] = useState(() => {
+    const stored = readStringStorage(DASHBOARD_LATEST_ORDER_KEY);
+    if (stored === 'created_at' || stored === 'ts') return stored;
+    return 'ts';
+  });
   const [pairedIncreaseLoading, setPairedIncreaseLoading] = useState(false);
   const [pairedIncreaseCount, setPairedIncreaseCount] = useState(0);
   const [pairedIncreaseDiaries, setPairedIncreaseDiaries] = useState([]);
@@ -155,6 +161,9 @@ export default function Dashboard() {
     }
     return formatBeijingDateTimeFromTs(pairedIncreaseSinceMs);
   }, [pairedIncreaseSinceMs, pairedIncreaseWindow]);
+  const latestOrderTagText = useMemo(() => (
+    latestOrderBy === 'created_at' ? '按入库时间排序' : '按 ts（最后修改）排序'
+  ), [latestOrderBy]);
 
   const increaseDiaryLimit = isMobile ? 20 : 50;
   const increaseDiariesToShow = (pairedIncreaseDiaries || []).slice(0, increaseDiaryLimit);
@@ -165,6 +174,13 @@ export default function Dashboard() {
     if (v !== 'today0' && v !== 'yesterday20') return;
     setPairedIncreaseWindow(v);
     writeStringStorage(DASHBOARD_PAIRED_INCREASE_WINDOW_KEY, v);
+  }, []);
+
+  const handleLatestOrderChange = useCallback((value) => {
+    const v = String(value || '');
+    if (v !== 'ts' && v !== 'created_at') return;
+    setLatestOrderBy(v);
+    writeStringStorage(DASHBOARD_LATEST_ORDER_KEY, v);
   }, []);
 
   const loadPairedIncrease = useCallback(async () => {
@@ -246,6 +262,7 @@ export default function Dashboard() {
       const res = await statsAPI.dashboard({
         latest_limit: isMobile ? 40 : 80,
         latest_preview_len: isMobile ? 80 : 140,
+        latest_order_by: latestOrderBy,
       });
       const data = res?.data || {};
       const latest = data?.latest_paired_diaries || {};
@@ -268,7 +285,7 @@ export default function Dashboard() {
     } finally {
       setLatestLoading(false);
     }
-  }, [accounts.length, isMobile]);
+  }, [accounts.length, isMobile, latestOrderBy]);
 
   const loadData = useCallback(async () => {
     setPageError(null);
@@ -278,6 +295,7 @@ export default function Dashboard() {
       const res = await statsAPI.dashboard({
         latest_limit: isMobile ? 40 : 80,
         latest_preview_len: isMobile ? 80 : 140,
+        latest_order_by: latestOrderBy,
       });
       const data = res?.data || {};
 
@@ -313,7 +331,7 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }, [isMobile]);
+  }, [isMobile, latestOrderBy]);
 
   useEffect(() => {
     loadData();
@@ -648,19 +666,31 @@ export default function Dashboard() {
             )}
             style={{ marginTop: 16 }}
             extra={
-              <Button
-                onClick={loadLatestPairedDiaries}
-                disabled={accounts.length === 0}
-                loading={latestLoading}
-              >
-                刷新
-              </Button>
+              <Space wrap size={8}>
+                <Segmented
+                  size="small"
+                  value={latestOrderBy}
+                  options={[
+                    { label: '按记录时间', value: 'ts' },
+                    { label: '按入库时间', value: 'created_at' },
+                  ]}
+                  onChange={handleLatestOrderChange}
+                  disabled={accounts.length === 0 || latestLoading}
+                />
+                <Button
+                  onClick={loadLatestPairedDiaries}
+                  disabled={accounts.length === 0}
+                  loading={latestLoading}
+                >
+                  刷新
+                </Button>
+              </Space>
             }
           >
             <Space wrap style={{ width: '100%', marginBottom: 12 }}>
               <Tag color="blue">全部账号</Tag>
               <Tag color="magenta">仅显示被匹配用户记录</Tag>
-              <Tag color="purple">按 ts（最后修改）优先排序</Tag>
+              <Tag color={latestOrderBy === 'created_at' ? 'cyan' : 'purple'}>{latestOrderTagText}</Tag>
             </Space>
 
             <List

@@ -119,6 +119,62 @@ class DistinctOrderByRegressionTests(unittest.IsolatedAsyncioTestCase):
                 "created_at": now,
             }
 
+    async def _seed_latest_ordering_case(self) -> dict[str, int]:
+        now = datetime.now(timezone.utc)
+
+        async with self.session_factory() as session:
+            owner = User(nideriji_userid=50102, name="主用户2")
+            paired = User(nideriji_userid=60102, name="配对用户2")
+            account = Account(
+                nideriji_userid=50102,
+                auth_token="token test 2",
+                email="test2@example.com",
+                is_active=True,
+            )
+            session.add_all([owner, paired, account])
+            await session.flush()
+
+            session.add(
+                PairedRelationship(
+                    account_id=account.id,
+                    user_id=owner.id,
+                    paired_user_id=paired.id,
+                    is_active=True,
+                )
+            )
+
+            older_created = now - timedelta(days=2)
+            newer_created = now
+            newer_ts_diary = Diary(
+                nideriji_diary_id=9100002,
+                user_id=paired.id,
+                account_id=account.id,
+                title="按记录时间更靠前",
+                content="old created but high ts",
+                created_date=older_created.date(),
+                created_time=older_created,
+                created_at=older_created,
+                ts=1_900_000_000_000,
+            )
+            newer_created_diary = Diary(
+                nideriji_diary_id=9100003,
+                user_id=paired.id,
+                account_id=account.id,
+                title="按入库时间更靠前",
+                content="new created but lower ts",
+                created_date=newer_created.date(),
+                created_time=newer_created,
+                created_at=newer_created,
+                ts=1_600_000_000_000,
+            )
+            session.add_all([newer_ts_diary, newer_created_diary])
+            await session.commit()
+
+            return {
+                "ts_first_id": int(newer_ts_diary.id),
+                "created_first_id": int(newer_created_diary.id),
+            }
+
     async def test_dashboard_latest_query_compiles_without_distinct(self):
         db = _CaptureScalarsOnlyDB()
 
@@ -139,6 +195,28 @@ class DistinctOrderByRegressionTests(unittest.IsolatedAsyncioTestCase):
             result = await stats_api._get_latest_paired_diaries(db=session, limit=50, preview_len=120)
 
         self.assertEqual(len(result.items), 1)
+
+    async def test_dashboard_latest_supports_ts_and_created_at_ordering(self):
+        seeded = await self._seed_latest_ordering_case()
+
+        async with self.session_factory() as session:
+            ts_result = await stats_api._get_latest_paired_diaries(
+                db=session,
+                limit=50,
+                preview_len=120,
+                latest_order_by="ts",
+            )
+            created_result = await stats_api._get_latest_paired_diaries(
+                db=session,
+                limit=50,
+                preview_len=120,
+                latest_order_by="created_at",
+            )
+
+        self.assertGreaterEqual(len(ts_result.items), 2)
+        self.assertGreaterEqual(len(created_result.items), 2)
+        self.assertEqual(ts_result.items[0].id, seeded["ts_first_id"])
+        self.assertEqual(created_result.items[0].id, seeded["created_first_id"])
 
     async def test_paired_increase_does_not_duplicate_count_or_rows(self):
         seeded = await self._seed_duplicate_relationship_case()

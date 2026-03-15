@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import time
 from datetime import datetime, timezone
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
@@ -87,11 +87,33 @@ def _build_paired_relationship_exists_clause():
     )
 
 
+def _build_latest_paired_diaries_order_by(
+    latest_order_by: Literal["ts", "created_at"],
+):
+    if latest_order_by == "created_at":
+        return (
+            Diary.created_at.is_(None).asc(),
+            Diary.created_at.desc(),
+            Diary.ts.is_(None).asc(),
+            Diary.ts.desc(),
+            Diary.id.desc(),
+        )
+
+    return (
+        Diary.ts.is_(None).asc(),
+        Diary.ts.desc(),
+        Diary.created_at.is_(None).asc(),
+        Diary.created_at.desc(),
+        Diary.id.desc(),
+    )
+
+
 async def _get_latest_paired_diaries(
     *,
     db: AsyncSession,
     limit: int,
     preview_len: int,
+    latest_order_by: Literal["ts", "created_at"] = "ts",
 ) -> StatsDashboardLatestPairedDiariesResponse:
     started = time.perf_counter()
     matched_exists = _build_paired_relationship_exists_clause()
@@ -106,13 +128,10 @@ async def _get_latest_paired_diaries(
             matched_exists,
             Account.is_active.is_(True),
         )
-        # 排序：优先按 ts（最后修改）倒序；ts 为空的放后面；再按 created_date/id 保底稳定排序
-        .order_by(
-            Diary.ts.is_(None).asc(),
-            Diary.ts.desc(),
-            Diary.created_date.desc(),
-            Diary.id.desc(),
-        )
+        # 排序口径：
+        # - ts：按记录最后修改时间看“最近写了什么”
+        # - created_at：按首次入库时间看“最近同步进来了什么”
+        .order_by(*_build_latest_paired_diaries_order_by(latest_order_by))
         .limit(limit)
     )
 
@@ -445,6 +464,9 @@ async def get_dashboard(
     latest_preview_len: int = Query(
         120, ge=0, le=1000, description="最近配对记录预览长度"
     ),
+    latest_order_by: Literal["ts", "created_at"] = Query(
+        "ts", description="最近配对记录排序口径：ts=记录时间，created_at=入库时间"
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """仪表盘聚合数据：账号 + 概览 + 最近配对记录。
@@ -515,7 +537,10 @@ async def get_dashboard(
         )
 
     latest = await _get_latest_paired_diaries(
-        db=db, limit=latest_limit, preview_len=latest_preview_len
+        db=db,
+        limit=latest_limit,
+        preview_len=latest_preview_len,
+        latest_order_by=latest_order_by,
     )
 
     return StatsDashboardResponse(

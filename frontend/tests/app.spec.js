@@ -219,6 +219,70 @@ test.describe('YourNote 应用测试', () => {
     await expect(page).toHaveURL('/user/1');
   });
 
+  test('仪表盘最近记录应支持在按记录时间和按入库时间之间切换，并记住选择', async ({ page }) => {
+    await page.route('**/api/stats/dashboard**', async (route, request) => {
+      const url = new URL(request.url());
+      const orderBy = String(url.searchParams.get('latest_order_by') || 'ts');
+      const isCreatedAt = orderBy === 'created_at';
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          overview: {
+            total_accounts: 1,
+            total_users: 2,
+            paired_diaries_count: 2,
+            total_msg_count: 7,
+          },
+          accounts: [
+            {
+              id: 1,
+              nideriji_userid: 10001,
+              user_name: '测试账号',
+              email: 'test@example.com',
+            },
+          ],
+          latest_paired_diaries: {
+            items: [
+              {
+                id: isCreatedAt ? 2 : 1,
+                account_id: 1,
+                user_id: isCreatedAt ? 2 : 1,
+                title: isCreatedAt ? '按入库时间第一条' : '按记录时间第一条',
+                content_preview: isCreatedAt ? '这是最新入库的记录。' : '这是最后修改时间最新的记录。',
+                created_date: '2026-03-15',
+                created_at: isCreatedAt ? '2026-03-15T12:04:05Z' : '2026-03-13T10:00:00Z',
+                ts: isCreatedAt ? 1586920349 : 1773506934,
+                msg_count: 3,
+                word_count_no_ws: 18,
+              },
+            ],
+            authors: [
+              { id: 1, nideriji_userid: 10001, name: '记录时间作者' },
+              { id: 2, nideriji_userid: 10002, name: '入库时间作者' },
+            ],
+          },
+        }),
+      });
+    });
+
+    await page.goto('/');
+    await ensureAccess(page);
+
+    await expect(page.getByText('按记录时间第一条')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText('按 ts（最后修改）排序')).toBeVisible({ timeout: 15000 });
+
+    await page.getByText('按入库时间', { exact: true }).click();
+    await expect(page.getByText('按入库时间第一条')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText('按入库时间排序')).toBeVisible({ timeout: 15000 });
+
+    await page.reload();
+    await ensureAccess(page);
+    await expect(page.getByText('按入库时间第一条')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText('按入库时间排序')).toBeVisible({ timeout: 15000 });
+  });
+
   test('应该在刷新后保持左侧栏折叠状态', async ({ page }) => {
     await page.goto('/');
     await ensureAccess(page);

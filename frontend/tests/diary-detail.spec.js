@@ -502,6 +502,8 @@ test.describe('记录详情页测试', () => {
     await expect(legendMatched).toBeVisible({ timeout: 15000 });
     await expect(legendMatched).toContainText('配对用户');
     await expect(legendMatched).toContainText('用户2');
+    await expect(legendMain.getByRole('link')).toHaveAttribute('href', '/user/1');
+    await expect(legendMatched.getByRole('link')).toHaveAttribute('href', '/user/2');
 
     const item1 = page.getByTestId('diary-sider-item-1');
     const item2 = page.getByTestId('diary-sider-item-2');
@@ -509,6 +511,9 @@ test.describe('记录详情页测试', () => {
     await expect(item2).toBeVisible({ timeout: 15000 });
     await expect(item1).toHaveAttribute('data-owner', 'main');
     await expect(item2).toHaveAttribute('data-owner', 'matched');
+
+    await legendMatched.getByRole('link').click();
+    await expect(page).toHaveURL('/user/2');
   });
 
   test('桌面端 - 竞态回归：paired 接口慢于 diaries 列表时不覆盖入口锁定对方', async ({ page }) => {

@@ -368,11 +368,35 @@ export default function DiaryList() {
   }, [fromPath]);
 
   const getDiaryDetailTo = useCallback((diaryId) => buildDiaryDetailPath(diaryId, fromPath), [fromPath]);
+  const getUserDetailTo = useCallback((userId) => {
+    const idNum = parsePositiveInt(userId);
+    return idNum ? `/user/${idNum}` : null;
+  }, []);
 
   const handleDiaryDetailLinkClick = useCallback((event) => {
     if (!isUnmodifiedLeftClickEvent(event)) return;
     rememberScrollPosition();
   }, [rememberScrollPosition]);
+
+  const renderAuthorTag = useCallback((uid) => {
+    const u = userById?.[uid];
+    const name = u?.name || (uid ? `用户 ${uid}` : '未知');
+    const text = u?.nideriji_userid ? `${name}（${u.nideriji_userid}）` : name;
+    const to = getUserDetailTo(uid);
+
+    return (
+      <AppLink
+        to={to}
+        title={to ? '点击查看用户详情' : undefined}
+        onClick={(event) => {
+          event?.stopPropagation?.();
+        }}
+        style={{ display: 'inline-flex', maxWidth: '100%', whiteSpace: 'nowrap', verticalAlign: 'middle' }}
+      >
+        <Tag color="magenta" style={{ whiteSpace: 'nowrap' }}>{text}</Tag>
+      </AppLink>
+    );
+  }, [userById, getUserDetailTo]);
 
   const syncUrl = useCallback((next, { replace = false } = {}) => {
     const p = new URLSearchParams();
@@ -1515,12 +1539,7 @@ export default function DiaryList() {
         dataIndex: 'user_id',
         key: 'author',
         width: 200,
-        render: (uid) => {
-          const u = userById?.[uid];
-          const name = u?.name || (uid ? `用户 ${uid}` : '未知');
-          const text = u?.nideriji_userid ? `${name}（${u.nideriji_userid}）` : name;
-          return <Tag color="magenta">{text}</Tag>;
-        },
+        render: (uid) => renderAuthorTag(uid),
       },
       ...(showAccount ? [
         {
@@ -1590,7 +1609,7 @@ export default function DiaryList() {
     ];
 
     return cols;
-  }, [userById, token, renderHighlighted, statsEnabled, currentAccountId, bookmarkLoadingById, handleToggleBookmark, batchCancelLoading, getDiaryDetailTo, handleDiaryDetailLinkClick]);
+  }, [token, renderHighlighted, renderAuthorTag, statsEnabled, currentAccountId, bookmarkLoadingById, handleToggleBookmark, batchCancelLoading, getDiaryDetailTo, handleDiaryDetailLinkClick]);
 
   const noAccounts = initDone && (accounts?.length || 0) === 0;
 
@@ -2032,9 +2051,6 @@ export default function DiaryList() {
               const detailLoading = Number.isFinite(diaryId) ? Boolean(detailLoadingById?.[diaryId]) : false;
               const detailError = Number.isFinite(diaryId) ? detailErrorById?.[diaryId] : null;
 
-              const u = userById?.[item?.user_id];
-              const name = u?.name || (item?.user_id ? `用户 ${item.user_id}` : '未知');
-              const authorText = u?.nideriji_userid ? `${name}（${u.nideriji_userid}）` : name;
               const wordCount = Number(item?.word_count_no_ws) || 0;
               const modifiedText = formatBeijingDateTimeFromTs(item?.ts);
 
@@ -2051,7 +2067,7 @@ export default function DiaryList() {
                       {currentAccountId == null && (
                         <Tag color="gold" title={`账号 ${getShownAccountIdText(item)}`}>A{getShownAccountIdText(item)}</Tag>
                       )}
-                      <Tag color="magenta">{authorText}</Tag>
+                      {renderAuthorTag(item?.user_id)}
                       <Tag color="blue">{item.created_date || '未知日期'}</Tag>
                       {modifiedText !== '-' && <Tag color="purple">修改 {modifiedText}</Tag>}
                       <Tag color="volcano">留言 {getShownMsgCount(item)}</Tag>
@@ -2156,45 +2172,44 @@ export default function DiaryList() {
             loading={loading}
             locale={{ emptyText: '暂无记录' }}
             renderItem={(item) => {
-              const u = userById?.[item?.user_id];
-              const name = u?.name || (item?.user_id ? `用户 ${item.user_id}` : '未知');
-              const authorText = u?.nideriji_userid ? `${name}（${u.nideriji_userid}）` : name;
               const wordCount = Number(item?.word_count_no_ws) || 0;
               const modifiedText = formatBeijingDateTimeFromTs(item?.ts);
               return (
-                <AppLink
-                  to={getDiaryDetailTo(item?.id)}
-                  onClick={handleDiaryDetailLinkClick}
-                  block
+                <Card
+                  hoverable
                   style={{ marginBottom: 12 }}
+                  bodyStyle={{ padding: 14 }}
                 >
-                  <Card
-                    hoverable
-                    bodyStyle={{ padding: 14 }}
-                  >
-                    <Space direction="vertical" size={8} style={{ width: '100%' }}>
-                      <Space wrap size={8}>
-                        {currentAccountId == null && (
-                          <Tag color="gold" title={`账号 ${getShownAccountIdText(item)}`}>A{getShownAccountIdText(item)}</Tag>
-                        )}
-                        <Tag color="magenta">{authorText}</Tag>
-                        <Tag color="blue">{item.created_date || '未知日期'}</Tag>
-                        {modifiedText !== '-' && <Tag color="purple">修改 {modifiedText}</Tag>}
-                        <Tag color="volcano">留言 {getShownMsgCount(item)}</Tag>
-                        {statsEnabled && <Tag color="geekblue">{wordCount} 字</Tag>}
-                        {item.mood && <Tag>{item.mood}</Tag>}
-                        {item.weather && <Tag color="cyan">{item.weather}</Tag>}
-                      </Space>
-                      <Text strong>{renderHighlighted(item.title || '无标题')}</Text>
-                      <Paragraph
-                        style={{ margin: 0, color: token.colorTextSecondary }}
-                        ellipsis={{ rows: 2 }}
-                      >
-                        {renderHighlighted(item.content_preview || '-')}
-                      </Paragraph>
+                  <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                    <Space wrap size={8}>
+                      {currentAccountId == null && (
+                        <Tag color="gold" title={`账号 ${getShownAccountIdText(item)}`}>A{getShownAccountIdText(item)}</Tag>
+                      )}
+                      {renderAuthorTag(item?.user_id)}
+                      <Tag color="blue">{item.created_date || '未知日期'}</Tag>
+                      {modifiedText !== '-' && <Tag color="purple">修改 {modifiedText}</Tag>}
+                      <Tag color="volcano">留言 {getShownMsgCount(item)}</Tag>
+                      {statsEnabled && <Tag color="geekblue">{wordCount} 字</Tag>}
+                      {item.mood && <Tag>{item.mood}</Tag>}
+                      {item.weather && <Tag color="cyan">{item.weather}</Tag>}
                     </Space>
-                  </Card>
-                </AppLink>
+                    <AppLink
+                      to={getDiaryDetailTo(item?.id)}
+                      onClick={handleDiaryDetailLinkClick}
+                      block
+                    >
+                      <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                        <Text strong>{renderHighlighted(item.title || '无标题')}</Text>
+                        <Paragraph
+                          style={{ margin: 0, color: token.colorTextSecondary }}
+                          ellipsis={{ rows: 2 }}
+                        >
+                          {renderHighlighted(item.content_preview || '-')}
+                        </Paragraph>
+                      </Space>
+                    </AppLink>
+                  </Space>
+                </Card>
               );
             }}
           />

@@ -145,11 +145,78 @@ test.describe('YourNote 应用测试', () => {
     await page.goto('/');
     await ensureAccess(page);
 
-    const firstDiaryLink = page.getByRole('link', { name: /测试标题/ }).first();
+    const firstDiaryLink = page.getByTestId('dashboard-latest-diary-link-1');
     await expect(firstDiaryLink).toBeVisible({ timeout: 15000 });
 
     const width = await firstDiaryLink.evaluate((el) => Math.round(el.getBoundingClientRect().width));
     expect(width).toBeGreaterThan(150);
+  });
+
+  test('记录列表作者标签应跳转到用户详情', async ({ page }) => {
+    await page.goto('/diaries?view=list');
+    await ensureAccess(page);
+
+    const authorLink = page.locator('.ant-table-tbody tr a[href="/user/1"]').first();
+    await expect(authorLink).toBeVisible({ timeout: 15000 });
+    await authorLink.click();
+
+    await expect(page).toHaveURL('/user/1');
+  });
+
+  test('仪表盘最近记录作者标签应跳转到用户详情而不是记录详情', async ({ page }) => {
+    await page.route('**/api/stats/dashboard**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          overview: {
+            total_accounts: 1,
+            total_users: 1,
+            paired_diaries_count: 1,
+            total_msg_count: 7,
+          },
+          accounts: [
+            {
+              id: 1,
+              nideriji_userid: 10001,
+              user_name: '测试账号',
+              email: 'test@example.com',
+            },
+          ],
+          latest_paired_diaries: {
+            items: [
+              {
+                id: 1,
+                account_id: 1,
+                user_id: 1,
+                title: '测试标题',
+                content_preview: '这是一个用于验证作者标签跳转的预览内容。',
+                created_date: '2026-03-15',
+                ts: 1773542400000,
+                msg_count: 7,
+                word_count_no_ws: 25,
+              },
+            ],
+            authors: [
+              {
+                id: 1,
+                nideriji_userid: 10001,
+                name: '测试用户',
+              },
+            ],
+          },
+        }),
+      });
+    });
+
+    await page.goto('/');
+    await ensureAccess(page);
+
+    const authorLink = page.locator('a[href="/user/1"]').filter({ hasText: '测试用户（10001）' }).first();
+    await expect(authorLink).toBeVisible({ timeout: 15000 });
+    await authorLink.click();
+
+    await expect(page).toHaveURL('/user/1');
   });
 
   test('应该在刷新后保持左侧栏折叠状态', async ({ page }) => {

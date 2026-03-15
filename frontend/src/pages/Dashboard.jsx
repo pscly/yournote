@@ -76,6 +76,25 @@ export default function Dashboard() {
   const isMobile = !screens.md;
   const fromPath = useMemo(() => getLocationPath(location), [location]);
   const getDiaryDetailTo = useCallback((diaryId) => buildDiaryDetailPath(diaryId, fromPath), [fromPath]);
+  const getUserDetailTo = useCallback((userId) => {
+    const idNum = Number(userId);
+    return Number.isFinite(idNum) && idNum > 0 ? `/user/${idNum}` : null;
+  }, []);
+  const renderAuthorTagLink = useCallback((userId, authorText) => {
+    const to = getUserDetailTo(userId);
+    return (
+      <AppLink
+        to={to}
+        title={to ? '点击查看用户详情' : undefined}
+        onClick={(event) => {
+          event?.stopPropagation?.();
+        }}
+        style={{ display: 'inline-flex', maxWidth: '100%', whiteSpace: 'nowrap', verticalAlign: 'middle' }}
+      >
+        <Tag color="magenta" style={{ whiteSpace: 'nowrap' }}>{authorText}</Tag>
+      </AppLink>
+    );
+  }, [getUserDetailTo]);
   const [loading, setLoading] = useState(true);
   const [pageError, setPageError] = useState(null);
   const [syncingId, setSyncingId] = useState(null);
@@ -671,24 +690,28 @@ export default function Dashboard() {
                 return (
                   <List.Item
                     key={item?.id}
-                    style={{ cursor: 'pointer', paddingLeft: 4, paddingRight: 4 }}
+                    style={{ paddingLeft: 4, paddingRight: 4 }}
                   >
-                    <AppLink to={getDiaryDetailTo(item?.id)} block>
-                      <List.Item.Meta
-                        title={
-                          <Space wrap size={8}>
-                            <Tag color="gold" title={`账号 ${getShownAccountIdText(item)}`}>A{getShownAccountIdText(item)}</Tag>
-                            <Tag color="magenta">{authorText}</Tag>
-                            <Tag color="blue">{item?.created_date || '-'}</Tag>
-                            {updatedAtText && <Tag color="purple">更新 {updatedAtText}</Tag>}
-                            <Tag color="geekblue">{wordCount} 字</Tag>
-                            <Tag color="volcano">留言 {getShownMsgCount(item)}</Tag>
-                            <span style={{ fontWeight: 500 }}>{item?.title || '无标题'}</span>
-                          </Space>
-                        }
-                        description={<Text type="secondary">{snippet}</Text>}
-                      />
-                    </AppLink>
+                    <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                      <Space wrap size={8}>
+                        <Tag color="gold" title={`账号 ${getShownAccountIdText(item)}`}>A{getShownAccountIdText(item)}</Tag>
+                        {renderAuthorTagLink(item?.user_id, authorText)}
+                        <Tag color="blue">{item?.created_date || '-'}</Tag>
+                        {updatedAtText && <Tag color="purple">更新 {updatedAtText}</Tag>}
+                        <Tag color="geekblue">{wordCount} 字</Tag>
+                        <Tag color="volcano">留言 {getShownMsgCount(item)}</Tag>
+                      </Space>
+                      <AppLink
+                        to={getDiaryDetailTo(item?.id)}
+                        block
+                        data-testid={`dashboard-latest-diary-link-${item?.id}`}
+                      >
+                        <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                          <span style={{ fontWeight: 500 }}>{item?.title || '无标题'}</span>
+                          <Text type="secondary">{snippet}</Text>
+                        </Space>
+                      </AppLink>
+                    </Space>
                   </List.Item>
                 );
               }}
@@ -768,31 +791,31 @@ export default function Dashboard() {
             return (
               <List.Item
                 key={item?.id}
-                style={{ cursor: 'pointer', paddingLeft: 4, paddingRight: 4 }}
+                style={{ paddingLeft: 4, paddingRight: 4 }}
               >
-                <AppLink
-                  to={getDiaryDetailTo(item?.id)}
-                  block
-                  onClick={() => {
-                    setDeltaDrawerOpen(false);
-                  }}
-                >
-                  <List.Item.Meta
-                    title={
-                      <Space wrap size={8}>
-                        <Tag color="gold" title={`账号 ${getShownAccountIdText(item)}`}>A{getShownAccountIdText(item)}</Tag>
-                        <Tag color="magenta">{authorText}</Tag>
-                        <Tag color="blue">{item?.created_date || '-'}</Tag>
-                        {showInsertedAt && <Tag color="cyan">入库 {insertedAtText}</Tag>}
-                        {updatedAtText && <Tag color="purple">更新 {updatedAtText}</Tag>}
-                        <Tag color="geekblue">{wordCount} 字</Tag>
-                        <Tag color="volcano">留言 {getShownMsgCount(item)}</Tag>
-                        <span style={{ fontWeight: 500 }}>{item?.title || '无标题'}</span>
-                      </Space>
-                    }
-                    description={<Text type="secondary">{snippet}</Text>}
-                  />
-                </AppLink>
+                <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                  <Space wrap size={8}>
+                    <Tag color="gold" title={`账号 ${getShownAccountIdText(item)}`}>A{getShownAccountIdText(item)}</Tag>
+                    {renderAuthorTagLink(item?.user_id, authorText)}
+                    <Tag color="blue">{item?.created_date || '-'}</Tag>
+                    {showInsertedAt && <Tag color="cyan">入库 {insertedAtText}</Tag>}
+                    {updatedAtText && <Tag color="purple">更新 {updatedAtText}</Tag>}
+                    <Tag color="geekblue">{wordCount} 字</Tag>
+                    <Tag color="volcano">留言 {getShownMsgCount(item)}</Tag>
+                  </Space>
+                  <AppLink
+                    to={getDiaryDetailTo(item?.id)}
+                    block
+                    onClick={() => {
+                      setDeltaDrawerOpen(false);
+                    }}
+                  >
+                    <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                      <span style={{ fontWeight: 500 }}>{item?.title || '无标题'}</span>
+                      <Text type="secondary">{snippet}</Text>
+                    </Space>
+                  </AppLink>
+                </Space>
               </List.Item>
             );
           }}

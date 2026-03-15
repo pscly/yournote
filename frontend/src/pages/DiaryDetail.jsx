@@ -114,6 +114,10 @@ export default function DiaryDetail() {
     const n = Number.parseInt(id, 10);
     return Number.isFinite(n) ? n : null;
   }, [id]);
+  const getUserDetailTo = useCallback((userId) => {
+    const idNum = toFiniteId(userId);
+    return idNum ? `/user/${idNum}` : null;
+  }, []);
 
   const diaryListScrollRef = useRef(null);
   const activeDiaryItemRef = useRef(null);
@@ -986,18 +990,40 @@ export default function DiaryDetail() {
           {pairUsers?.main?.id && pairUsers?.matched?.id && (
             <div style={{ fontSize: '12px', color: token.colorTextSecondary }}>
                <div data-testid="diary-owner-legend-main">
-                  <span
-                    data-testid="diary-owner-legend-main-color"
-                    style={{ display: 'inline-block', width: 12, height: 12, background: token.colorPrimary, marginRight: 6, borderRadius: 2 }}
-                  ></span>
-                  当前用户{pairUsers.main?.name ? `：${pairUsers.main.name}` : ''}
+                  <AppLink
+                    to={getUserDetailTo(pairUsers?.main?.id)}
+                    title={pairUsers?.main?.id ? '点击查看当前用户详情' : undefined}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      whiteSpace: 'nowrap',
+                      color: token.colorTextSecondary,
+                    }}
+                  >
+                    <span
+                      data-testid="diary-owner-legend-main-color"
+                      style={{ display: 'inline-block', width: 12, height: 12, background: token.colorPrimary, marginRight: 6, borderRadius: 2 }}
+                    ></span>
+                    当前用户{pairUsers.main?.name ? `：${pairUsers.main.name}` : ''}
+                  </AppLink>
                 </div>
                 <div data-testid="diary-owner-legend-matched">
-                  <span
-                    data-testid="diary-owner-legend-matched-color"
-                    style={{ display: 'inline-block', width: 12, height: 12, background: token.magenta6, marginRight: 6, borderRadius: 2 }}
-                  ></span>
-                  配对用户{pairUsers.matched?.name ? `：${pairUsers.matched.name}` : ''}
+                  <AppLink
+                    to={getUserDetailTo(pairUsers?.matched?.id)}
+                    title={pairUsers?.matched?.id ? '点击查看配对用户详情' : undefined}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      whiteSpace: 'nowrap',
+                      color: token.colorTextSecondary,
+                    }}
+                  >
+                    <span
+                      data-testid="diary-owner-legend-matched-color"
+                      style={{ display: 'inline-block', width: 12, height: 12, background: token.magenta6, marginRight: 6, borderRadius: 2 }}
+                    ></span>
+                    配对用户{pairUsers.matched?.name ? `：${pairUsers.matched.name}` : ''}
+                  </AppLink>
                 </div>
               </div>
             )}

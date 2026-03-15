@@ -13,9 +13,15 @@ export default function AppLink({
   style,
   ...rest
 }) {
+  const mergedStyle = {
+    ...BASE_STYLE,
+    ...(block ? { display: 'block', width: '100%', minWidth: 0, flex: '1 1 auto' } : null),
+    ...style,
+  };
+
   if (disabled || !to) {
     return (
-      <span style={style} {...rest}>
+      <span style={mergedStyle} {...rest}>
         {children}
       </span>
     );
@@ -24,11 +30,7 @@ export default function AppLink({
   return (
     <Link
       to={to}
-      style={{
-        ...BASE_STYLE,
-        ...(block ? { display: 'block' } : null),
-        ...style,
-      }}
+      style={mergedStyle}
       {...rest}
     >
       {children}

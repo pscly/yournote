@@ -35,4 +35,46 @@ test.describe('新增配对记录历史页', () => {
 
     await expect(page.getByText('包含停用账号').first()).toBeVisible();
   });
+
+  test('历史记录列表链接不应窄到导致逐字换行', async ({ page }) => {
+    await page.route('**/api/stats/paired-diaries/increase**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          count: 1,
+          diaries: [
+            {
+              id: 1,
+              account_id: 1,
+              user_id: 1,
+              title: '测试历史标题',
+              content: '这是一个用于验证历史记录列表布局不会被压窄的预览内容。',
+              created_date: '2026-03-15',
+              created_at: '2026-03-15T10:00:00Z',
+              ts: 1773542400000,
+              msg_count: 7,
+              word_count_no_ws: 26,
+            },
+          ],
+          authors: [
+            {
+              id: 1,
+              nideriji_userid: 10001,
+              name: '测试用户',
+            },
+          ],
+        }),
+      });
+    });
+
+    await page.goto('/paired-increase-history');
+    await ensureAccess(page);
+
+    const historyLink = page.getByRole('link', { name: /测试历史标题/ }).first();
+    await expect(historyLink).toBeVisible({ timeout: 15000 });
+
+    const width = await historyLink.evaluate((el) => Math.round(el.getBoundingClientRect().width));
+    expect(width).toBeGreaterThan(150);
+  });
 });

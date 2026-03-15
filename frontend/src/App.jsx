@@ -27,6 +27,7 @@ import {
   TeamOutlined,
   UserOutlined,
 } from '@ant-design/icons';
+import AppLink from './components/AppLink';
 
 import Dashboard from './pages/Dashboard';
 import AccountManage from './pages/AccountManage';
@@ -156,11 +157,20 @@ function AppShell({ themeMode, setThemeMode }) {
     <Menu
       mode="inline"
       selectedKeys={selectedKey ? [selectedKey] : []}
-      items={navItems}
-      onClick={(e) => {
-        setDrawerOpen(false);
-        if (e?.key) navigate(e.key);
-      }}
+      items={navItems.map((item) => ({
+        key: item.key,
+        label: (
+          <AppLink
+            to={item.key}
+            block
+            onClick={() => setDrawerOpen(false)}
+            style={{ display: 'flex', alignItems: 'center', gap: 10 }}
+          >
+            {item.icon}
+            <span>{item.label}</span>
+          </AppLink>
+        ),
+      }))}
       style={{ borderInlineEnd: 0 }}
     />
   );

@@ -2,9 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button, Card, Col, Drawer, Grid, List, Row, Segmented, Space, Spin, Statistic, Table, Tag, Typography, message } from 'antd';
 import { BookOutlined, DownOutlined, MessageOutlined, SyncOutlined, TeamOutlined, UpOutlined, UserOutlined } from '@ant-design/icons';
 import { statsAPI, syncAPI } from '../services/api';
+import AppLink from '../components/AppLink';
 import { getErrorMessage } from '../utils/errorMessage';
+import { buildDiaryDetailPath, getLocationPath } from '../utils/navigation';
 import { waitForLatestSyncLog } from '../utils/sync';
-import { useNavigate } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import { beijingDateStringToUtcRangeMs, formatBeijingDateTime, formatBeijingDateTimeFromTs, getBeijingDateString } from '../utils/time';
 import { getDiaryWordStats } from '../utils/wordCount';
 import Page from '../components/Page';
@@ -69,9 +71,11 @@ function getShownAccountIdText(item) {
 }
 
 export default function Dashboard() {
-  const navigate = useNavigate();
+  const location = useLocation();
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.md;
+  const fromPath = useMemo(() => getLocationPath(location), [location]);
+  const getDiaryDetailTo = useCallback((diaryId) => buildDiaryDetailPath(diaryId, fromPath), [fromPath]);
   const [loading, setLoading] = useState(true);
   const [pageError, setPageError] = useState(null);
   const [syncingId, setSyncingId] = useState(null);
@@ -360,52 +364,65 @@ export default function Dashboard() {
         <>
           <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
             <Col xs={12} md={6}>
-              <Card hoverable onClick={() => navigate('/accounts')} style={{ cursor: 'pointer' }}>
-                <Statistic title="账号数量" value={stats.totalAccounts} prefix={<UserOutlined />} />
-              </Card>
+              <AppLink to="/accounts" block>
+                <Card hoverable style={{ cursor: 'pointer' }}>
+                  <Statistic title="账号数量" value={stats.totalAccounts} prefix={<UserOutlined />} />
+                </Card>
+              </AppLink>
             </Col>
             <Col xs={12} md={6}>
-              <Card hoverable onClick={() => navigate('/users')} style={{ cursor: 'pointer' }}>
-                <Statistic title="用户数量" value={stats.totalUsers} prefix={<TeamOutlined />} />
-              </Card>
+              <AppLink to="/users" block>
+                <Card hoverable style={{ cursor: 'pointer' }}>
+                  <Statistic title="用户数量" value={stats.totalUsers} prefix={<TeamOutlined />} />
+                </Card>
+              </AppLink>
             </Col>
             <Col xs={12} md={6}>
-              <Card hoverable onClick={() => navigate('/diaries')} style={{ cursor: 'pointer' }}>
-                <Statistic title="配对记录数" value={stats.pairedDiaries} prefix={<BookOutlined />} />
-                <Space size={8} style={{ marginTop: 8 }} onClick={(e) => e.stopPropagation()} wrap>
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    较 {pairedIncreaseSinceLabel}
-                  </Text>
-                  <Segmented
-                    size="small"
-                    value={pairedIncreaseWindow}
-                    options={[
-                      { label: '昨日20:00', value: 'yesterday20' },
-                      { label: '今日00:00', value: 'today0' },
-                    ]}
-                    onChange={handlePairedIncreaseWindowChange}
-                  />
-                  {pairedIncreaseLoading ? (
-                    <Spin size="small" />
-                  ) : pairedIncreaseCount > 0 ? (
-                    <Button
-                      type="link"
-                      size="small"
-                      style={{ padding: 0, height: 'auto' }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setDeltaDrawerOpen(true);
-                      }}
-                    >
-                      +{pairedIncreaseCount}
-                    </Button>
-                  ) : (
+              <div style={{ position: 'relative' }}>
+                <AppLink
+                  to="/diaries"
+                  block
+                  aria-label="打开记录列表"
+                  style={{ position: 'absolute', inset: 0, zIndex: 1, borderRadius: 8 }}
+                />
+                <Card hoverable style={{ cursor: 'pointer' }}>
+                  <div style={{ position: 'relative', zIndex: 2, pointerEvents: 'none' }}>
+                    <Statistic title="配对记录数" value={stats.pairedDiaries} prefix={<BookOutlined />} />
+                  </div>
+                  <Space size={8} style={{ marginTop: 8, position: 'relative', zIndex: 2 }} wrap>
                     <Text type="secondary" style={{ fontSize: 12 }}>
-                      +0
+                      较 {pairedIncreaseSinceLabel}
                     </Text>
-                  )}
-                </Space>
-              </Card>
+                    <Segmented
+                      size="small"
+                      value={pairedIncreaseWindow}
+                      options={[
+                        { label: '昨日20:00', value: 'yesterday20' },
+                        { label: '今日00:00', value: 'today0' },
+                      ]}
+                      onChange={handlePairedIncreaseWindowChange}
+                    />
+                    {pairedIncreaseLoading ? (
+                      <Spin size="small" />
+                    ) : pairedIncreaseCount > 0 ? (
+                      <Button
+                        type="link"
+                        size="small"
+                        style={{ padding: 0, height: 'auto' }}
+                        onClick={() => {
+                          setDeltaDrawerOpen(true);
+                        }}
+                      >
+                        +{pairedIncreaseCount}
+                      </Button>
+                    ) : (
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        +0
+                      </Text>
+                    )}
+                  </Space>
+                </Card>
+              </div>
             </Col>
 
             <Col xs={12} md={6}>
@@ -431,10 +448,10 @@ export default function Dashboard() {
                     <Button
                       type="link"
                       size="small"
+                      href="/messages"
                       style={{ padding: 0, height: 'auto' }}
                       onClick={(e) => {
                         e?.stopPropagation?.();
-                        navigate('/messages');
                       }}
                     >
                       查看所有有留言的记录
@@ -466,14 +483,15 @@ export default function Dashboard() {
                               paddingLeft: 0,
                               paddingRight: 0,
                             }}
-                            onClick={() => {
-                              if (!diaryId) return;
-                              navigate(`/diary/${diaryId}`);
-                            }}
                           >
-                            <Text data-testid={`msg-count-top-item-${index}`} style={{ fontSize: 12 }}>
-                              A{getShownAccountIdText(item)} · {middleText} · +{deltaShown}
-                            </Text>
+                            <AppLink
+                              to={clickable ? getDiaryDetailTo(diaryId) : null}
+                              block
+                            >
+                              <Text data-testid={`msg-count-top-item-${index}`} style={{ fontSize: 12 }}>
+                                A{getShownAccountIdText(item)} · {middleText} · +{deltaShown}
+                              </Text>
+                            </AppLink>
                           </List.Item>
                         );
                       }}
@@ -654,29 +672,30 @@ export default function Dashboard() {
                   <List.Item
                     key={item?.id}
                     style={{ cursor: 'pointer', paddingLeft: 4, paddingRight: 4 }}
-                    onClick={() => navigate(`/diary/${item.id}`)}
                   >
-                    <List.Item.Meta
-                      title={
-                        <Space wrap size={8}>
-                          <Tag color="gold" title={`账号 ${getShownAccountIdText(item)}`}>A{getShownAccountIdText(item)}</Tag>
-                          <Tag color="magenta">{authorText}</Tag>
-                          <Tag color="blue">{item?.created_date || '-'}</Tag>
-                          {updatedAtText && <Tag color="purple">更新 {updatedAtText}</Tag>}
-                          <Tag color="geekblue">{wordCount} 字</Tag>
-                          <Tag color="volcano">留言 {getShownMsgCount(item)}</Tag>
-                          <span style={{ fontWeight: 500 }}>{item?.title || '无标题'}</span>
-                        </Space>
-                      }
-                      description={<Text type="secondary">{snippet}</Text>}
-                    />
+                    <AppLink to={getDiaryDetailTo(item?.id)} block>
+                      <List.Item.Meta
+                        title={
+                          <Space wrap size={8}>
+                            <Tag color="gold" title={`账号 ${getShownAccountIdText(item)}`}>A{getShownAccountIdText(item)}</Tag>
+                            <Tag color="magenta">{authorText}</Tag>
+                            <Tag color="blue">{item?.created_date || '-'}</Tag>
+                            {updatedAtText && <Tag color="purple">更新 {updatedAtText}</Tag>}
+                            <Tag color="geekblue">{wordCount} 字</Tag>
+                            <Tag color="volcano">留言 {getShownMsgCount(item)}</Tag>
+                            <span style={{ fontWeight: 500 }}>{item?.title || '无标题'}</span>
+                          </Space>
+                        }
+                        description={<Text type="secondary">{snippet}</Text>}
+                      />
+                    </AppLink>
                   </List.Item>
                 );
               }}
             />
 
             <div style={{ textAlign: 'center', marginTop: 4 }}>
-              <Button type="link" onClick={() => navigate('/diaries')} disabled={accounts.length === 0}>
+              <Button type="link" href={accounts.length === 0 ? undefined : '/diaries'} disabled={accounts.length === 0}>
                 显示更多
               </Button>
             </div>
@@ -708,9 +727,9 @@ export default function Dashboard() {
             type="link"
             size="small"
             style={{ paddingLeft: 0 }}
+            href="/paired-increase-history"
             onClick={() => {
               setDeltaDrawerOpen(false);
-              navigate('/paired-increase-history');
             }}
           >
             查看历史（按天）
@@ -750,26 +769,30 @@ export default function Dashboard() {
               <List.Item
                 key={item?.id}
                 style={{ cursor: 'pointer', paddingLeft: 4, paddingRight: 4 }}
-                onClick={() => {
-                  setDeltaDrawerOpen(false);
-                  navigate(`/diary/${item.id}`);
-                }}
               >
-                <List.Item.Meta
-                  title={
-                    <Space wrap size={8}>
-                      <Tag color="gold" title={`账号 ${getShownAccountIdText(item)}`}>A{getShownAccountIdText(item)}</Tag>
-                      <Tag color="magenta">{authorText}</Tag>
-                      <Tag color="blue">{item?.created_date || '-'}</Tag>
-                      {showInsertedAt && <Tag color="cyan">入库 {insertedAtText}</Tag>}
-                      {updatedAtText && <Tag color="purple">更新 {updatedAtText}</Tag>}
-                      <Tag color="geekblue">{wordCount} 字</Tag>
-                      <Tag color="volcano">留言 {getShownMsgCount(item)}</Tag>
-                      <span style={{ fontWeight: 500 }}>{item?.title || '无标题'}</span>
-                    </Space>
-                  }
-                  description={<Text type="secondary">{snippet}</Text>}
-                />
+                <AppLink
+                  to={getDiaryDetailTo(item?.id)}
+                  block
+                  onClick={() => {
+                    setDeltaDrawerOpen(false);
+                  }}
+                >
+                  <List.Item.Meta
+                    title={
+                      <Space wrap size={8}>
+                        <Tag color="gold" title={`账号 ${getShownAccountIdText(item)}`}>A{getShownAccountIdText(item)}</Tag>
+                        <Tag color="magenta">{authorText}</Tag>
+                        <Tag color="blue">{item?.created_date || '-'}</Tag>
+                        {showInsertedAt && <Tag color="cyan">入库 {insertedAtText}</Tag>}
+                        {updatedAtText && <Tag color="purple">更新 {updatedAtText}</Tag>}
+                        <Tag color="geekblue">{wordCount} 字</Tag>
+                        <Tag color="volcano">留言 {getShownMsgCount(item)}</Tag>
+                        <span style={{ fontWeight: 500 }}>{item?.title || '无标题'}</span>
+                      </Space>
+                    }
+                    description={<Text type="secondary">{snippet}</Text>}
+                  />
+                </AppLink>
               </List.Item>
             );
           }}
@@ -778,9 +801,9 @@ export default function Dashboard() {
         <div style={{ textAlign: 'center', marginTop: 4 }}>
           <Button
             type="link"
+            href="/diaries"
             onClick={() => {
               setDeltaDrawerOpen(false);
-              navigate('/diaries');
             }}
           >
             去记录列表

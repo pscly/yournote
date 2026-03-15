@@ -25,8 +25,10 @@ import { FilterOutlined, ReloadOutlined, SearchOutlined, StarFilled, StarOutline
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 
 import { accountAPI, diaryAPI, userAPI } from '../services/api';
+import AppLink from '../components/AppLink';
 import { downloadText, formatExportTimestamp, safeFilenamePart } from '../utils/download';
 import { getErrorMessage } from '../utils/errorMessage';
+import { buildDiaryDetailPath, getLocationPath, isUnmodifiedLeftClickEvent } from '../utils/navigation';
 import { getDiaryWordStats } from '../utils/wordCount';
 import { formatBeijingDateTimeFromTs } from '../utils/time';
 import Page from '../components/Page';
@@ -325,10 +327,7 @@ export default function DiaryList() {
   const [selectedRows, setSelectedRows] = useState([]);
   const loadSeqRef = useRef(0);
 
-  const fromPath = useMemo(
-    () => `${location.pathname || '/'}${location.search || ''}`,
-    [location.pathname, location.search],
-  );
+  const fromPath = useMemo(() => getLocationPath(location), [location]);
 
   useEffect(() => {
     const key = `yournote.scroll.${fromPath}`;
@@ -360,18 +359,20 @@ export default function DiaryList() {
     return () => clearTimeout(timer);
   }, [fromPath]);
 
-  const openDiaryDetail = useCallback((diaryId) => {
-    const idNum = Number(diaryId);
-    if (!Number.isFinite(idNum) || idNum <= 0) return;
-
+  const rememberScrollPosition = useCallback(() => {
     try {
       sessionStorage.setItem(`yournote.scroll.${fromPath}`, String(window.scrollY || 0));
     } catch {
       // ignore
     }
+  }, [fromPath]);
 
-    navigate(`/diary/${idNum}`, { state: { from: fromPath } });
-  }, [navigate, fromPath]);
+  const getDiaryDetailTo = useCallback((diaryId) => buildDiaryDetailPath(diaryId, fromPath), [fromPath]);
+
+  const handleDiaryDetailLinkClick = useCallback((event) => {
+    if (!isUnmodifiedLeftClickEvent(event)) return;
+    rememberScrollPosition();
+  }, [rememberScrollPosition]);
 
   const syncUrl = useCallback((next, { replace = false } = {}) => {
     const p = new URLSearchParams();
@@ -1538,23 +1539,31 @@ export default function DiaryList() {
         dataIndex: 'title',
         key: 'title',
         width: 240,
-      render: (v) => renderHighlighted(v || '-'),
-      onCell: (record) => ({
-        onClick: () => openDiaryDetail(record?.id),
-        style: { cursor: 'pointer' },
-      }),
-    },
-    {
-      title: '内容',
-      dataIndex: 'content_preview',
-      key: 'content',
-      ellipsis: true,
-      render: (v) => renderHighlighted(v || '-'),
-      onCell: (record) => ({
-        onClick: () => openDiaryDetail(record?.id),
-        style: { cursor: 'pointer', color: token.colorPrimary },
-      }),
-    },
+        render: (v, record) => (
+          <AppLink
+            to={getDiaryDetailTo(record?.id)}
+            onClick={handleDiaryDetailLinkClick}
+            style={{ display: 'block', width: '100%' }}
+          >
+            {renderHighlighted(v || '-')}
+          </AppLink>
+        ),
+      },
+      {
+        title: '内容',
+        dataIndex: 'content_preview',
+        key: 'content',
+        ellipsis: true,
+        render: (v, record) => (
+          <AppLink
+            to={getDiaryDetailTo(record?.id)}
+            onClick={handleDiaryDetailLinkClick}
+            style={{ display: 'block', width: '100%', color: token.colorPrimary }}
+          >
+            {renderHighlighted(v || '-')}
+          </AppLink>
+        ),
+      },
       {
         title: '字数',
         key: 'word_count',
@@ -1581,7 +1590,7 @@ export default function DiaryList() {
     ];
 
     return cols;
-  }, [userById, token, renderHighlighted, statsEnabled, currentAccountId, bookmarkLoadingById, handleToggleBookmark, batchCancelLoading, openDiaryDetail]);
+  }, [userById, token, renderHighlighted, statsEnabled, currentAccountId, bookmarkLoadingById, handleToggleBookmark, batchCancelLoading, getDiaryDetailTo, handleDiaryDetailLinkClick]);
 
   const noAccounts = initDone && (accounts?.length || 0) === 0;
 
@@ -2087,7 +2096,8 @@ export default function DiaryList() {
                       </Button>
                       <Button
                         size="small"
-                        onClick={() => openDiaryDetail(item?.id)}
+                        href={getDiaryDetailTo(item?.id) || undefined}
+                        onClick={handleDiaryDetailLinkClick}
                         disabled={!Number.isFinite(diaryId)}
                       >
                         打开详情
@@ -2152,34 +2162,39 @@ export default function DiaryList() {
               const wordCount = Number(item?.word_count_no_ws) || 0;
               const modifiedText = formatBeijingDateTimeFromTs(item?.ts);
               return (
-                <Card
-                  hoverable
+                <AppLink
+                  to={getDiaryDetailTo(item?.id)}
+                  onClick={handleDiaryDetailLinkClick}
+                  block
                   style={{ marginBottom: 12 }}
-                  onClick={() => openDiaryDetail(item?.id)}
-                  bodyStyle={{ padding: 14 }}
                 >
-                  <Space direction="vertical" size={8} style={{ width: '100%' }}>
-                    <Space wrap size={8}>
-                      {currentAccountId == null && (
-                        <Tag color="gold" title={`账号 ${getShownAccountIdText(item)}`}>A{getShownAccountIdText(item)}</Tag>
-                      )}
-                      <Tag color="magenta">{authorText}</Tag>
-                      <Tag color="blue">{item.created_date || '未知日期'}</Tag>
-                      {modifiedText !== '-' && <Tag color="purple">修改 {modifiedText}</Tag>}
-                      <Tag color="volcano">留言 {getShownMsgCount(item)}</Tag>
-                      {statsEnabled && <Tag color="geekblue">{wordCount} 字</Tag>}
-                      {item.mood && <Tag>{item.mood}</Tag>}
-                      {item.weather && <Tag color="cyan">{item.weather}</Tag>}
+                  <Card
+                    hoverable
+                    bodyStyle={{ padding: 14 }}
+                  >
+                    <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                      <Space wrap size={8}>
+                        {currentAccountId == null && (
+                          <Tag color="gold" title={`账号 ${getShownAccountIdText(item)}`}>A{getShownAccountIdText(item)}</Tag>
+                        )}
+                        <Tag color="magenta">{authorText}</Tag>
+                        <Tag color="blue">{item.created_date || '未知日期'}</Tag>
+                        {modifiedText !== '-' && <Tag color="purple">修改 {modifiedText}</Tag>}
+                        <Tag color="volcano">留言 {getShownMsgCount(item)}</Tag>
+                        {statsEnabled && <Tag color="geekblue">{wordCount} 字</Tag>}
+                        {item.mood && <Tag>{item.mood}</Tag>}
+                        {item.weather && <Tag color="cyan">{item.weather}</Tag>}
+                      </Space>
+                      <Text strong>{renderHighlighted(item.title || '无标题')}</Text>
+                      <Paragraph
+                        style={{ margin: 0, color: token.colorTextSecondary }}
+                        ellipsis={{ rows: 2 }}
+                      >
+                        {renderHighlighted(item.content_preview || '-')}
+                      </Paragraph>
                     </Space>
-                    <Text strong>{renderHighlighted(item.title || '无标题')}</Text>
-                    <Paragraph
-                      style={{ margin: 0, color: token.colorTextSecondary }}
-                      ellipsis={{ rows: 2 }}
-                    >
-                      {renderHighlighted(item.content_preview || '-')}
-                    </Paragraph>
-                  </Space>
-                </Card>
+                  </Card>
+                </AppLink>
               );
             }}
           />

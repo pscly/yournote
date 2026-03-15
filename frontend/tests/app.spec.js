@@ -87,6 +87,15 @@ test.describe('YourNote 应用测试', () => {
     }
   });
 
+  test('记录列表详情入口应该是真链接并携带来源参数', async ({ page }) => {
+    await page.goto('/diaries?view=list');
+    await ensureAccess(page);
+
+    const detailLink = page.locator('.ant-table-tbody tr a[href*="/diary/"]').first();
+    await expect(detailLink).toBeVisible({ timeout: 15000 });
+    await expect(detailLink).toHaveAttribute('href', /\/diary\/\d+\?from=%2Fdiaries%3Fview%3Dlist/);
+  });
+
   test('应该在刷新后保持左侧栏折叠状态', async ({ page }) => {
     await page.goto('/');
     await ensureAccess(page);

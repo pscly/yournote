@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Button, Card, Grid, Input, List, Space, Switch, Tag, Typography, message } from 'antd';
 import { ArrowLeftOutlined, CalendarOutlined, HistoryOutlined } from '@ant-design/icons';
 
 import { statsAPI } from '../services/api';
+import AppLink from '../components/AppLink';
 import Page from '../components/Page';
 import { getErrorMessage } from '../utils/errorMessage';
+import { buildDiaryDetailPath, getLocationPath } from '../utils/navigation';
 import { beijingDateStringToUtcRangeMs, formatBeijingDateTime, formatBeijingDateTimeFromTs, getBeijingDateString } from '../utils/time';
 import { getDiaryWordStats } from '../utils/wordCount';
 
@@ -26,9 +28,12 @@ function getShownAccountIdText(item) {
 }
 
 export default function PairedIncreaseHistory() {
+  const location = useLocation();
   const navigate = useNavigate();
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.md;
+  const fromPath = useMemo(() => getLocationPath(location), [location]);
+  const getDiaryDetailTo = useCallback((diaryId) => buildDiaryDetailPath(diaryId, fromPath), [fromPath]);
 
   const todayText = useMemo(() => getBeijingDateString(0), []);
   const yesterdayText = useMemo(() => getBeijingDateString(-1), []);
@@ -193,23 +198,24 @@ export default function PairedIncreaseHistory() {
                 <List.Item
                   key={item?.id}
                   style={{ cursor: 'pointer', paddingLeft: 4, paddingRight: 4 }}
-                  onClick={() => navigate(`/diary/${item.id}`)}
                 >
-                  <List.Item.Meta
-                    title={(
-                      <Space wrap size={8}>
-                        <Tag color="gold" title={`账号 ${getShownAccountIdText(item)}`}>A{getShownAccountIdText(item)}</Tag>
-                        <Tag color="magenta">{authorText}</Tag>
-                        <Tag color="blue">{item?.created_date || '-'}</Tag>
-                        {showInsertedAt && <Tag color="cyan">入库 {insertedAtText}</Tag>}
-                        {updatedAtText && <Tag color="purple">更新 {updatedAtText}</Tag>}
-                        <Tag color="geekblue">{wordCount} 字</Tag>
-                        <Tag color="volcano">留言 {getShownMsgCount(item)}</Tag>
-                        <span style={{ fontWeight: 500 }}>{item?.title || '无标题'}</span>
-                      </Space>
-                    )}
-                    description={<Text type="secondary">{snippet}</Text>}
-                  />
+                  <AppLink to={getDiaryDetailTo(item?.id)} block>
+                    <List.Item.Meta
+                      title={(
+                        <Space wrap size={8}>
+                          <Tag color="gold" title={`账号 ${getShownAccountIdText(item)}`}>A{getShownAccountIdText(item)}</Tag>
+                          <Tag color="magenta">{authorText}</Tag>
+                          <Tag color="blue">{item?.created_date || '-'}</Tag>
+                          {showInsertedAt && <Tag color="cyan">入库 {insertedAtText}</Tag>}
+                          {updatedAtText && <Tag color="purple">更新 {updatedAtText}</Tag>}
+                          <Tag color="geekblue">{wordCount} 字</Tag>
+                          <Tag color="volcano">留言 {getShownMsgCount(item)}</Tag>
+                          <span style={{ fontWeight: 500 }}>{item?.title || '无标题'}</span>
+                        </Space>
+                      )}
+                      description={<Text type="secondary">{snippet}</Text>}
+                    />
+                  </AppLink>
                 </List.Item>
               );
             }}

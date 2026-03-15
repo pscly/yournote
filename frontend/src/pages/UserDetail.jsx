@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Button, Card, Descriptions, Grid, List, Space, Table, Tag, Typography, theme as antdTheme } from 'antd';
 import { ArrowLeftOutlined } from '@ant-design/icons';
 import { accountAPI, diaryAPI, userAPI } from '../services/api';
+import AppLink from '../components/AppLink';
 import PageState from '../components/PageState';
+import { buildDiaryDetailPath, getLocationPath } from '../utils/navigation';
 import { getDiaryWordStats } from '../utils/wordCount';
 import { formatBeijingDateTime, parseServerDate } from '../utils/time';
 import Page from '../components/Page';
@@ -29,10 +31,13 @@ function getShownAccountIdText(item) {
 
 export default function UserDetail() {
   const { id } = useParams();
+  const location = useLocation();
   const navigate = useNavigate();
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.md;
   const { token } = antdTheme.useToken();
+  const fromPath = useMemo(() => getLocationPath(location), [location]);
+  const getDiaryDetailTo = useCallback((diaryId) => buildDiaryDetailPath(diaryId, fromPath), [fromPath]);
   const [user, setUser] = useState(null);
   const [diaries, setDiaries] = useState([]);
   const [pairedRecord, setPairedRecord] = useState(null);
@@ -194,11 +199,11 @@ export default function UserDetail() {
         dataIndex: 'content',
         key: 'content',
         ellipsis: true,
-        render: (v) => v || '-',
-        onCell: (record) => ({
-          onClick: () => navigate(`/diary/${record.id}`),
-          style: { cursor: 'pointer', color: token.colorPrimary },
-        }),
+        render: (v, record) => (
+          <AppLink to={getDiaryDetailTo(record?.id)} style={{ display: 'block', width: '100%', color: token.colorPrimary }}>
+            {v || '-'}
+          </AppLink>
+        ),
       },
       {
         title: '字数',
@@ -221,7 +226,7 @@ export default function UserDetail() {
       { title: '心情', dataIndex: 'mood', key: 'mood', width: 90, render: (m) => (m ? <Tag>{m}</Tag> : '-') },
     ];
     return cols;
-  }, [navigate, token, showAccountInDiaryList]);
+  }, [token, showAccountInDiaryList, getDiaryDetailTo]);
 
   return (
     <Page>
@@ -271,20 +276,20 @@ export default function UserDetail() {
                         color="geekblue"
                         title="点击查看主账号详情"
                         style={{ cursor: pairedRecord?.mainUser?.id ? 'pointer' : 'default' }}
-                        onClick={() => pairedRecord?.mainUser?.id && navigate(`/user/${pairedRecord.mainUser.id}`)}
                       >
-                        {pairedRecord.mainUser?.name || '未命名'}
-                        {pairedRecord.mainUser?.nideriji_userid ? `（${pairedRecord.mainUser.nideriji_userid}）` : ''}
+                        <AppLink to={pairedRecord?.mainUser?.id ? `/user/${pairedRecord.mainUser.id}` : null}>
+                          {pairedRecord.mainUser?.name || '未命名'}
+                          {pairedRecord.mainUser?.nideriji_userid ? `（${pairedRecord.mainUser.nideriji_userid}）` : ''}
+                        </AppLink>
                       </Tag>
                     </Descriptions.Item>
                     <Descriptions.Item label="主账号邮箱">
                       {pairedRecord.accountEmail ? (
-                        <Typography.Link
-                          title="点击查看主账号详情"
-                          onClick={() => navigate(`/user/${pairedRecord.mainUser.id}`)}
-                        >
-                          {pairedRecord.accountEmail}
-                        </Typography.Link>
+                        <AppLink to={pairedRecord?.mainUser?.id ? `/user/${pairedRecord.mainUser.id}` : null}>
+                          <Typography.Text underline>
+                            {pairedRecord.accountEmail}
+                          </Typography.Text>
+                        </AppLink>
                       ) : (
                         '-'
                       )}
@@ -308,30 +313,30 @@ export default function UserDetail() {
                     dataSource={diaries}
                     locale={{ emptyText: '暂无记录' }}
                   renderItem={(item) => (
-                    <Card
-                      hoverable
-                      style={{ marginBottom: 12 }}
-                      onClick={() => navigate(`/diary/${item.id}`)}
-                      bodyStyle={{ padding: 14 }}
-                    >
-                      <Space direction="vertical" size={8} style={{ width: '100%' }}>
-                        <Space wrap size={8}>
-                          {showAccountInDiaryList && (
-                            <Tag color="gold" title={`账号 ${getShownAccountIdText(item)}`}>A{getShownAccountIdText(item)}</Tag>
-                          )}
-                          <Tag color="blue">{item.created_date || '未知日期'}</Tag>
-                          <Tag color="geekblue">{getDiaryWordStats(item).content.no_whitespace} 字</Tag>
-                          <Tag color="volcano">留言 {getShownMsgCount(item)}</Tag>
-                          {item.mood && <Tag>{item.mood}</Tag>}
-                        </Space>
-                          <Text strong>{item.title || '无标题'}</Text>
-                          <Paragraph style={{ margin: 0, color: token.colorTextSecondary }} ellipsis={{ rows: 2 }}>
-                            {item.content || '-'}
-                          </Paragraph>
+                    <AppLink to={getDiaryDetailTo(item?.id)} block style={{ marginBottom: 12 }}>
+                      <Card
+                        hoverable
+                        bodyStyle={{ padding: 14 }}
+                      >
+                        <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                          <Space wrap size={8}>
+                            {showAccountInDiaryList && (
+                              <Tag color="gold" title={`账号 ${getShownAccountIdText(item)}`}>A{getShownAccountIdText(item)}</Tag>
+                            )}
+                            <Tag color="blue">{item.created_date || '未知日期'}</Tag>
+                            <Tag color="geekblue">{getDiaryWordStats(item).content.no_whitespace} 字</Tag>
+                            <Tag color="volcano">留言 {getShownMsgCount(item)}</Tag>
+                            {item.mood && <Tag>{item.mood}</Tag>}
+                          </Space>
+                            <Text strong>{item.title || '无标题'}</Text>
+                            <Paragraph style={{ margin: 0, color: token.colorTextSecondary }} ellipsis={{ rows: 2 }}>
+                              {item.content || '-'}
+                            </Paragraph>
                         </Space>
                       </Card>
-                    )}
-                  />
+                    </AppLink>
+                  )}
+                />
                 ) : (
                   <Table
                     columns={columns}

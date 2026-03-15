@@ -14,10 +14,12 @@ import {
   Typography,
   theme as antdTheme,
 } from 'antd';
-import { useNavigate } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import { accountAPI, userAPI } from '../services/api';
+import AppLink from '../components/AppLink';
 import Page from '../components/Page';
 import PageState from '../components/PageState';
+import { buildDiaryDetailPath, getLocationPath } from '../utils/navigation';
 import { formatBeijingDateTime, parseServerDate } from '../utils/time';
 
 const { Title, Text } = Typography;
@@ -62,8 +64,10 @@ function formatShortTime(value) {
 }
 
 export default function AllUsers() {
-  const navigate = useNavigate();
+  const location = useLocation();
   const { token } = antdTheme.useToken();
+  const fromPath = useMemo(() => getLocationPath(location), [location]);
+  const getDiaryDetailTo = useCallback((diaryId) => buildDiaryDetailPath(diaryId, fromPath), [fromPath]);
   const [users, setUsers] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [activePairs, setActivePairs] = useState([]);
@@ -257,17 +261,19 @@ export default function AllUsers() {
                             <Tag
                               color="blue"
                               style={{ cursor: item?.mainUser?.id ? 'pointer' : 'default' }}
-                              onClick={() => item?.mainUser?.id && navigate(`/user/${item.mainUser.id}`)}
                             >
-                              {formatUserLabel(item?.mainUser, accountByNid)}
+                              <AppLink to={item?.mainUser?.id ? `/user/${item.mainUser.id}` : null}>
+                                {formatUserLabel(item?.mainUser, accountByNid)}
+                              </AppLink>
                             </Tag>
                             <span>-</span>
                             <Tag
                               color="magenta"
                               style={{ cursor: item?.pairedUser?.id ? 'pointer' : 'default' }}
-                              onClick={() => item?.pairedUser?.id && navigate(`/user/${item.pairedUser.id}`)}
                             >
-                              {formatUserLabel(item?.pairedUser, accountByNid)}
+                              <AppLink to={item?.pairedUser?.id ? `/user/${item.pairedUser.id}` : null}>
+                                {formatUserLabel(item?.pairedUser, accountByNid)}
+                              </AppLink>
                             </Tag>
                             {item?.pairedTime && (
                               <Tag color="geekblue">配对 {formatShortTime(item.pairedTime) || '-'}</Tag>
@@ -275,9 +281,10 @@ export default function AllUsers() {
                             <Tag
                               color="gold"
                               style={{ cursor: item?.pairedUserLastDiaryId ? 'pointer' : 'default' }}
-                              onClick={() => item?.pairedUserLastDiaryId && navigate(`/diary/${item.pairedUserLastDiaryId}`)}
                             >
-                              对方最后日记 {formatShortTime(item?.pairedUserLastDiaryTime) || '暂无日记'}
+                              <AppLink to={getDiaryDetailTo(item?.pairedUserLastDiaryId)}>
+                                对方最后日记 {formatShortTime(item?.pairedUserLastDiaryTime) || '暂无日记'}
+                              </AppLink>
                             </Tag>
                           </Space>
                         </List.Item>
@@ -295,9 +302,10 @@ export default function AllUsers() {
                             <Tag
                               data-testid={`users-unpaired-main-${item.accountId}`}
                               style={{ cursor: item?.mainUser?.id ? 'pointer' : 'default' }}
-                              onClick={() => item?.mainUser?.id && navigate(`/user/${item.mainUser.id}`)}
                             >
-                              {formatUserLabel(item?.mainUser, accountByNid)}
+                              <AppLink to={item?.mainUser?.id ? `/user/${item.mainUser.id}` : null}>
+                                {formatUserLabel(item?.mainUser, accountByNid)}
+                              </AppLink>
                             </Tag>
                             {item?.pairingCancelled && (
                               <Text
@@ -329,9 +337,10 @@ export default function AllUsers() {
                             <Tooltip key={pairedId || `${tipMain}-${tipTime}`} title={tip}>
                               <Tag
                                 style={{ cursor: pairedId ? 'pointer' : 'default' }}
-                                onClick={() => pairedId && navigate(`/user/${pairedId}`)}
                               >
-                                {formatUserLabel(item?.pairedUser, accountByNid)}
+                                <AppLink to={pairedId ? `/user/${pairedId}` : null}>
+                                  {formatUserLabel(item?.pairedUser, accountByNid)}
+                                </AppLink>
                               </Tag>
                             </Tooltip>
                           );
@@ -353,47 +362,48 @@ export default function AllUsers() {
                     const userLabel = formatUserLabel(user, accountByNid);
                     const userEmail = getUserEmail(user, accountByNid);
                     const card = (
-                      <Card
-                        hoverable
-                        onClick={() => navigate(`/user/${user.id}`)}
-                        styles={{ body: { textAlign: 'center' } }}
-                      >
-                        <Avatar
-                          size={56}
-                          style={{
-                            backgroundColor: isPaired ? token.magenta6 : token.colorPrimary,
-                            marginBottom: 12,
-                          }}
+                      <AppLink to={`/user/${user.id}`} block>
+                        <Card
+                          hoverable
+                          styles={{ body: { textAlign: 'center' } }}
                         >
-                          {getAvatarText(userLabel)}
-                        </Avatar>
-                        <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>
-                          {userLabel}
-                        </div>
-                        {!userEmail && (
-                          <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
-                            Nideriji ID: {user.nideriji_userid}
-                          </Text>
-                        )}
-                        <Text type="secondary" style={{ marginTop: 8, display: 'block' }}>
-                          记录数：{user.diary_count ?? 0}
-                        </Text>
-                        {isPaired && pairedSource && (
-                          <div style={{ marginTop: 10 }}>
-                            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
-                              匹配主账号：
-                            </Text>
-                            <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: 6 }}>
-                              <Tag
-                                key={`${pairedSource.accountId || 'a'}-${pairedSource.mainUserId || 'u'}`}
-                                color="geekblue"
-                              >
-                                {formatUserLabel(pairedSource.mainUser, accountByNid)}
-                              </Tag>
-                            </div>
+                          <Avatar
+                            size={56}
+                            style={{
+                              backgroundColor: isPaired ? token.magenta6 : token.colorPrimary,
+                              marginBottom: 12,
+                            }}
+                          >
+                            {getAvatarText(userLabel)}
+                          </Avatar>
+                          <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>
+                            {userLabel}
                           </div>
-                        )}
-                      </Card>
+                          {!userEmail && (
+                            <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
+                              Nideriji ID: {user.nideriji_userid}
+                            </Text>
+                          )}
+                          <Text type="secondary" style={{ marginTop: 8, display: 'block' }}>
+                            记录数：{user.diary_count ?? 0}
+                          </Text>
+                          {isPaired && pairedSource && (
+                            <div style={{ marginTop: 10 }}>
+                              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
+                                匹配主账号：
+                              </Text>
+                              <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: 6 }}>
+                                <Tag
+                                  key={`${pairedSource.accountId || 'a'}-${pairedSource.mainUserId || 'u'}`}
+                                  color="geekblue"
+                                >
+                                  {formatUserLabel(pairedSource.mainUser, accountByNid)}
+                                </Tag>
+                              </div>
+                            </div>
+                          )}
+                        </Card>
+                      </AppLink>
                     );
 
                     return (

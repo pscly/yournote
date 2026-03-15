@@ -36,9 +36,11 @@ import {
   StarOutlined,
 } from '@ant-design/icons';
 import { diaryAPI, diaryHistoryAPI, userAPI } from '../services/api';
+import AppLink from '../components/AppLink';
 import PageState from '../components/PageState';
 import { downloadText, formatExportTimestamp, safeFilenamePart } from '../utils/download';
 import { getErrorMessage } from '../utils/errorMessage';
+import { buildDiaryDetailPath, getFromPathFromLocation } from '../utils/navigation';
 import { formatBeijingDateTime, formatBeijingDateTimeFromTs, parseServerDate } from '../utils/time';
 import { getDiaryWordStats } from '../utils/wordCount';
 
@@ -120,12 +122,8 @@ export default function DiaryDetail() {
   const lockedAccountIdRef = useRef(null);
   const lockedPartnerUserIdRef = useRef(null);
 
-  const fromPath = useMemo(() => {
-    const raw = location?.state?.from;
-    if (typeof raw !== 'string') return null;
-    const s = raw.trim();
-    return s.startsWith('/') ? s : null;
-  }, [location?.state?.from]);
+  const fromPath = useMemo(() => getFromPathFromLocation(location), [location]);
+  const getDiaryDetailTo = useCallback((diaryId) => buildDiaryDetailPath(diaryId, fromPath), [fromPath]);
 
   const handleBack = useCallback(() => {
     if (fromPath) {
@@ -1028,42 +1026,46 @@ export default function DiaryDetail() {
                     if (isActive) activeDiaryItemRef.current = el;
                   }}
                 >
-                  <Card
-                    hoverable
-                    data-testid={`diary-sider-item-${item.id}`}
-                    data-owner={owner}
+                  <AppLink
+                    to={getDiaryDetailTo(item?.id)}
+                    block
                     onClick={() => {
-                      navigate(`/diary/${item.id}`);
                       if (isMobile) setDrawerVisible(false);
                     }}
-                    style={{
-                      marginBottom: 12,
-                      borderLeft: `4px solid ${getBorderColor(item)}`,
-                      background: isActive ? getActiveBgColor(item) : token.colorBgContainer,
-                      cursor: 'pointer',
-                    }}
-                    bodyStyle={{ padding: '12px 16px' }}
+                    style={{ marginBottom: 12 }}
                   >
-                    <div style={{ fontWeight: 500, marginBottom: 4, fontSize: '14px' }}>
-                      {item.title || '无标题'}
-                    </div>
-                    <div style={{ fontSize: '12px', color: token.colorTextSecondary }}>
-                      <CalendarOutlined style={{ marginRight: 4 }} />
-                      {item.created_date}
-                    </div>
-                    <div style={{ fontSize: '12px', color: token.colorTextSecondary, marginTop: 4 }}>
-                      <ClockCircleOutlined style={{ marginRight: 4 }} />
-                      最后修改 {modifiedText} · {wordCount} 字
-                      <Tag
-                        color="gold"
-                        data-testid="diary-list-account-tag"
-                        style={{ marginLeft: 8, marginInlineEnd: 0 }}
-                      >
-                        A{item?.account_id ?? '-'}
-                      </Tag>
-                      <Tag color="volcano" style={{ marginLeft: 8, marginInlineEnd: 0 }}>留言 {getShownMsgCount(item)}</Tag>
-                    </div>
-                  </Card>
+                    <Card
+                      hoverable
+                      data-testid={`diary-sider-item-${item.id}`}
+                      data-owner={owner}
+                      style={{
+                        borderLeft: `4px solid ${getBorderColor(item)}`,
+                        background: isActive ? getActiveBgColor(item) : token.colorBgContainer,
+                        cursor: 'pointer',
+                      }}
+                      bodyStyle={{ padding: '12px 16px' }}
+                    >
+                      <div style={{ fontWeight: 500, marginBottom: 4, fontSize: '14px' }}>
+                        {item.title || '无标题'}
+                      </div>
+                      <div style={{ fontSize: '12px', color: token.colorTextSecondary }}>
+                        <CalendarOutlined style={{ marginRight: 4 }} />
+                        {item.created_date}
+                      </div>
+                      <div style={{ fontSize: '12px', color: token.colorTextSecondary, marginTop: 4 }}>
+                        <ClockCircleOutlined style={{ marginRight: 4 }} />
+                        最后修改 {modifiedText} · {wordCount} 字
+                        <Tag
+                          color="gold"
+                          data-testid="diary-list-account-tag"
+                          style={{ marginLeft: 8, marginInlineEnd: 0 }}
+                        >
+                          A{item?.account_id ?? '-'}
+                        </Tag>
+                        <Tag color="volcano" style={{ marginLeft: 8, marginInlineEnd: 0 }}>留言 {getShownMsgCount(item)}</Tag>
+                      </div>
+                    </Card>
+                  </AppLink>
                 </div>
               );
             }}
@@ -1118,20 +1120,14 @@ export default function DiaryDetail() {
               </Button>
               <Button
                 disabled={!neighbors?.prevId}
-                onClick={() => {
-                  if (!neighbors?.prevId) return;
-                  navigate(`/diary/${neighbors.prevId}`, { state: fromPath ? { from: fromPath } : undefined });
-                }}
+                href={getDiaryDetailTo(neighbors?.prevId) || undefined}
                 size={isMobile ? 'middle' : 'large'}
               >
                 上一条
               </Button>
               <Button
                 disabled={!neighbors?.nextId}
-                onClick={() => {
-                  if (!neighbors?.nextId) return;
-                  navigate(`/diary/${neighbors.nextId}`, { state: fromPath ? { from: fromPath } : undefined });
-                }}
+                href={getDiaryDetailTo(neighbors?.nextId) || undefined}
                 size={isMobile ? 'middle' : 'large'}
               >
                 下一条
